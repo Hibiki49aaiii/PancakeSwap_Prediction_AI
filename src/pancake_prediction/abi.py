@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 _MASK64 = (1 << 64) - 1
 _ROTATION = (
     (0, 36, 3, 41, 18),
