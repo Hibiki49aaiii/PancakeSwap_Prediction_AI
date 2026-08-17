@@ -28,6 +28,9 @@ TERMINAL_STATES = {IntentState.CONSUMED_UNKNOWN, IntentState.FINALIZED, IntentSt
 
 
 class ForkExecutionRpc(Protocol):
+    @property
+    def fork_only(self) -> bool: ...
+
     def transaction_count(self, address: str, tag: str = "pending") -> int: ...
 
     def transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None: ...
@@ -405,6 +408,10 @@ class ForkExecutionCoordinator:
     store: ExecutionIntentStore
     rpc: ForkExecutionRpc
     confirmations: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.rpc.fork_only:
+            raise ValueError("execution coordinator accepts fork-only RPC adapters")
 
     def submit(
         self,
