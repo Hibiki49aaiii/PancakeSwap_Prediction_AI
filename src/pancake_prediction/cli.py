@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
+
+from .contracts import MARKETS
+from .rpc import JsonRpcClient
+from .rpc_probe import probe_archive_state
 
 PACKAGE_NAME = "pancakeswap-prediction-ai"
 
@@ -34,6 +39,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=package_version())
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("status", help="print the current research/safety status as JSON")
+
+    probe = subparsers.add_parser(
+        "rpc-probe",
+        help="verify historical BSC state access before collection",
+    )
+    probe.add_argument("--market", choices=sorted(MARKETS), required=True)
+    probe.add_argument("--block", type=int, required=True)
+    probe.add_argument(
+        "--rpc-url",
+        default=None,
+        help="BSC RPC URL; defaults to BSC_RPC_URL and is never printed",
+    )
     return parser
 
 
@@ -42,6 +59,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "status":
         print(json.dumps(_status_payload(), sort_keys=True, separators=(",", ":")))
+        return 0
+    if args.command == "rpc-probe":
+        rpc_url = args.rpc_url or os.environ.get("BSC_RPC_URL")
+        if not rpc_url:
+            parser.error("rpc-probe requires --rpc-url or BSC_RPC_URL")
+        result = probe_archive_state(
+            JsonRpcClient(str(rpc_url)),
+            MARKETS[str(args.market)],
+            int(args.block),
+        )
+        print(json.dumps(result.as_dict(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command is None:
         parser.print_help()
