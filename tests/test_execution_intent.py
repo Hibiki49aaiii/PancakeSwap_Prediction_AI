@@ -26,6 +26,10 @@ class _FakeForkRpc:
         self.transactions: dict[str, dict[str, Any]] = {}
         self.blocks: dict[int, dict[str, Any]] = {}
 
+    @property
+    def fork_only(self) -> bool:
+        return True
+
     def transaction_count(self, address: str, tag: str = "pending") -> int:
         del address, tag
         return self.pending_nonce
@@ -64,6 +68,12 @@ class _FakeForkRpc:
         return self.next_tx_hash
 
 
+class _UnsafeFakeForkRpc(_FakeForkRpc):
+    @property
+    def fork_only(self) -> bool:
+        return False
+
+
 def _store(tmp_path: Path) -> ExecutionIntentStore:
     store = ExecutionIntentStore(tmp_path / "execution.sqlite3")
     store.initialize()
@@ -78,6 +88,12 @@ def _intent(store: ExecutionIntentStore, key: str = "BNBUSD:123:BULL") -> int:
         calldata="0x1234",
         value_wei=10**15,
     ).id
+
+
+def test_coordinator_rejects_non_fork_adapter(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(ValueError, match="fork-only"):
+        ForkExecutionCoordinator(store, _UnsafeFakeForkRpc())
 
 
 def test_idempotency_key_returns_same_intent_and_rejects_payload_change(tmp_path: Path) -> None:
