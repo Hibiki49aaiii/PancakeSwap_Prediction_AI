@@ -19,7 +19,43 @@ v0.7 formalizes the first settlement-source-first feature family:
 - current Chainlink observation age
 - empirical Chainlink update hazard derived from completed past update intervals only
 
-Every source observation carries its own event timestamp. Feature construction fails closed if any input timestamp is later than the decision timestamp.
+Every source observation carries both a source timestamp and an information-availability boundary. Feature construction fails closed if the information was not available before the decision cutoff, even when the source event itself is timestamped earlier.
+
+## Active Chainlink oracle timeline
+
+Historical collection may contain `AnswerUpdated` events from multiple Chainlink contracts because PancakeSwap Prediction can change its oracle over time. Research must never concatenate all of those feeds into one price series.
+
+`historical-bootstrap` persists an oracle anchor from the historical `oracle()` state proven during archive preflight. `oracle_history.py` then replays canonical `NewOracle` events in exact block/transaction/log order and accepts an `AnswerUpdated` event only when its contract address was active at that exact position.
+
+The anchor is intentionally applied starting from the next block. Events in the anchor block are accepted only when an explicit `NewOracle` event establishes the state before them. Missing anchor metadata, anchor/event disagreement, inactive old feeds, and orphaned reorg logs fail closed or are excluded.
+
+Use:
+
+`pcs-prediction oracle-history-report --market BNBUSD --db history.sqlite3`
+
+before generating a research dataset.
+
+## Information-availability lag
+
+Historical event timestamps are not equivalent to information arrival timestamps.
+
+- Binance websocket-style trades use `event_timestamp_ms` as the availability boundary.
+- Binance public archives do not contain the original websocket arrival timestamp, so archive parsing requires an explicit `availability_lag_ms` assumption and reconstructs the availability boundary from trade time plus that lag.
+- Chainlink observations become available no earlier than the block containing `AnswerUpdated`; research additionally supports an explicit `chainlink_availability_lag_ms` to model block propagation/processing latency.
+
+Sub-second alpha is rejected if it disappears under realistic positive-lag scenarios. A zero-lag run is an optimistic reference case, not sufficient profitability evidence.
+
+## Verified Binance public archives
+
+`binance_archive.py` normalizes official aggTrades archives and handles the Spot timestamp unit change to microseconds from 2025-01-01 onward. Futures millisecond archives remain supported separately.
+
+Every official ZIP should be verified against its companion `.CHECKSUM` before use. The normalized provenance records the archive SHA-256, venue, symbol, timestamp-unit rule, explicit availability lag, row count, timestamp range, and aggregate-trade ID range.
+
+Use:
+
+`pcs-prediction binance-archive-inspect --market BNBUSD --archive <zip> --checksum <zip.CHECKSUM> --venue spot --timestamp-unit auto --availability-lag-ms <N>`
+
+The command verifies the checksum before parsing and prints only normalized provenance, not credentials or RPC configuration.
 
 ## Oracle update hazard
 
@@ -29,15 +65,27 @@ For current oracle age `a` and prediction horizon `h`, the dependency-free basel
 
 from completed historical update intervals. It is deliberately simple and exists as an auditable baseline before adding survival models or ML.
 
+## Canonical research dataset path
+
+The safe in-process path is:
+
+`historical DB -> canonical Prediction events -> active-oracle Chainlink events -> Binance alignment -> PoolFeatureRow -> ResearchFeatureRow`
+
+`research_inputs.py` owns this canonical loader. Low-level feature functions remain testable independently, but production research campaigns should not manually concatenate raw Chainlink feeds.
+
+Pool-history feature construction uses an incremental settlement cursor for normal epoch-ordered replay rather than rescanning all prior rounds for every row. Non-monotonic replay falls back to the slower reference implementation instead of silently changing semantics.
+
 ## Calibration
 
 Raw model probabilities are not accepted directly by the EV engine. v0.7 adds a dependency-free histogram reliability calibrator with shrinkage toward the training base rate. Calibration training must be purged OOS and carry `train_max_epoch` provenance.
 
-## Research ledger
+## Research ledger and campaign manifest
 
 Every candidate decision can be serialized canonically and SHA-256 hashed with market/epoch/decision timestamp, model and feature-set IDs, raw and calibrated probability, expected value, action, feature digest, and `train_max_epoch`.
 
 The ledger is research evidence. It contains no key material and has no signing authority.
+
+`research_manifest.py` additionally binds each campaign to replay input/output digests, the oracle anchor/timeline, verified Binance archive hashes, and all timing assumptions including Chainlink availability lag. Changing a source or latency assumption changes the deterministic manifest digest.
 
 ## ClickHouse
 
@@ -46,3 +94,5 @@ The ledger is research evidence. It contains no key material and has no signing 
 ## Acceptance criteria before richer models
 
 A richer model is rejected unless it beats the simpler baselines on purged walk-forward data with lower Brier score and/or better Brier skill, acceptable calibration error, positive cost-aware net EV, stable performance across time/regimes, and feature-ablation evidence that the claimed alpha family contributes out of sample.
+
+A profitability claim must also survive sensitivity checks for Binance availability lag, Chainlink block-availability lag, gas, own-stake dilution, post-decision pool growth, and execution latency. Zero-lag or final-pool benchmarks may be reported only as explicitly infeasible/optimistic references.
