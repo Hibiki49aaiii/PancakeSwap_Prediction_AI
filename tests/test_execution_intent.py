@@ -120,6 +120,15 @@ def test_nonce_reservations_are_unique_for_same_sender(tmp_path: Path) -> None:
     assert second.nonce == 8
 
 
+def test_nonce_cannot_be_re_reserved_after_submission(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    rpc = _FakeForkRpc()
+    intent_id = _intent(store)
+    assert ForkExecutionCoordinator(store, rpc).submit(intent_id).state == IntentState.SUBMITTED
+    with pytest.raises(ValueError, match="cannot reserve nonce"):
+        store.reserve_nonce(intent_id, 99)
+
+
 def test_transport_unknown_blocks_duplicate_submit_until_nonce_reconciled(tmp_path: Path) -> None:
     store = _store(tmp_path)
     rpc = _FakeForkRpc()
@@ -164,6 +173,23 @@ def test_unknown_with_consumed_nonce_fails_closed(tmp_path: Path) -> None:
         coordinator.submit(intent_id)
 
 
+def test_ambiguous_nonce_too_low_rpc_error_is_not_marked_failed(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    rpc = _FakeForkRpc()
+    rpc.send_error = RpcResponseError(
+        "eth_sendTransaction",
+        {"code": -32000, "message": "nonce too low"},
+    )
+    coordinator = ForkExecutionCoordinator(store, rpc)
+    intent_id = _intent(store)
+    submitted = coordinator.submit(intent_id)
+    assert submitted.state == IntentState.UNKNOWN
+
+    rpc.pending_nonce = 8
+    reconciled = coordinator.reconcile(intent_id)
+    assert reconciled.state == IntentState.CONSUMED_UNKNOWN
+
+
 def test_deterministic_rpc_rejection_is_terminal_failed(tmp_path: Path) -> None:
     store = _store(tmp_path)
     rpc = _FakeForkRpc()
@@ -174,6 +200,39 @@ def test_deterministic_rpc_rejection_is_terminal_failed(tmp_path: Path) -> None:
     result = ForkExecutionCoordinator(store, rpc).submit(_intent(store))
     assert result.state == IntentState.FAILED
     assert result.attempts == 1
+
+
+def test_interrupted_submitting_with_free_nonce_is_retryable_and_journaled(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    rpc = _FakeForkRpc()
+    coordinator = ForkExecutionCoordinator(store, rpc)
+    intent_id = _intent(store)
+    store.reserve_nonce(intent_id, 7)
+    store.begin_submission(intent_id)
+
+    recovered = coordinator.reconcile(intent_id)
+    assert recovered.state == IntentState.RETRYABLE
+    attempts = store.attempts(intent_id)
+    assert len(attempts) == 1
+    assert attempts[0]["outcome"] == "interrupted"
+
+
+def test_interrupted_submitting_with_consumed_nonce_fails_closed_and_journaled(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    rpc = _FakeForkRpc()
+    coordinator = ForkExecutionCoordinator(store, rpc)
+    intent_id = _intent(store)
+    store.reserve_nonce(intent_id, 7)
+    store.begin_submission(intent_id)
+    rpc.pending_nonce = 8
+
+    recovered = coordinator.reconcile(intent_id)
+    assert recovered.state == IntentState.CONSUMED_UNKNOWN
+    attempts = store.attempts(intent_id)
+    assert len(attempts) == 1
+    assert attempts[0]["outcome"] == "unknown"
 
 
 def test_dropped_known_transaction_becomes_retryable_with_same_nonce(tmp_path: Path) -> None:
