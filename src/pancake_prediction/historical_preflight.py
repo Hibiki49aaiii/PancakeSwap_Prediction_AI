@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from .contracts import Market
 from .rpc import RpcError
