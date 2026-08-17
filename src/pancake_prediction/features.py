@@ -65,11 +65,13 @@ def _known_history_features(
     known.sort(key=lambda record: (record.end_timestamp or 0, record.epoch))
     recent20 = known[-20:]
     bull_rate = sum(record.label == "bull" for record in recent20) * PPM // len(recent20)
-    returns = [
-        abs(record.close_price - record.lock_price) * PPM // abs(record.lock_price)
-        for record in known[-12:]
-        if record.lock_price not in (None, 0) and record.close_price is not None
-    ]
+    returns: list[int] = []
+    for record in known[-12:]:
+        lock_price = record.lock_price
+        close_price = record.close_price
+        if lock_price in (None, 0) or close_price is None:
+            continue
+        returns.append(abs(close_price - lock_price) * PPM // abs(lock_price))
     abs_return = None if not returns else sum(returns) // len(returns)
     return bull_rate, abs_return
 
