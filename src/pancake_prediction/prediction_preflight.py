@@ -92,8 +92,10 @@ def _encode_address_word(address: str) -> str:
 def _decode_words(result: str, expected_words: int) -> tuple[int, ...]:
     raw_hex = result.removeprefix("0x")
     if len(raw_hex) != expected_words * 64:
+        actual_words = len(raw_hex) // 64
         raise ValueError(
-            f"unexpected ABI result length: expected {expected_words} words, got {len(raw_hex) // 64}"
+            f"unexpected ABI result length: expected {expected_words} words, "
+            f"got {actual_words}"
         )
     try:
         return tuple(
@@ -110,9 +112,20 @@ def _decode_bool_word(value: int, *, name: str) -> bool:
     return bool(value)
 
 
+def _quantity(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    return int(text, 16) if text.startswith("0x") else int(text)
+
+
 def _parse_bet_intent(intent: ExecutionIntent) -> tuple[str, BetSide, int]:
     market = next(
-        (symbol for symbol, config in MARKETS.items() if config.address.lower() == intent.target.lower()),
+        (
+            symbol
+            for symbol, config in MARKETS.items()
+            if config.address.lower() == intent.target.lower()
+        ),
         None,
     )
     if market is None:
@@ -138,7 +151,7 @@ def inspect_prediction_bet_intent(
     market, side, epoch = _parse_bet_intent(intent)
     snapshot_block = rpc.block_number()
     block = rpc.block(snapshot_block)
-    snapshot_timestamp = int(str(block["timestamp"]), 16) if isinstance(block["timestamp"], str) else int(block["timestamp"])
+    snapshot_timestamp = _quantity(block["timestamp"])
 
     current_epoch = _decode_words(
         rpc.eth_call(intent.target, CURRENT_EPOCH_SELECTOR, snapshot_block), 1
@@ -146,7 +159,8 @@ def inspect_prediction_bet_intent(
     min_bet_amount = _decode_words(
         rpc.eth_call(intent.target, MIN_BET_AMOUNT_SELECTOR, snapshot_block), 1
     )[0]
-    paused_word = _decode_words(rpc.eth_call(intent.target, PAUSED_SELECTOR, snapshot_block), 1)[0]
+    paused_result = rpc.eth_call(intent.target, PAUSED_SELECTOR, snapshot_block)
+    paused_word = _decode_words(paused_result, 1)[0]
     paused = _decode_bool_word(paused_word, name="paused")
 
     round_words = _decode_words(
@@ -161,12 +175,13 @@ def inspect_prediction_bet_intent(
     start_timestamp = round_words[1]
     lock_timestamp = round_words[2]
 
+    ledger_calldata = (
+        LEDGER_SELECTOR
+        + _encode_uint256_word(epoch)
+        + _encode_address_word(intent.sender)
+    )
     ledger_words = _decode_words(
-        rpc.eth_call(
-            intent.target,
-            LEDGER_SELECTOR + _encode_uint256_word(epoch) + _encode_address_word(intent.sender),
-            snapshot_block,
-        ),
+        rpc.eth_call(intent.target, ledger_calldata, snapshot_block),
         3,
     )
     existing_bet_amount = ledger_words[1]
@@ -188,9 +203,7 @@ def inspect_prediction_bet_intent(
     elif snapshot_timestamp >= lock_timestamp:
         reasons.append("round betting window is closed")
     if intent.value_wei < min_bet_amount:
-        reasons.append(
-            f"stake {intent.value_wei} is below minBetAmount {min_bet_amount}"
-        )
+        reasons.append(f"stake {intent.value_wei} is below minBetAmount {min_bet_amount}")
     if existing_bet_amount != 0:
         reasons.append("sender already has a bet in this round")
     if sender_code_present:
