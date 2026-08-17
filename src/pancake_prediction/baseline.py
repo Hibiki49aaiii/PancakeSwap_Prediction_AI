@@ -7,7 +7,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .alpha import AlphaFeatureRow
-from .calibration import CalibrationPoint, HistogramCalibrator, fit_histogram_calibrator
+from .calibration import (
+    CalibrationPoint,
+    HistogramCalibrator,
+    fit_histogram_calibrator,
+)
 from .features import PoolFeatureRow
 from .replay import ReplaySnapshot
 from .walkforward import OosMetrics, OosSignal, evaluate_oos, generate_expanding_folds
@@ -39,7 +43,9 @@ FEATURE_FAMILIES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-ALL_FEATURE_NAMES = tuple(name for names in FEATURE_FAMILIES.values() for name in names)
+ALL_FEATURE_NAMES = tuple(
+    name for names in FEATURE_FAMILIES.values() for name in names
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +226,9 @@ def fit_logistic_baseline(
         raise ValueError("outcomes must be binary 0/1")
 
     means, scales = _training_stats(ordered, feature_names)
-    matrix = [_standardized_vector(row, feature_names, means, scales) for row in ordered]
+    matrix = [
+        _standardized_vector(row, feature_names, means, scales) for row in ordered
+    ]
     weights = [0.0] * len(feature_names)
     base_rate = (sum(labels) + 0.5) / (len(labels) + 1.0)
     intercept = math.log(base_rate / (1.0 - base_rate))
@@ -286,9 +294,12 @@ def _fit_fold_model_and_calibrator(
         return None
     fit_rows = training_rows[:-calibration_rounds]
     calibration_rows = training_rows[-calibration_rounds:]
-    model = fit_logistic_baseline(fit_rows, outcomes, feature_names=feature_names)
+    model = fit_logistic_baseline(
+        fit_rows, outcomes, feature_names=feature_names
+    )
     calibration_points = [
-        CalibrationPoint(model.predict_ppm(row), outcomes[row.epoch]) for row in calibration_rows
+        CalibrationPoint(model.predict_ppm(row), outcomes[row.epoch])
+        for row in calibration_rows
     ]
     calibrator = fit_histogram_calibrator(
         calibration_points,
@@ -351,7 +362,9 @@ def run_walkforward_baseline(
             continue
         model, calibrator = fitted
         test_epochs = [
-            epoch for epoch in epochs if fold.test_start_epoch <= epoch <= fold.test_end_epoch
+            epoch
+            for epoch in epochs
+            if fold.test_start_epoch <= epoch <= fold.test_end_epoch
         ]
         for epoch in test_epochs:
             row = by_epoch[epoch]
@@ -388,7 +401,9 @@ def run_feature_family_ablation(
     cached_rows = tuple(rows)
     results: list[AblationResult] = []
     variants: list[tuple[str | None, str]] = [(None, "full-v1")]
-    variants.extend((family, f"without-{family}-v1") for family in FEATURE_FAMILIES)
+    variants.extend(
+        (family, f"without-{family}-v1") for family in FEATURE_FAMILIES
+    )
     for removed_family, feature_set_id in variants:
         feature_names = feature_names_without_family(removed_family)
         report = run_walkforward_baseline(
