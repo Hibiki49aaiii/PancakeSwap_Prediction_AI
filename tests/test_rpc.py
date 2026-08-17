@@ -1,8 +1,6 @@
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Callable
-from typing import Any
 
 import pytest
 
