@@ -80,19 +80,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(_status_payload(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command == "rpc-probe":
-        result = probe_archive_state(
+        probe_result = probe_archive_state(
             JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
             MARKETS[str(args.market)],
             int(args.block),
         )
-        print(json.dumps(result.as_dict(), sort_keys=True, separators=(",", ":")))
+        print(json.dumps(probe_result.as_dict(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command == "historical-preflight":
-        result = run_historical_preflight(
+        preflight_result = run_historical_preflight(
             JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
             MARKETS[str(args.market)],
         )
-        print(json.dumps(result.as_dict(), sort_keys=True, separators=(",", ":")))
+        print(json.dumps(preflight_result.as_dict(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command is None:
         parser.print_help()
