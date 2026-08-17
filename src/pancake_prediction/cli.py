@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 
 from .contracts import MARKETS
+from .historical_preflight import run_historical_preflight
 from .rpc import JsonRpcClient
 from .rpc_probe import probe_archive_state
 
@@ -31,6 +32,14 @@ def _status_payload() -> dict[str, object]:
     }
 
 
+def _add_rpc_url_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--rpc-url",
+        default=None,
+        help="BSC RPC URL; defaults to BSC_RPC_URL and is never printed",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pcs-prediction",
@@ -42,16 +51,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     probe = subparsers.add_parser(
         "rpc-probe",
-        help="verify historical BSC state access before collection",
+        help="verify historical BSC state access at one explicit block",
     )
     probe.add_argument("--market", choices=sorted(MARKETS), required=True)
     probe.add_argument("--block", type=int, required=True)
-    probe.add_argument(
-        "--rpc-url",
-        default=None,
-        help="BSC RPC URL; defaults to BSC_RPC_URL and is never printed",
+    _add_rpc_url_argument(probe)
+
+    historical = subparsers.add_parser(
+        "historical-preflight",
+        help="discover deployment and verify archive access at the oldest required block",
     )
+    historical.add_argument("--market", choices=sorted(MARKETS), required=True)
+    _add_rpc_url_argument(historical)
     return parser
+
+
+def _rpc_url_or_error(parser: argparse.ArgumentParser, value: object) -> str:
+    rpc_url = value or os.environ.get("BSC_RPC_URL")
+    if not rpc_url:
+        parser.error("command requires --rpc-url or BSC_RPC_URL")
+    return str(rpc_url)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -61,13 +80,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(_status_payload(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command == "rpc-probe":
-        rpc_url = args.rpc_url or os.environ.get("BSC_RPC_URL")
-        if not rpc_url:
-            parser.error("rpc-probe requires --rpc-url or BSC_RPC_URL")
         result = probe_archive_state(
-            JsonRpcClient(str(rpc_url)),
+            JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
             MARKETS[str(args.market)],
             int(args.block),
+        )
+        print(json.dumps(result.as_dict(), sort_keys=True, separators=(",", ":")))
+        return 0
+    if args.command == "historical-preflight":
+        result = run_historical_preflight(
+            JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
+            MARKETS[str(args.market)],
         )
         print(json.dumps(result.as_dict(), sort_keys=True, separators=(",", ":")))
         return 0
