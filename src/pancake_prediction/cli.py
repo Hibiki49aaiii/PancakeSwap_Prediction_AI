@@ -5,8 +5,10 @@ import json
 import os
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from .contracts import MARKETS
+from .historical_bootstrap import run_historical_bootstrap
 from .historical_preflight import run_historical_preflight
 from .rpc import JsonRpcClient
 from .rpc_probe import probe_archive_state
@@ -63,6 +65,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical.add_argument("--market", choices=sorted(MARKETS), required=True)
     _add_rpc_url_argument(historical)
+
+    bootstrap = subparsers.add_parser(
+        "historical-bootstrap",
+        help="preflight, collect confirmed history, run quality checks, and build replay",
+    )
+    bootstrap.add_argument("--market", choices=sorted(MARKETS), required=True)
+    bootstrap.add_argument("--db", type=Path, required=True)
+    bootstrap.add_argument("--confirmations", type=int, default=64)
+    bootstrap.add_argument("--from-block", type=int, default=None)
+    bootstrap.add_argument("--to-block", type=int, default=None)
+    bootstrap.add_argument("--chunk-size", type=int, default=2_000)
+    bootstrap.add_argument("--no-chainlink", action="store_true")
+    bootstrap.add_argument("--all-prediction-events", action="store_true")
+    _add_rpc_url_argument(bootstrap)
     return parser
 
 
@@ -93,6 +109,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             MARKETS[str(args.market)],
         )
         print(json.dumps(preflight_result.as_dict(), sort_keys=True, separators=(",", ":")))
+        return 0
+    if args.command == "historical-bootstrap":
+        bootstrap_result = run_historical_bootstrap(
+            JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
+            MARKETS[str(args.market)],
+            Path(args.db),
+            confirmations=int(args.confirmations),
+            from_block=args.from_block,
+            to_block=args.to_block,
+            chunk_size=int(args.chunk_size),
+            include_chainlink=not bool(args.no_chainlink),
+            prediction_analytic_only=not bool(args.all_prediction_events),
+        )
+        print(json.dumps(bootstrap_result.as_dict(), sort_keys=True, separators=(",", ":")))
         return 0
     if args.command is None:
         parser.print_help()
