@@ -96,9 +96,9 @@ def test_archive_iterator_rejects_non_increasing_ids(tmp_path: Path) -> None:
 def test_inspect_zip_emits_source_provenance(tmp_path: Path) -> None:
     path = tmp_path / "BNBUSDT-aggTrades-2026-08.zip"
     csv_payload = (
-        "1,600,1,10,10,1786000000000000,false,true\n"
-        "2,601,2,11,12,1786000000001000,true,true\n"
-    ).encode()
+        b"1,600,1,10,10,1786000000000000,false,true\n"
+        b"2,601,2,11,12,1786000000001000,true,true\n"
+    )
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("BNBUSDT-aggTrades-2026-08.csv", csv_payload)
 
