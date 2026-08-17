@@ -68,18 +68,39 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Implemented foundation |
-| 1 | Deterministic replay | Implemented foundation |
-| 2 | Leakage-safe, cost-aware backtest | Implemented foundation |
-| 3 | Purged walk-forward / OOS evaluation | Implemented foundation |
-| 4 | Paper / Shadow | Implemented foundation |
-| 5A | Durable execution fault model | Implemented and tested locally |
-| 5B | BSC fork execution | Harness ready; environment previously assumed for continued development |
-| 6A | Tiny-live readiness / safety preflight | Implemented foundation |
+| 0 | Historical data integrity | Implemented foundation; real full-history validation pending archive-capable BSC RPC |
+| 1 | Deterministic replay | Implemented and unit-tested foundation |
+| 2 | Leakage-safe, cost-aware backtest | Implemented and unit-tested foundation |
+| 3 | Purged walk-forward / OOS evaluation | Implemented and unit-tested foundation |
+| 4 | Paper / Shadow | Partial research-ledger foundation; operational long-running shadow campaign not yet completed |
+| 5A | Durable execution fault model | Fork-only durable intent/reconciliation state machine implemented and adversarially unit-tested |
+| 5B | BSC fork execution | Loopback-only transaction adapter and Pancake Bull/Bear intent encoding implemented; actual local BSC-fork campaign pending |
+| 6A | Tiny-live readiness / safety preflight | Not implemented as an executable live gate |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
 
-Infrastructure assumptions are never treated as evidence of profitability. Shadow economics, out-of-sample performance, and any funded validation must be demonstrated separately.
+Infrastructure assumptions and green unit tests are never treated as evidence of profitability. Real historical integrity, shadow economics, out-of-sample performance, local-fork recovery drills, and any separately authorized funded validation must be demonstrated independently.
+
+Stage 5's explicit safety contract and exit criteria are documented in [`docs/STAGE5_FORK_EXECUTION.md`](docs/STAGE5_FORK_EXECUTION.md).
+
+## CLI
+
+After installation, the package exposes:
+
+```bash
+pcs-prediction status
+```
+
+Historical collection remains read-only and uses a BSC JSON-RPC endpoint:
+
+```bash
+export BSC_RPC_URL='...'
+pcs-prediction historical-bootstrap \
+  --market BNBUSD \
+  --db artifacts/bnbusd-history.sqlite
+```
+
+The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
 
 ## Reference-design policy
 
