@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, TextIO
 
-from .binance import AggTrade, decimal_to_fixed, PRICE_SCALE, QTY_SCALE
+from .binance import PRICE_SCALE, QTY_SCALE, AggTrade, decimal_to_fixed
 
 ArchiveVenue = Literal["spot", "um_futures", "cm_futures"]
 TimestampUnit = Literal["auto", "milliseconds", "microseconds"]
