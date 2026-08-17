@@ -44,18 +44,19 @@ def _epochs(rows: list[sqlite3.Row]) -> set[int]:
 def build_quality_report(path: Path, market: str) -> QualityReport:
     with closing(sqlite3.connect(path)) as conn:
         conn.row_factory = sqlite3.Row
-        canonical = """
-            EXISTS (
-              SELECT 1 FROM blocks b
-              WHERE b.chain_id=e.chain_id AND b.number=e.block_number
-                AND b.hash=e.block_hash AND b.canonical=1
-            )
-        """
         rows = conn.execute(
-            (
-                "SELECT event_name,decoded_json FROM events e "
-                f"WHERE market=? AND source='prediction' AND {canonical}"
-            ),
+            """
+            SELECT event_name,decoded_json
+            FROM events e
+            WHERE market=? AND source='prediction'
+              AND EXISTS (
+                SELECT 1 FROM blocks b
+                WHERE b.chain_id=e.chain_id
+                  AND b.number=e.block_number
+                  AND b.hash=e.block_hash
+                  AND b.canonical=1
+              )
+            """,
             (market,),
         ).fetchall()
         starts_rows = [row for row in rows if row["event_name"] == "StartRound"]
