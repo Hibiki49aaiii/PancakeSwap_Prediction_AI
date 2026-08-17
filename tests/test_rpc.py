@@ -4,7 +4,7 @@ import urllib.request
 
 import pytest
 
-from pancake_prediction.rpc import JsonRpcClient, RpcResponseError
+from pancake_prediction.rpc import JsonRpcClient, LocalForkRpcClient, RpcResponseError
 
 
 class _Response:
@@ -72,3 +72,42 @@ def test_rpc_retries_must_be_positive() -> None:
     client = JsonRpcClient("http://127.0.0.1:8545", retries=0)
     with pytest.raises(ValueError, match="retries must be positive"):
         client.chain_id()
+
+
+def test_local_fork_rpc_rejects_non_loopback_endpoint() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        LocalForkRpcClient("https://bsc-dataseed.binance.org")
+
+
+def test_local_fork_rpc_accepts_loopback_and_is_marked_fork_only() -> None:
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    assert client.fork_only is True
+
+
+def test_local_fork_transaction_lookup_uses_eth_get_transaction_by_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_payload: dict[str, object] = {}
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert raw is not None
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        seen_payload.update(payload)
+        return _Response(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"hash": "0x" + "aa" * 32},
+            }
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://localhost:8545")
+    tx_hash = "0x" + "aa" * 32
+    result = client.transaction_by_hash(tx_hash)
+    assert result is not None and result["hash"] == tx_hash
+    assert seen_payload["method"] == "eth_getTransactionByHash"
+    assert seen_payload["params"] == [tx_hash]
