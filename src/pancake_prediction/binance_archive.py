@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import zipfile
 from collections.abc import Iterable, Iterator, Sequence
@@ -40,6 +41,53 @@ def sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_sha256(value: str) -> str:
+    normalized = value.strip().lower()
+    if len(normalized) != 64:
+        raise ValueError("SHA-256 digest must contain exactly 64 hex characters")
+    try:
+        int(normalized, 16)
+    except ValueError as exc:
+        raise ValueError("SHA-256 digest contains non-hex characters") from exc
+    return normalized
+
+
+def read_checksum_file(
+    path: Path,
+    *,
+    expected_filename: str | None = None,
+) -> str:
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError("Binance CHECKSUM file must contain exactly one non-empty line")
+    parts = lines[0].split(maxsplit=1)
+    digest = _validate_sha256(parts[0])
+    if expected_filename is not None:
+        if len(parts) != 2:
+            raise ValueError("Binance CHECKSUM file is missing its archive filename")
+        stated_name = Path(parts[1].lstrip("*")).name
+        if stated_name != Path(expected_filename).name:
+            raise ValueError(
+                f"checksum filename mismatch: expected {Path(expected_filename).name!r}, "
+                f"got {stated_name!r}"
+            )
+    return digest
+
+
+def verify_archive_checksum(archive_path: Path, checksum_path: Path) -> str:
+    expected = read_checksum_file(
+        checksum_path,
+        expected_filename=archive_path.name,
+    )
+    actual = sha256_file(archive_path)
+    if not hmac.compare_digest(expected, actual):
+        raise ValueError(
+            f"Binance archive SHA-256 mismatch for {archive_path.name}: "
+            f"expected {expected}, got {actual}"
+        )
+    return actual
 
 
 def normalize_archive_timestamp(value: object, *, unit: TimestampUnit) -> int:
