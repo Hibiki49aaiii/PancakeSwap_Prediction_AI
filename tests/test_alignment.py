@@ -122,6 +122,52 @@ def test_chainlink_update_is_not_available_before_its_block() -> None:
     assert aligned is None
 
 
+def test_chainlink_propagation_lag_can_cross_decision_cutoff() -> None:
+    decision = 100_000
+    spot = (
+        _trade(
+            1,
+            trade_timestamp_ms=99_000,
+            event_timestamp_ms=99_010,
+            price_e8=60_000_000_000,
+        ),
+    )
+    chainlink = (
+        _chainlink_event(
+            block_timestamp=99,
+            updated_at=99,
+            price_e8=60_000_000_000,
+        ),
+    )
+    without_lag = build_aligned_alpha_inputs(
+        decision_timestamp_ms=decision,
+        chainlink_events=chainlink,
+        spot_trades=spot,
+        flow_lookback_ms=10_000,
+        chainlink_availability_lag_ms=0,
+    )
+    with_lag = build_aligned_alpha_inputs(
+        decision_timestamp_ms=decision,
+        chainlink_events=chainlink,
+        spot_trades=spot,
+        flow_lookback_ms=10_000,
+        chainlink_availability_lag_ms=1_500,
+    )
+    assert without_lag is not None
+    assert with_lag is None
+
+
+def test_chainlink_propagation_lag_cannot_be_negative() -> None:
+    with pytest.raises(ValueError, match="availability lag"):
+        build_aligned_alpha_inputs(
+            decision_timestamp_ms=100_000,
+            chainlink_events=(),
+            spot_trades=(),
+            flow_lookback_ms=10_000,
+            chainlink_availability_lag_ms=-1,
+        )
+
+
 def test_aligned_inputs_feed_alpha_without_future_data() -> None:
     decision = 100_000
     spot = (
