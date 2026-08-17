@@ -92,7 +92,7 @@ def test_local_fork_transaction_lookup_uses_eth_get_transaction_by_hash(
     def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
         del kwargs
         raw = request.data
-        assert raw is not None
+        assert isinstance(raw, bytes)
         payload = json.loads(raw)
         assert isinstance(payload, dict)
         seen_payload.update(payload)
