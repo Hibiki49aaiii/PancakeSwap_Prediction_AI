@@ -98,8 +98,8 @@ def test_target_final_pool_cannot_change_its_own_projection() -> None:
     first_replay, events = _fixture(1_000, 100)
     second_replay = replace(
         first_replay,
-        rounds=first_replay.rounds[:-1]
-        + (
+        rounds=(
+            *first_replay.rounds[:-1],
             replace(
                 first_replay.rounds[-1],
                 bull_amount_wei=10,
