@@ -69,7 +69,7 @@ def _known_history_features(
     for record in known[-12:]:
         lock_price = record.lock_price
         close_price = record.close_price
-        if lock_price in (None, 0) or close_price is None:
+        if lock_price is None or lock_price == 0 or close_price is None:
             continue
         returns.append(abs(close_price - lock_price) * PPM // abs(lock_price))
     abs_return = None if not returns else sum(returns) // len(returns)
