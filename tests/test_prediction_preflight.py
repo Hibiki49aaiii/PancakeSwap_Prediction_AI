@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from pancake_prediction.execution_intent import ExecutionIntentStore
+from pancake_prediction.execution_intent import ExecutionIntent, ExecutionIntentStore
 from pancake_prediction.prediction_preflight import (
     CURRENT_EPOCH_SELECTOR,
     LEDGER_SELECTOR,
@@ -87,7 +87,7 @@ class _FakePreflightRpc:
         return self.sender_balance
 
 
-def _intent(tmp_path: Path, *, epoch: int = 123, stake: int = 1_000) -> object:
+def _intent(tmp_path: Path, *, epoch: int = 123, stake: int = 1_000) -> ExecutionIntent:
     store = ExecutionIntentStore(tmp_path / "execution.sqlite3")
     store.initialize()
     return build_prediction_bet_intent(
@@ -103,7 +103,7 @@ def _intent(tmp_path: Path, *, epoch: int = 123, stake: int = 1_000) -> object:
 def test_ready_preflight_uses_one_fixed_block_snapshot(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     intent = _intent(tmp_path)
-    result = inspect_prediction_bet_intent(rpc, intent)  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, intent)
 
     assert result.ready is True
     assert result.reasons == ()
@@ -126,7 +126,7 @@ def test_ready_preflight_uses_one_fixed_block_snapshot(tmp_path: Path) -> None:
 def test_preflight_rejects_paused_contract(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.paused = True
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert "prediction contract is paused" in result.reasons
 
@@ -134,7 +134,7 @@ def test_preflight_rejects_paused_contract(tmp_path: Path) -> None:
 def test_preflight_rejects_non_current_epoch(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.current_epoch = 124
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert any("not current epoch" in reason for reason in result.reasons)
 
@@ -150,14 +150,14 @@ def test_preflight_enforces_strict_betting_window(
 ) -> None:
     rpc = _FakePreflightRpc()
     rpc.timestamp = timestamp
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert any(message in reason for reason in result.reasons)
 
 
 def test_preflight_rejects_below_minimum_stake(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path, stake=99))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path, stake=99))
     assert result.ready is False
     assert any("below minBetAmount" in reason for reason in result.reasons)
 
@@ -165,7 +165,7 @@ def test_preflight_rejects_below_minimum_stake(tmp_path: Path) -> None:
 def test_preflight_rejects_existing_bet(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.existing_bet = 200
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert "sender already has a bet in this round" in result.reasons
 
@@ -173,7 +173,7 @@ def test_preflight_rejects_existing_bet(tmp_path: Path) -> None:
 def test_preflight_rejects_contract_sender(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.sender_code = "0x6001"
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert "sender has contract code and would fail notContract" in result.reasons
 
@@ -181,7 +181,7 @@ def test_preflight_rejects_contract_sender(tmp_path: Path) -> None:
 def test_preflight_rejects_insufficient_stake_balance(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.sender_balance = 999
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path, stake=1_000))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path, stake=1_000))
     assert result.ready is False
     assert "sender balance is below the intended stake" in result.reasons
 
@@ -189,7 +189,7 @@ def test_preflight_rejects_insufficient_stake_balance(tmp_path: Path) -> None:
 def test_preflight_requires_round_getter_epoch_match(tmp_path: Path) -> None:
     rpc = _FakePreflightRpc()
     rpc.round_epoch = 0
-    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+    result = inspect_prediction_bet_intent(rpc, _intent(tmp_path))
     assert result.ready is False
     assert any("round getter epoch" in reason for reason in result.reasons)
 
@@ -200,7 +200,7 @@ def test_require_ready_raises_with_all_reasons(tmp_path: Path) -> None:
     rpc.current_epoch = 124
     rpc.existing_bet = 1
     with pytest.raises(ValueError, match="Prediction bet preflight failed") as exc_info:
-        require_prediction_bet_ready(rpc, _intent(tmp_path))  # type: ignore[arg-type]
+        require_prediction_bet_ready(rpc, _intent(tmp_path))
     message = str(exc_info.value)
     assert "paused" in message
     assert "not current epoch" in message
