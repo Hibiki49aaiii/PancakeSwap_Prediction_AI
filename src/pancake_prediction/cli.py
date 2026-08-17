@@ -7,8 +7,14 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import cast
 
-from .binance_archive import inspect_archive_aggtrades, verify_archive_checksum
+from .binance_archive import (
+    ArchiveVenue,
+    TimestampUnit,
+    inspect_archive_aggtrades,
+    verify_archive_checksum,
+)
 from .contracts import MARKETS
 from .execution_intent import ExecutionIntent, ExecutionIntentStore, ForkExecutionCoordinator
 from .execution_report import build_execution_intent_report
@@ -244,22 +250,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(bootstrap_result.as_dict())
         return 0
     if args.command == "oracle-history-report":
-        report = build_active_oracle_history(Path(args.db), str(args.market))
-        _print_json(report.as_dict())
+        oracle_history_result = build_active_oracle_history(
+            Path(args.db),
+            str(args.market),
+        )
+        _print_json(oracle_history_result.as_dict())
         return 0
     if args.command == "binance-archive-inspect":
         availability_lag_ms = int(args.availability_lag_ms)
         if availability_lag_ms < 0:
             parser.error("--availability-lag-ms must be non-negative")
         verify_archive_checksum(Path(args.archive), Path(args.checksum))
-        report = inspect_archive_aggtrades(
+        archive_report = inspect_archive_aggtrades(
             Path(args.archive),
             symbol=BINANCE_SYMBOL_BY_MARKET[str(args.market)],
-            venue=str(args.venue),
-            timestamp_unit=str(args.timestamp_unit),
+            venue=cast(ArchiveVenue, str(args.venue)),
+            timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
             availability_lag_ms=availability_lag_ms,
         )
-        payload = report.as_dict()
+        payload = archive_report.as_dict()
         payload["checksum_verified"] = True
         _print_json(payload)
         return 0
@@ -312,9 +321,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(_intent_payload(intent))
         return 0
     if args.command == "fork-intent-report":
-        report = build_execution_intent_report(Path(args.db))
-        _print_json(report.as_dict())
-        return 0 if report.gate_ready else 2
+        execution_report = build_execution_intent_report(Path(args.db))
+        _print_json(execution_report.as_dict())
+        return 0 if execution_report.gate_ready else 2
     if args.command is None:
         parser.print_help()
         return 0
