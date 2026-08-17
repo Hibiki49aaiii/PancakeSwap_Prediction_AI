@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
-from .collector import HistoricalCollector
+from .collector import HistoricalCollector, ReadOnlyRpc
 from .contracts import Market
-from .historical_preflight import HistoricalPreflightResult, run_historical_preflight
+from .historical_preflight import (
+    HistoricalPreflightResult,
+    HistoricalPreflightRpc,
+    run_historical_preflight,
+)
 from .quality import QualityReport, build_quality_report
 from .replay import ReplaySnapshot, build_replay_snapshot
 from .rpc import RpcError
 from .store import EventStore
+
+
+class HistoricalBootstrapRpc(HistoricalPreflightRpc, ReadOnlyRpc, Protocol):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +90,7 @@ def resolve_collection_range(
 
 
 def run_historical_bootstrap(
-    rpc: object,
+    rpc: HistoricalBootstrapRpc,
     market: Market,
     database: Path,
     *,
@@ -92,7 +101,7 @@ def run_historical_bootstrap(
     include_chainlink: bool = True,
     prediction_analytic_only: bool = True,
 ) -> HistoricalBootstrapResult:
-    preflight = run_historical_preflight(rpc, market)  # type: ignore[arg-type]
+    preflight = run_historical_preflight(rpc, market)
     collection_range = resolve_collection_range(
         preflight,
         confirmations=confirmations,
@@ -102,7 +111,7 @@ def run_historical_bootstrap(
     store = EventStore(database)
     store.initialize()
     collector = HistoricalCollector(
-        rpc=rpc,  # type: ignore[arg-type]
+        rpc=rpc,
         store=store,
         chunk_size=chunk_size,
     )
