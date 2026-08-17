@@ -73,6 +73,7 @@ class PoolProjection:
 class BacktestEventIndex:
     bets_by_epoch: dict[int, tuple[ChainEvent, ...]]
     protocol_events: tuple[ChainEvent, ...]
+    start_order_by_epoch: dict[int, tuple[int, int, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,11 +176,19 @@ class BacktestReport:
 def build_event_index(events: tuple[ChainEvent, ...]) -> BacktestEventIndex:
     bets: dict[int, list[ChainEvent]] = {}
     protocol: list[ChainEvent] = []
+    start_orders: dict[int, tuple[int, int, int]] = {}
     for event in events:
         if event.event_name in ("BetBull", "BetBear"):
             epoch = event.decoded.get("epoch")
             if isinstance(epoch, int):
                 bets.setdefault(epoch, []).append(event)
+        elif event.event_name == "StartRound":
+            epoch = event.decoded.get("epoch")
+            if isinstance(epoch, int):
+                order = (event.block_number, event.tx_index, event.log_index)
+                existing = start_orders.get(epoch)
+                if existing is None or order < existing:
+                    start_orders[epoch] = order
         elif event.event_name in ("NewBufferAndIntervalSeconds", "NewTreasuryFee"):
             protocol.append(event)
     frozen_bets = {
@@ -189,20 +198,21 @@ def build_event_index(events: tuple[ChainEvent, ...]) -> BacktestEventIndex:
         for epoch, rows in bets.items()
     }
     protocol.sort(key=lambda item: (item.block_number, item.tx_index, item.log_index))
-    return BacktestEventIndex(frozen_bets, tuple(protocol))
+    return BacktestEventIndex(frozen_bets, tuple(protocol), start_orders)
 
 
 def _known_protocol_state(
     events: tuple[ChainEvent, ...],
     *,
-    before_block: int,
+    before_order: tuple[int, int, int],
     config: BacktestConfig,
 ) -> tuple[int, int, int]:
     interval = config.initial_interval_seconds
     fee = config.initial_treasury_fee_bps
     buffer = config.initial_buffer_seconds
     for event in events:
-        if event.block_number >= before_block:
+        event_order = (event.block_number, event.tx_index, event.log_index)
+        if event_order >= before_order:
             break
         if event.event_name == "NewBufferAndIntervalSeconds":
             interval_value = event.decoded.get("intervalSeconds")
@@ -246,9 +256,12 @@ def build_decision_snapshot(
     if round_record.start_timestamp is None or round_record.start_block is None:
         return None
     index = build_event_index(events) if event_index is None else event_index
+    start_order = index.start_order_by_epoch.get(
+        round_record.epoch, (round_record.start_block, -1, -1)
+    )
     interval, fee, buffer = _known_protocol_state(
         index.protocol_events,
-        before_block=round_record.start_block,
+        before_order=start_order,
         config=config,
     )
     scheduled_lock = round_record.start_timestamp + interval
