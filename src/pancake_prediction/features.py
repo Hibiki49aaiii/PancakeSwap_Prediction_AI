@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass, replace
+from itertools import pairwise
 
-from .backtest import BacktestConfig, BacktestEventIndex, build_decision_snapshot, build_event_index
+from .backtest import (
+    BacktestConfig,
+    BacktestEventIndex,
+    DecisionSnapshot,
+    build_decision_snapshot,
+    build_event_index,
+)
 from .economics import PPM
 from .replay import ChainEvent, ReplaySnapshot, RoundRecord
 
@@ -49,20 +57,11 @@ def _pool_stats(
     return count, bull_60, bear_60, bettors
 
 
-def _known_history_features(
-    replay: ReplaySnapshot, *, cutoff: int, before_epoch: int
+def _history_features_from_records(
+    known: list[RoundRecord],
 ) -> tuple[int | None, int | None]:
-    known = [
-        record
-        for record in replay.rounds
-        if record.epoch < before_epoch
-        and record.end_timestamp is not None
-        and record.end_timestamp < cutoff
-        and record.label in ("bull", "bear")
-    ]
     if not known:
         return None, None
-    known.sort(key=lambda record: (record.end_timestamp or 0, record.epoch))
     recent20 = known[-20:]
     bull_rate = sum(record.label == "bull" for record in recent20) * PPM // len(recent20)
     returns: list[int] = []
@@ -74,6 +73,51 @@ def _known_history_features(
         returns.append(abs(close_price - lock_price) * PPM // abs(lock_price))
     abs_return = None if not returns else sum(returns) // len(returns)
     return bull_rate, abs_return
+
+
+def _known_history_features(
+    replay: ReplaySnapshot, *, cutoff: int, before_epoch: int
+) -> tuple[int | None, int | None]:
+    known = [
+        record
+        for record in replay.rounds
+        if record.epoch < before_epoch
+        and record.end_timestamp is not None
+        and record.end_timestamp < cutoff
+        and record.label in ("bull", "bear")
+    ]
+    known.sort(key=lambda record: (record.end_timestamp or 0, record.epoch))
+    return _history_features_from_records(known)
+
+
+def _row_from_snapshot(
+    replay: ReplaySnapshot,
+    record: RoundRecord,
+    index: BacktestEventIndex,
+    snapshot: DecisionSnapshot,
+    history_features: tuple[int | None, int | None],
+) -> PoolFeatureRow:
+    epoch_bets = index.bets_by_epoch.get(record.epoch, ())
+    count, bull_60, bear_60, bettors = _pool_stats(
+        epoch_bets, cutoff=snapshot.decision_timestamp
+    )
+    prior_bull, prior_abs_return = history_features
+    total = snapshot.total_observed_wei
+    return PoolFeatureRow(
+        market=replay.market,
+        epoch=record.epoch,
+        feature_timestamp=snapshot.decision_timestamp,
+        scheduled_lock_timestamp=snapshot.scheduled_lock_timestamp,
+        bull_pool_wei=snapshot.bull_observed_wei,
+        bear_pool_wei=snapshot.bear_observed_wei,
+        bull_share_ppm=(None if total == 0 else snapshot.bull_observed_wei * PPM // total),
+        bet_count=count,
+        unique_bettors=len(bettors),
+        last_60s_bull_wei=bull_60,
+        last_60s_bear_wei=bear_60,
+        prior_bull_rate_20_ppm=prior_bull,
+        prior_abs_return_12_ppm=prior_abs_return,
+    )
 
 
 def build_pool_feature_row(
@@ -94,35 +138,18 @@ def build_pool_feature_row(
     )
     if snapshot is None:
         return None
-    epoch_bets = index.bets_by_epoch.get(record.epoch, ())
-    count, bull_60, bear_60, bettors = _pool_stats(epoch_bets, cutoff=snapshot.decision_timestamp)
-    prior_bull, prior_abs_return = _known_history_features(
+    history = _known_history_features(
         replay, cutoff=snapshot.decision_timestamp, before_epoch=record.epoch
     )
-    total = snapshot.total_observed_wei
-    return PoolFeatureRow(
-        market=replay.market,
-        epoch=record.epoch,
-        feature_timestamp=snapshot.decision_timestamp,
-        scheduled_lock_timestamp=snapshot.scheduled_lock_timestamp,
-        bull_pool_wei=snapshot.bull_observed_wei,
-        bear_pool_wei=snapshot.bear_observed_wei,
-        bull_share_ppm=(None if total == 0 else snapshot.bull_observed_wei * PPM // total),
-        bet_count=count,
-        unique_bettors=len(bettors),
-        last_60s_bull_wei=bull_60,
-        last_60s_bear_wei=bear_60,
-        prior_bull_rate_20_ppm=prior_bull,
-        prior_abs_return_12_ppm=prior_abs_return,
-    )
+    return _row_from_snapshot(replay, record, index, snapshot, history)
 
 
-def build_pool_feature_rows(
+def _fallback_pool_feature_rows(
     replay: ReplaySnapshot,
     events: tuple[ChainEvent, ...],
     config: BacktestConfig,
     *,
-    feature_lead_seconds: int = 20,
+    feature_lead_seconds: int,
 ) -> tuple[PoolFeatureRow, ...]:
     index = build_event_index(events)
     rows: list[PoolFeatureRow] = []
@@ -137,4 +164,61 @@ def build_pool_feature_rows(
         )
         if row is not None:
             rows.append(row)
+    return tuple(rows)
+
+
+def build_pool_feature_rows(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    config: BacktestConfig,
+    *,
+    feature_lead_seconds: int = 20,
+) -> tuple[PoolFeatureRow, ...]:
+    if feature_lead_seconds < 0:
+        raise ValueError("feature_lead_seconds must be non-negative")
+    if any(right.epoch <= left.epoch for left, right in pairwise(replay.rounds)):
+        return _fallback_pool_feature_rows(
+            replay,
+            events,
+            config,
+            feature_lead_seconds=feature_lead_seconds,
+        )
+
+    index = build_event_index(events)
+    feature_config = replace(config, decision_lead_seconds=feature_lead_seconds)
+    pending: list[tuple[int, int, RoundRecord]] = []
+    known: list[RoundRecord] = []
+    high_water_cutoff = -1
+    previous: RoundRecord | None = None
+    rows: list[PoolFeatureRow] = []
+
+    for record in replay.rounds:
+        if (
+            previous is not None
+            and previous.end_timestamp is not None
+            and previous.label in ("bull", "bear")
+        ):
+            heapq.heappush(pending, (previous.end_timestamp, previous.epoch, previous))
+        previous = record
+
+        snapshot = build_decision_snapshot(
+            replay,
+            record,
+            events,
+            feature_config,
+            event_index=index,
+        )
+        if snapshot is None:
+            continue
+        cutoff = snapshot.decision_timestamp
+        if cutoff < high_water_cutoff:
+            history = _known_history_features(
+                replay, cutoff=cutoff, before_epoch=record.epoch
+            )
+        else:
+            while pending and pending[0][0] < cutoff:
+                known.append(heapq.heappop(pending)[2])
+            high_water_cutoff = cutoff
+            history = _history_features_from_records(known)
+        rows.append(_row_from_snapshot(replay, record, index, snapshot, history))
     return tuple(rows)
