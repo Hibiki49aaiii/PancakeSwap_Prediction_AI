@@ -54,7 +54,7 @@ def build_quality_report(path: Path, market: str) -> QualityReport:
         rows = conn.execute(
             (
                 "SELECT event_name,decoded_json FROM events e "
-                f"WHERE market=? AND source='prediction' AND {canonical}"  # noqa: S608
+                f"WHERE market=? AND source='prediction' AND {canonical}"
             ),
             (market,),
         ).fetchall()
