@@ -8,13 +8,16 @@ from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .binance_archive import inspect_archive_aggtrades, verify_archive_checksum
 from .contracts import MARKETS
 from .execution_intent import ExecutionIntent, ExecutionIntentStore, ForkExecutionCoordinator
 from .execution_report import build_execution_intent_report
 from .historical_bootstrap import run_historical_bootstrap
 from .historical_preflight import run_historical_preflight
+from .oracle_history import build_active_oracle_history
 from .prediction_preflight import inspect_prediction_bet_intent
 from .prediction_tx import BetSide, build_prediction_bet_intent
+from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
 
@@ -103,6 +106,28 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--no-chainlink", action="store_true")
     bootstrap.add_argument("--all-prediction-events", action="store_true")
     _add_rpc_url_argument(bootstrap)
+
+    oracle_report = subparsers.add_parser(
+        "oracle-history-report",
+        help="validate active Chainlink oracle history and report excluded stale/inactive feeds",
+    )
+    oracle_report.add_argument("--market", choices=sorted(MARKETS), required=True)
+    oracle_report.add_argument("--db", type=Path, required=True)
+
+    archive_inspect = subparsers.add_parser(
+        "binance-archive-inspect",
+        help="verify one official Binance aggTrades archive and print normalized provenance",
+    )
+    archive_inspect.add_argument("--market", choices=sorted(MARKETS), required=True)
+    archive_inspect.add_argument("--archive", type=Path, required=True)
+    archive_inspect.add_argument("--checksum", type=Path, required=True)
+    archive_inspect.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    archive_inspect.add_argument(
+        "--timestamp-unit",
+        choices=("auto", "milliseconds", "microseconds"),
+        default="auto",
+    )
+    archive_inspect.add_argument("--availability-lag-ms", type=int, required=True)
 
     fork_prepare = subparsers.add_parser(
         "fork-prepare-account",
@@ -217,6 +242,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             prediction_analytic_only=not bool(args.all_prediction_events),
         )
         _print_json(bootstrap_result.as_dict())
+        return 0
+    if args.command == "oracle-history-report":
+        report = build_active_oracle_history(Path(args.db), str(args.market))
+        _print_json(report.as_dict())
+        return 0
+    if args.command == "binance-archive-inspect":
+        availability_lag_ms = int(args.availability_lag_ms)
+        if availability_lag_ms < 0:
+            parser.error("--availability-lag-ms must be non-negative")
+        verify_archive_checksum(Path(args.archive), Path(args.checksum))
+        report = inspect_archive_aggtrades(
+            Path(args.archive),
+            symbol=BINANCE_SYMBOL_BY_MARKET[str(args.market)],
+            venue=str(args.venue),
+            timestamp_unit=str(args.timestamp_unit),
+            availability_lag_ms=availability_lag_ms,
+        )
+        payload = report.as_dict()
+        payload["checksum_verified"] = True
+        _print_json(payload)
         return 0
     if args.command == "fork-prepare-account":
         fork_rpc = LocalForkRpcClient(str(args.fork_rpc_url))
