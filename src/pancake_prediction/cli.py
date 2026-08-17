@@ -12,6 +12,7 @@ from .contracts import MARKETS
 from .execution_intent import ExecutionIntent, ExecutionIntentStore, ForkExecutionCoordinator
 from .historical_bootstrap import run_historical_bootstrap
 from .historical_preflight import run_historical_preflight
+from .prediction_preflight import inspect_prediction_bet_intent
 from .prediction_tx import BetSide, build_prediction_bet_intent
 from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
@@ -35,6 +36,7 @@ def _status_payload() -> dict[str, object]:
         "signing_enabled": False,
         "fork_local_broadcast": True,
         "fork_rpc_loopback_only": True,
+        "fork_prediction_preflight_required": True,
         "markets": ["BNBUSD", "BTCUSD", "ETHUSD"],
     }
 
@@ -120,9 +122,17 @@ def build_parser() -> argparse.ArgumentParser:
     fork_create.add_argument("--side", choices=[side.value for side in BetSide], required=True)
     fork_create.add_argument("--stake-wei", type=int, required=True)
 
+    fork_preflight = subparsers.add_parser(
+        "fork-bet-preflight",
+        help="inspect whether a durable bet intent is currently bettable on the local fork",
+    )
+    _add_fork_rpc_url_argument(fork_preflight)
+    fork_preflight.add_argument("--db", type=Path, required=True)
+    fork_preflight.add_argument("--intent-id", type=int, required=True)
+
     fork_submit = subparsers.add_parser(
         "fork-submit-intent",
-        help="submit one durable intent to a loopback local fork only",
+        help="preflight and submit one Prediction bet intent to a loopback local fork only",
     )
     _add_fork_rpc_url_argument(fork_submit)
     fork_submit.add_argument("--db", type=Path, required=True)
@@ -152,6 +162,18 @@ def _execution_store(path: str | Path) -> ExecutionIntentStore:
     store = ExecutionIntentStore(Path(path))
     store.initialize()
     return store
+
+
+def _prediction_preflight_or_error(
+    parser: argparse.ArgumentParser,
+    fork_rpc: LocalForkRpcClient,
+    store: ExecutionIntentStore,
+    intent_id: int,
+) -> dict[str, object]:
+    result = inspect_prediction_bet_intent(fork_rpc, store.get(intent_id))
+    if not result.ready:
+        parser.error("Prediction bet preflight failed: " + "; ".join(result.reasons))
+    return result.as_dict()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -210,11 +232,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _print_json(_intent_payload(intent))
         return 0
+    if args.command == "fork-bet-preflight":
+        store = _execution_store(args.db)
+        fork_rpc = LocalForkRpcClient(str(args.fork_rpc_url))
+        result = inspect_prediction_bet_intent(fork_rpc, store.get(int(args.intent_id)))
+        _print_json(result.as_dict())
+        return 0 if result.ready else 2
     if args.command == "fork-submit-intent":
-        coordinator = ForkExecutionCoordinator(
-            _execution_store(args.db),
-            LocalForkRpcClient(str(args.fork_rpc_url)),
-        )
+        store = _execution_store(args.db)
+        fork_rpc = LocalForkRpcClient(str(args.fork_rpc_url))
+        _prediction_preflight_or_error(parser, fork_rpc, store, int(args.intent_id))
+        coordinator = ForkExecutionCoordinator(store, fork_rpc)
         intent = coordinator.submit(
             int(args.intent_id),
             gas=args.gas,
