@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
-from typing import Any, Iterable
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from typing import Any
 
 PRICE_SCALE = 100_000_000
 QTY_SCALE = 100_000_000

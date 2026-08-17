@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Iterable
+from itertools import pairwise
 
 PPM = 1_000_000
 
@@ -59,7 +60,7 @@ def empirical_oracle_update_hazard_ppm(
         raise ValueError("future oracle update timestamp would leak target information")
     if not timestamps:
         return None
-    intervals = [right - left for left, right in zip(timestamps, timestamps[1:]) if right > left]
+    intervals = [right - left for left, right in pairwise(timestamps) if right > left]
     if len(intervals) < min_intervals:
         return None
     current_age = decision_timestamp_ms - timestamps[-1]
@@ -123,8 +124,12 @@ def build_alpha_feature_row(
         perp_price_e8=None if perp is None else perp.price_e8,
         perp_observed_at_ms=None if perp is None else perp.observed_at_ms,
         spot_oracle_gap_ppm=relative_gap_ppm(spot.price_e8, chainlink.price_e8),
-        perp_oracle_gap_ppm=None if perp is None else relative_gap_ppm(perp.price_e8, chainlink.price_e8),
-        spot_perp_basis_ppm=None if perp is None else relative_gap_ppm(perp.price_e8, spot.price_e8),
+        perp_oracle_gap_ppm=(
+            None if perp is None else relative_gap_ppm(perp.price_e8, chainlink.price_e8)
+        ),
+        spot_perp_basis_ppm=(
+            None if perp is None else relative_gap_ppm(perp.price_e8, spot.price_e8)
+        ),
         spot_flow_imbalance_ppm=spot_flow_imbalance_ppm,
         perp_flow_imbalance_ppm=perp_flow_imbalance_ppm,
         oracle_update_hazard_ppm=hazard,
