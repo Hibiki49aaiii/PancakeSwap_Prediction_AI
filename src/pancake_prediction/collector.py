@@ -249,6 +249,18 @@ class HistoricalCollector:
             cursor = end + 1
         return inserted, new_oracles
 
+    def _stored_oracle_addresses(self, market: Market) -> set[str]:
+        addresses: set[str] = set()
+        for decoded in self.store.canonical_decoded_events(
+            market=market.symbol,
+            source="prediction",
+            event_name="NewOracle",
+        ):
+            oracle = decoded.get("oracle")
+            if isinstance(oracle, str):
+                addresses.add(oracle.lower())
+        return addresses
+
     def collect_market(
         self,
         market: Market,
@@ -326,7 +338,8 @@ class HistoricalCollector:
         oracle_addresses: set[str] = set()
         oracle_count = 0
         if include_chainlink:
-            oracle_addresses = {address.lower() for address in new_oracles}
+            oracle_addresses = self._stored_oracle_addresses(market)
+            oracle_addresses.update(address.lower() for address in new_oracles)
             try:
                 oracle_addresses.add(self.oracle_at(market, to_block).lower())
             except RpcError:
