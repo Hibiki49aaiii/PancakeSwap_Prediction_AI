@@ -153,6 +153,10 @@ class LocalForkRpcClient(JsonRpcClient):
         result = self.call("eth_getTransactionReceipt", [tx_hash])
         return None if result is None else cast(dict[str, Any], result)
 
+    def transaction_by_hash(self, tx_hash: str) -> dict[str, Any] | None:
+        result = self.call("eth_getTransactionByHash", [tx_hash])
+        return None if result is None else cast(dict[str, Any], result)
+
     def impersonate_account(self, address: str) -> None:
         result = self.call("anvil_impersonateAccount", [address])
         if result is not True:
