@@ -10,6 +10,7 @@ from pancake_prediction.historical_bootstrap import (
 )
 from pancake_prediction.historical_preflight import HistoricalPreflightResult
 from pancake_prediction.rpc_probe import ArchiveProbeResult
+from pancake_prediction.store import EventStore
 
 
 class FakeBootstrapRpc:
@@ -97,3 +98,7 @@ def test_historical_bootstrap_initializes_db_collects_and_replays(tmp_path: Path
     assert result.replay_rounds == 0
     assert len(result.replay_input_digest) == 64
     assert len(result.replay_output_digest) == 64
+
+    store = EventStore(database)
+    assert store.metadata("BNBUSD.oracle_anchor_block") == "100"
+    assert store.metadata("BNBUSD.oracle_anchor_address") == "0x" + "11" * 20
