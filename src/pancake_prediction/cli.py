@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .contracts import MARKETS
 from .execution_intent import ExecutionIntent, ExecutionIntentStore, ForkExecutionCoordinator
+from .execution_report import build_execution_intent_report
 from .historical_bootstrap import run_historical_bootstrap
 from .historical_preflight import run_historical_preflight
 from .prediction_preflight import inspect_prediction_bet_intent
@@ -148,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     fork_reconcile.add_argument("--db", type=Path, required=True)
     fork_reconcile.add_argument("--intent-id", type=int, required=True)
     fork_reconcile.add_argument("--confirmations", type=int, default=3)
+
+    fork_report = subparsers.add_parser(
+        "fork-intent-report",
+        help="report Stage 5 resolved/unresolved durable intents without using RPC",
+    )
+    fork_report.add_argument("--db", type=Path, required=True)
     return parser
 
 
@@ -259,6 +266,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         intent = coordinator.reconcile(int(args.intent_id))
         _print_json(_intent_payload(intent))
         return 0
+    if args.command == "fork-intent-report":
+        report = build_execution_intent_report(Path(args.db))
+        _print_json(report.as_dict())
+        return 0 if report.gate_ready else 2
     if args.command is None:
         parser.print_help()
         return 0
