@@ -47,4 +47,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     parser.error(f"unsupported command: {args.command}")
-    return 2
