@@ -69,7 +69,14 @@ class ChainlinkEventIndex:
     available_at_ms: tuple[int, ...]
 
     @classmethod
-    def build(cls, events: Iterable[ChainEvent]) -> ChainlinkEventIndex:
+    def build(
+        cls,
+        events: Iterable[ChainEvent],
+        *,
+        availability_lag_ms: int = 0,
+    ) -> ChainlinkEventIndex:
+        if availability_lag_ms < 0:
+            raise ValueError("Chainlink availability lag must be non-negative")
         rows: list[tuple[int, ChainEvent]] = []
         for event in events:
             if event.event_name != "AnswerUpdated":
@@ -80,7 +87,10 @@ class ChainlinkEventIndex:
                 continue
             if not isinstance(updated_at, int) or updated_at < 0:
                 continue
-            available = max(updated_at * 1_000, event.block_timestamp * 1_000)
+            available = max(
+                updated_at * 1_000,
+                event.block_timestamp * 1_000 + availability_lag_ms,
+            )
             rows.append((available, event))
         rows.sort(
             key=lambda item: (
@@ -178,7 +188,10 @@ def build_research_dataset(
     expected_symbol = BINANCE_SYMBOL_BY_MARKET[replay.market]
     spot_index = TradeTimeIndex.build(spot_trades, expected_symbol=expected_symbol)
     perp_index = TradeTimeIndex.build(perp_trades, expected_symbol=expected_symbol)
-    chainlink_index = ChainlinkEventIndex.build(events)
+    chainlink_index = ChainlinkEventIndex.build(
+        events,
+        availability_lag_ms=chainlink_availability_lag_ms,
+    )
     pool_rows = build_pool_feature_rows(
         replay,
         events,
