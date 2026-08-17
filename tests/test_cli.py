@@ -4,7 +4,21 @@ import pytest
 
 from pancake_prediction import cli
 from pancake_prediction.contracts import Market
+from pancake_prediction.historical_preflight import HistoricalPreflightResult
 from pancake_prediction.rpc_probe import ArchiveProbeResult
+
+
+def _archive_probe(market: Market, block_number: int) -> ArchiveProbeResult:
+    return ArchiveProbeResult(
+        chain_id=56,
+        market=market.symbol,
+        block_number=block_number,
+        block_hash="0x" + "aa" * 32,
+        block_timestamp=1_700_000_000,
+        oracle_address="0x" + "11" * 20,
+        prediction_code_present=True,
+        oracle_code_present=True,
+    )
 
 
 def test_cli_status_exposes_research_safety_boundary(
@@ -33,16 +47,7 @@ def test_cli_rpc_probe_uses_env_without_printing_rpc_url(
         block_number: int,
     ) -> ArchiveProbeResult:
         del rpc
-        return ArchiveProbeResult(
-            chain_id=56,
-            market=market.symbol,
-            block_number=block_number,
-            block_hash="0x" + "aa" * 32,
-            block_timestamp=1_700_000_000,
-            oracle_address="0x" + "11" * 20,
-            prediction_code_present=True,
-            oracle_code_present=True,
-        )
+        return _archive_probe(market, block_number)
 
     monkeypatch.setattr(cli, "probe_archive_state", fake_probe)
     monkeypatch.setenv("BSC_RPC_URL", "https://secret-token.example.invalid")
@@ -54,8 +59,41 @@ def test_cli_rpc_probe_uses_env_without_printing_rpc_url(
     assert "secret-token" not in output
 
 
+def test_cli_historical_preflight_discovers_oldest_required_block_without_url_leak(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_preflight(
+        rpc: object,
+        market: Market,
+    ) -> HistoricalPreflightResult:
+        del rpc
+        return HistoricalPreflightResult(
+            market=market.symbol,
+            head_block=70_000_000,
+            deployment_block=10_333_825,
+            archive_probe=_archive_probe(market, 10_333_825),
+        )
+
+    monkeypatch.setattr(cli, "run_historical_preflight", fake_preflight)
+    monkeypatch.setenv("BSC_RPC_URL", "https://secret-token.example.invalid")
+    assert cli.main(["historical-preflight", "--market", "BNBUSD"]) == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["deployment_block"] == 10_333_825
+    assert payload["archive_probe"]["block_number"] == 10_333_825
+    assert "secret-token" not in output
+
+
 def test_cli_rpc_probe_requires_rpc_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BSC_RPC_URL", raising=False)
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["rpc-probe", "--market", "BNBUSD", "--block", "10333825"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_historical_preflight_requires_rpc_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BSC_RPC_URL", raising=False)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["historical-preflight", "--market", "BNBUSD"])
     assert exc_info.value.code == 2
