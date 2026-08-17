@@ -58,12 +58,15 @@ class PoolProjection:
     projected_bull_wei: int
     projected_bear_wei: int
     model_id: str
+    train_max_epoch: int | None = None
 
     def validate(self) -> None:
         if self.epoch < 0 or self.generated_at < 0:
             raise ValueError("projection epoch/timestamp must be non-negative")
         if self.projected_bull_wei < 0 or self.projected_bear_wei < 0:
             raise ValueError("projected pools must be non-negative")
+        if self.train_max_epoch is not None and self.train_max_epoch < 0:
+            raise ValueError("train_max_epoch must be non-negative when provided")
 
 
 @dataclass(frozen=True, slots=True)
