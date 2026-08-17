@@ -78,7 +78,7 @@ class StandardizedLogisticModel:
             standardized = 0.0 if value is None else (float(value) - mean) / scale
             score += weight * standardized
         probability = _sigmoid(score)
-        return max(0, min(PPM, int(round(probability * PPM))))
+        return max(0, min(PPM, round(probability * PPM)))
 
 
 @dataclass(frozen=True, slots=True)
