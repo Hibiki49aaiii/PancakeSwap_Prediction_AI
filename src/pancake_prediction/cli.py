@@ -4,13 +4,16 @@ import argparse
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .contracts import MARKETS
+from .execution_intent import ExecutionIntent, ExecutionIntentStore, ForkExecutionCoordinator
 from .historical_bootstrap import run_historical_bootstrap
 from .historical_preflight import run_historical_preflight
-from .rpc import JsonRpcClient
+from .prediction_tx import BetSide, build_prediction_bet_intent
+from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
 
 PACKAGE_NAME = "pancakeswap-prediction-ai"
@@ -30,8 +33,18 @@ def _status_payload() -> dict[str, object]:
         "stage": "v0.7-alpha-research",
         "live_broadcast": False,
         "signing_enabled": False,
+        "fork_local_broadcast": True,
+        "fork_rpc_loopback_only": True,
         "markets": ["BNBUSD", "BTCUSD", "ETHUSD"],
     }
+
+
+def _intent_payload(intent: ExecutionIntent) -> dict[str, object]:
+    return asdict(intent)
+
+
+def _print_json(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
 def _add_rpc_url_argument(parser: argparse.ArgumentParser) -> None:
@@ -39,6 +52,14 @@ def _add_rpc_url_argument(parser: argparse.ArgumentParser) -> None:
         "--rpc-url",
         default=None,
         help="BSC RPC URL; defaults to BSC_RPC_URL and is never printed",
+    )
+
+
+def _add_fork_rpc_url_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--fork-rpc-url",
+        required=True,
+        help="local fork RPC URL; non-loopback endpoints are rejected and the URL is never printed",
     )
 
 
@@ -79,6 +100,44 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--no-chainlink", action="store_true")
     bootstrap.add_argument("--all-prediction-events", action="store_true")
     _add_rpc_url_argument(bootstrap)
+
+    fork_prepare = subparsers.add_parser(
+        "fork-prepare-account",
+        help="impersonate and fund one account on a loopback local fork",
+    )
+    _add_fork_rpc_url_argument(fork_prepare)
+    fork_prepare.add_argument("--sender", required=True)
+    fork_prepare.add_argument("--balance-wei", type=int, required=True)
+
+    fork_create = subparsers.add_parser(
+        "fork-create-bet-intent",
+        help="persist one Bull/Bear Prediction intent without sending a transaction",
+    )
+    fork_create.add_argument("--db", type=Path, required=True)
+    fork_create.add_argument("--market", choices=sorted(MARKETS), required=True)
+    fork_create.add_argument("--sender", required=True)
+    fork_create.add_argument("--epoch", type=int, required=True)
+    fork_create.add_argument("--side", choices=[side.value for side in BetSide], required=True)
+    fork_create.add_argument("--stake-wei", type=int, required=True)
+
+    fork_submit = subparsers.add_parser(
+        "fork-submit-intent",
+        help="submit one durable intent to a loopback local fork only",
+    )
+    _add_fork_rpc_url_argument(fork_submit)
+    fork_submit.add_argument("--db", type=Path, required=True)
+    fork_submit.add_argument("--intent-id", type=int, required=True)
+    fork_submit.add_argument("--gas", type=int, default=None)
+    fork_submit.add_argument("--gas-price-wei", type=int, default=None)
+
+    fork_reconcile = subparsers.add_parser(
+        "fork-reconcile-intent",
+        help="reconcile one submitted/unknown intent against a loopback local fork",
+    )
+    _add_fork_rpc_url_argument(fork_reconcile)
+    fork_reconcile.add_argument("--db", type=Path, required=True)
+    fork_reconcile.add_argument("--intent-id", type=int, required=True)
+    fork_reconcile.add_argument("--confirmations", type=int, default=3)
     return parser
 
 
@@ -89,11 +148,17 @@ def _rpc_url_or_error(parser: argparse.ArgumentParser, value: object) -> str:
     return str(rpc_url)
 
 
+def _execution_store(path: object) -> ExecutionIntentStore:
+    store = ExecutionIntentStore(Path(path))
+    store.initialize()
+    return store
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "status":
-        print(json.dumps(_status_payload(), sort_keys=True, separators=(",", ":")))
+        _print_json(_status_payload())
         return 0
     if args.command == "rpc-probe":
         probe_result = probe_archive_state(
@@ -101,14 +166,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             MARKETS[str(args.market)],
             int(args.block),
         )
-        print(json.dumps(probe_result.as_dict(), sort_keys=True, separators=(",", ":")))
+        _print_json(probe_result.as_dict())
         return 0
     if args.command == "historical-preflight":
         preflight_result = run_historical_preflight(
             JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
             MARKETS[str(args.market)],
         )
-        print(json.dumps(preflight_result.as_dict(), sort_keys=True, separators=(",", ":")))
+        _print_json(preflight_result.as_dict())
         return 0
     if args.command == "historical-bootstrap":
         bootstrap_result = run_historical_bootstrap(
@@ -122,7 +187,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             include_chainlink=not bool(args.no_chainlink),
             prediction_analytic_only=not bool(args.all_prediction_events),
         )
-        print(json.dumps(bootstrap_result.as_dict(), sort_keys=True, separators=(",", ":")))
+        _print_json(bootstrap_result.as_dict())
+        return 0
+    if args.command == "fork-prepare-account":
+        fork_rpc = LocalForkRpcClient(str(args.fork_rpc_url))
+        balance_wei = int(args.balance_wei)
+        if balance_wei < 0:
+            parser.error("--balance-wei must be non-negative")
+        sender = str(args.sender)
+        fork_rpc.impersonate_account(sender)
+        fork_rpc.set_balance(sender, balance_wei)
+        _print_json({"prepared": True, "sender": sender.lower(), "balance_wei": balance_wei})
+        return 0
+    if args.command == "fork-create-bet-intent":
+        intent = build_prediction_bet_intent(
+            _execution_store(args.db),
+            market=str(args.market),
+            sender=str(args.sender),
+            epoch=int(args.epoch),
+            side=BetSide(str(args.side)),
+            stake_wei=int(args.stake_wei),
+        )
+        _print_json(_intent_payload(intent))
+        return 0
+    if args.command == "fork-submit-intent":
+        coordinator = ForkExecutionCoordinator(
+            _execution_store(args.db),
+            LocalForkRpcClient(str(args.fork_rpc_url)),
+        )
+        intent = coordinator.submit(
+            int(args.intent_id),
+            gas=args.gas,
+            gas_price_wei=args.gas_price_wei,
+        )
+        _print_json(_intent_payload(intent))
+        return 0
+    if args.command == "fork-reconcile-intent":
+        coordinator = ForkExecutionCoordinator(
+            _execution_store(args.db),
+            LocalForkRpcClient(str(args.fork_rpc_url)),
+            confirmations=int(args.confirmations),
+        )
+        intent = coordinator.reconcile(int(args.intent_id))
+        _print_json(_intent_payload(intent))
         return 0
     if args.command is None:
         parser.print_help()
