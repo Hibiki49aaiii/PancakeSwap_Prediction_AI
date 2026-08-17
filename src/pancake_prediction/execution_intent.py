@@ -25,6 +25,13 @@ class IntentState(StrEnum):
 
 
 TERMINAL_STATES = {IntentState.CONSUMED_UNKNOWN, IntentState.FINALIZED, IntentState.FAILED}
+RESERVABLE_STATES = {IntentState.CREATED, IntentState.RETRYABLE, IntentState.RESERVED}
+AMBIGUOUS_SUBMISSION_MARKERS = (
+    "already known",
+    "known transaction",
+    "nonce too low",
+    "replacement transaction underpriced",
+)
 
 
 class ForkExecutionRpc(Protocol):
@@ -123,6 +130,11 @@ def _hex_int(value: object) -> int:
         return value
     text = str(value)
     return int(text, 16) if text.startswith("0x") else int(text)
+
+
+def _is_ambiguous_submission_error(exc: RpcResponseError) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in AMBIGUOUS_SUBMISSION_MARKERS)
 
 
 @dataclass(slots=True)
@@ -238,8 +250,8 @@ class ExecutionIntentStore:
             if row is None:
                 raise KeyError(f"execution intent not found: {intent_id}")
             intent = self._row_to_intent(cast(sqlite3.Row, row))
-            if intent.state in TERMINAL_STATES:
-                raise ValueError(f"cannot reserve nonce for terminal state {intent.state}")
+            if intent.state not in RESERVABLE_STATES:
+                raise ValueError(f"cannot reserve nonce from state {intent.state}")
             if intent.nonce is not None:
                 nonce = intent.nonce
             else:
@@ -360,6 +372,49 @@ class ExecutionIntentStore:
             conn.commit()
         return self.get(intent_id)
 
+    def recover_submitting(
+        self,
+        intent_id: int,
+        *,
+        state: IntentState,
+        outcome: str,
+        error: str,
+    ) -> ExecutionIntent:
+        if state not in {IntentState.RETRYABLE, IntentState.CONSUMED_UNKNOWN}:
+            raise ValueError("invalid recovery state for interrupted submission")
+        if outcome not in {"interrupted", "unknown"}:
+            raise ValueError("invalid interrupted submission outcome")
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT attempts,state FROM execution_intents WHERE id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"execution intent not found: {intent_id}")
+            if IntentState(str(row["state"])) != IntentState.SUBMITTING:
+                raise ValueError("intent is not an interrupted submission")
+            attempt_number = int(row["attempts"])
+            conn.execute(
+                """
+                UPDATE execution_intents
+                SET state=?,last_error=?,updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (state.value, error, intent_id),
+            )
+            cursor = conn.execute(
+                """
+                UPDATE execution_attempts
+                SET outcome=?,error=?,updated_at=CURRENT_TIMESTAMP
+                WHERE intent_id=? AND attempt_number=? AND outcome='started'
+                """,
+                (outcome, error, intent_id, attempt_number),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("interrupted submission journal is inconsistent")
+            conn.commit()
+        return self.get(intent_id)
+
     def set_reconciliation_state(
         self,
         intent_id: int,
@@ -445,6 +500,8 @@ class ForkExecutionCoordinator:
                 nonce=intent.nonce,
             )
         except RpcResponseError as exc:
+            if _is_ambiguous_submission_error(exc):
+                return self.store.mark_unknown(intent.id, str(exc))
             return self.store.mark_failed(intent.id, str(exc))
         except RpcError as exc:
             return self.store.mark_unknown(intent.id, str(exc))
@@ -458,6 +515,22 @@ class ForkExecutionCoordinator:
             return intent
         if intent.nonce is None:
             return intent
+
+        if intent.state == IntentState.SUBMITTING:
+            pending_nonce = self.rpc.transaction_count(intent.sender, "pending")
+            if pending_nonce <= intent.nonce:
+                return self.store.recover_submitting(
+                    intent.id,
+                    state=IntentState.RETRYABLE,
+                    outcome="interrupted",
+                    error="submission was interrupted before an outcome was durably recorded",
+                )
+            return self.store.recover_submitting(
+                intent.id,
+                state=IntentState.CONSUMED_UNKNOWN,
+                outcome="unknown",
+                error="submission was interrupted and its reserved nonce was consumed",
+            )
 
         if intent.current_tx_hash is not None:
             receipt = self.rpc.transaction_receipt(intent.current_tx_hash)
