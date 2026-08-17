@@ -16,6 +16,7 @@ from .contracts import CHAIN_ID_BSC, Market
 from .rpc import RpcError
 from .store import EventStore
 
+
 class ReadOnlyRpc(Protocol):
     def chain_id(self) -> int: ...
     def block_number(self) -> int: ...
