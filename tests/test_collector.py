@@ -18,6 +18,17 @@ class _RangeLimitedRpc:
     def chain_id(self) -> int:
         return 56
 
+    def block_number(self) -> int:
+        return 1_000
+
+    def get_code(self, address: str, block: int | str = "latest") -> str:
+        del address, block
+        return "0x01"
+
+    def eth_call(self, to: str, data: str, block: int | str = "latest") -> str:
+        del to, data, block
+        return "0x" + "00" * 12 + "11" * 20
+
     def get_logs(
         self,
         address: str,
@@ -97,7 +108,9 @@ def test_collector_adapts_only_to_log_range_limits(tmp_path: Path) -> None:
     assert report["prediction_events_inserted"] == 0
     assert rpc.calls[:3] == [(1, 12), (1, 8), (1, 4)]
     assert [(a, b) for a, b in rpc.calls if b - a + 1 <= 4] == [(1, 4), (5, 8), (9, 12)]
-    run = store.collector_run(int(report["collector_run_id"]))
+    run_id = report["collector_run_id"]
+    assert isinstance(run_id, int)
+    run = store.collector_run(run_id)
     assert run is not None and run["status"] == "success"
 
 

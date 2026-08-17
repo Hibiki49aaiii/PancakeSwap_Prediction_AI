@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any
+from typing import Any, Protocol
 
 from .abi import (
     CHAINLINK_EVENTS,
@@ -13,8 +13,24 @@ from .abi import (
     function_selector,
 )
 from .contracts import CHAIN_ID_BSC, Market
-from .rpc import JsonRpcClient, RpcError
+from .rpc import RpcError
 from .store import EventStore
+
+class ReadOnlyRpc(Protocol):
+    def chain_id(self) -> int: ...
+    def block_number(self) -> int: ...
+    def block(self, number: int) -> dict[str, Any]: ...
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]: ...
+    def get_code(self, address: str, block: int | str = "latest") -> str: ...
+    def eth_call(self, to: str, data: str, block: int | str = "latest") -> str: ...
+
 
 ORACLE_SELECTOR = function_selector("oracle()")
 ANALYTIC_PREDICTION_EVENT_NAMES = {
@@ -31,7 +47,7 @@ ANALYTIC_PREDICTION_EVENT_NAMES = {
 
 @dataclass(slots=True)
 class HistoricalCollector:
-    rpc: JsonRpcClient
+    rpc: ReadOnlyRpc
     store: EventStore
     chunk_size: int = 2_000
     reorg_lookback: int = 64
@@ -248,6 +264,7 @@ class HistoricalCollector:
             to_block=to_block,
             topic0s=prediction_topic0s,
         )
+
         oracle_addresses: set[str] = set()
         oracle_count = 0
         if include_chainlink:
@@ -273,6 +290,7 @@ class HistoricalCollector:
                     to_block=to_block,
                 )
                 oracle_count += count
+
         self.store.record_metadata(f"{market.symbol}.last_collected_block", str(to_block))
         return {
             "market": market.symbol,

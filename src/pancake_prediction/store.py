@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -243,6 +243,8 @@ class EventStore:
                 (chain_id, market, contract_address.lower(), from_block, to_block, payload),
             )
             conn.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return a collector run id")
             return int(cursor.lastrowid)
 
     def finish_collector_run(
@@ -266,4 +268,5 @@ class EventStore:
 
     def collector_run(self, run_id: int) -> sqlite3.Row | None:
         with closing(self.connect()) as conn:
-            return conn.execute("SELECT * FROM collector_runs WHERE id=?", (run_id,)).fetchone()
+            row = conn.execute("SELECT * FROM collector_runs WHERE id=?", (run_id,)).fetchone()
+        return cast(sqlite3.Row | None, row)

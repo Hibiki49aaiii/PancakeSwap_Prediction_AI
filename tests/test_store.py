@@ -52,7 +52,7 @@ def test_event_insert_is_idempotent(tmp_path: Path) -> None:
         "topics": ["0x" + "55" * 32],
         "data": "0x",
     }
-    kwargs = dict(
+    assert store.insert_event(
         chain_id=56,
         contract_address="0x" + "66" * 20,
         market="BNBUSD",
@@ -60,9 +60,16 @@ def test_event_insert_is_idempotent(tmp_path: Path) -> None:
         log=log,
         event_name=None,
         decoded=None,
-    )
-    assert store.insert_event(**kwargs) is True
-    assert store.insert_event(**kwargs) is False
+    ) is True
+    assert store.insert_event(
+        chain_id=56,
+        contract_address="0x" + "66" * 20,
+        market="BNBUSD",
+        source="prediction",
+        log=log,
+        event_name=None,
+        decoded=None,
+    ) is False
 
 
 def test_foreign_keys_enabled_on_every_connection(tmp_path: Path) -> None:

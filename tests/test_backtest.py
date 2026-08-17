@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from pancake_prediction.backtest import (
@@ -136,13 +138,11 @@ def test_latency_is_checked_against_scheduled_lock() -> None:
 
 def test_rewards_mismatch_excludes_round_from_profit_calculation() -> None:
     base = _round(bull=600, bear=400, label="bull")
-    bad = RoundRecord(
-        **{
-            **{field: getattr(base, field) for field in base.__dataclass_fields__},
-            "reward_base_cal_amount_wei": 600,
-            "reward_amount_wei": 999,
-            "treasury_amount_wei": 1,
-        }
+    bad = replace(
+        base,
+        reward_base_cal_amount_wei=600,
+        reward_amount_wei=999,
+        treasury_amount_wei=1,
     )
     report = run_backtest(
         _replay(bad),

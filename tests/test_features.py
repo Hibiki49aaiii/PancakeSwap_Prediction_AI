@@ -3,7 +3,9 @@ from pancake_prediction.features import build_pool_feature_row
 from pancake_prediction.replay import ChainEvent, ReplaySnapshot, RoundRecord
 
 
-def _round(epoch: int, start: int, end: int, label: str, lock_price: int, close_price: int) -> RoundRecord:
+def _round(
+    epoch: int, start: int, end: int, label: str, lock_price: int, close_price: int
+) -> RoundRecord:
     return RoundRecord(
         epoch=epoch,
         start_block=epoch * 10,
