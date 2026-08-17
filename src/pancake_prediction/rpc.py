@@ -12,6 +12,31 @@ class RpcError(RuntimeError):
     pass
 
 
+class RpcResponseError(RpcError):
+    """A JSON-RPC application error returned by the provider.
+
+    These errors are deterministic for the submitted request and are surfaced
+    immediately so higher layers (for example the historical log collector)
+    can adapt the request instead of sleeping and retrying the exact same
+    failing query several times.
+    """
+
+    def __init__(self, method: str, error: object) -> None:
+        self.method = method
+        self.code: int | None = None
+        self.data: object | None = None
+        if isinstance(error, dict):
+            raw_code = error.get("code")
+            if isinstance(raw_code, int):
+                self.code = raw_code
+            message = str(error.get("message", error))
+            self.data = error.get("data")
+        else:
+            message = str(error)
+        code_text = "" if self.code is None else f" code={self.code}"
+        super().__init__(f"{method}: JSON-RPC error{code_text}: {message}")
+
+
 @dataclass(slots=True)
 class JsonRpcClient:
     url: str
@@ -21,6 +46,8 @@ class JsonRpcClient:
     _request_id: int = 0
 
     def call(self, method: str, params: list[object]) -> Any:
+        if self.retries < 1:
+            raise ValueError("retries must be positive")
         last_error: Exception | None = None
         for attempt in range(self.retries):
             self._request_id += 1
@@ -37,11 +64,18 @@ class JsonRpcClient:
                 with urllib.request.urlopen(  # noqa: S310  # nosec B310
                     request, timeout=self.timeout_s
                 ) as response:
-                    body = cast(dict[str, Any], json.loads(response.read()))
+                    decoded = json.loads(response.read())
+                if not isinstance(decoded, dict):
+                    raise RpcError(f"{method}: malformed JSON-RPC response")
+                body = cast(dict[str, Any], decoded)
                 if "error" in body:
-                    raise RpcError(f"{method}: {body['error']}")
+                    raise RpcResponseError(method, body["error"])
                 return body.get("result")
-            except (OSError, urllib.error.URLError, json.JSONDecodeError, RpcError) as exc:
+            except RpcResponseError:
+                raise
+            except RpcError:
+                raise
+            except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
                 last_error = exc
                 if attempt + 1 < self.retries:
                     time.sleep(self.backoff_s * (2**attempt))
