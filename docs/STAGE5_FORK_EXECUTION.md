@@ -58,6 +58,27 @@ The intent contains:
 
 The idempotency key is scoped to `market + sender + epoch`, intentionally excluding side. Therefore the same wallet cannot create both a Bull and Bear intent for the same market round through the Stage 5 builder. Re-requesting an identical intent is idempotent; changing side or stake under the same key is rejected.
 
+## Prediction bet preflight
+
+Every `fork-submit-intent` call performs a read-only Prediction preflight **before nonce reservation or transaction submission**. A standalone `fork-bet-preflight` command exposes the same check as JSON.
+
+All contract reads are pinned to one local-fork head block so the decision cannot mix state from different blocks. The preflight checks:
+
+- the intent targets a registered Prediction market,
+- calldata is exactly `betBull(uint256)` or `betBear(uint256)`,
+- the intent epoch equals `currentEpoch`,
+- the round getter returns the same epoch,
+- `paused()` is false,
+- `startTimestamp` and `lockTimestamp` are initialized,
+- snapshot time is strictly greater than `startTimestamp`,
+- snapshot time is strictly less than `lockTimestamp`,
+- stake is at least `minBetAmount`,
+- `ledger(epoch, sender).amount` is zero,
+- sender has no contract code, matching the Prediction `notContract` constraint,
+- sender balance is at least the intended stake.
+
+A failed preflight performs no nonce reservation and no send. The underlying contract remains the final authority if state changes after the snapshot; the preflight is a fail-fast guard, not a substitute for on-chain validation.
+
 ## CLI workflow
 
 The CLI is installed as `pcs-prediction`. The local fork node itself must already be running on a loopback address; how that node obtains its upstream BSC state is deliberately outside the transaction RPC boundary.
@@ -83,7 +104,16 @@ pcs-prediction fork-create-bet-intent \
   --stake-wei 1000000000000000
 ```
 
-Submit the returned intent id to the loopback fork:
+Inspect current bettability without sending or reserving a nonce:
+
+```bash
+pcs-prediction fork-bet-preflight \
+  --fork-rpc-url http://127.0.0.1:8545 \
+  --db artifacts/fork-execution.sqlite3 \
+  --intent-id 1
+```
+
+Submit the returned intent id to the loopback fork. Submission repeats the preflight and refuses to proceed if it is not ready:
 
 ```bash
 pcs-prediction fork-submit-intent \
@@ -135,7 +165,14 @@ The automated suite must continue to cover at least:
 - rejection of non-fork adapters,
 - rejection of non-loopback transaction RPC endpoints,
 - exact Pancake Bull/Bear calldata encoding,
-- prevention of opposite-side intents for one wallet/round.
+- prevention of opposite-side intents for one wallet/round,
+- fixed-block Prediction preflight success,
+- paused/non-current/closed-round rejection,
+- minimum-bet rejection,
+- existing-bet rejection,
+- contract-sender rejection,
+- insufficient-stake-balance rejection,
+- proof that preflight failure occurs before nonce reservation or send.
 
 ## Exit criteria
 
