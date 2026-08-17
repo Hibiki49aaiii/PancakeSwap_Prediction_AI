@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any, Protocol
@@ -202,10 +203,8 @@ class HistoricalCollector:
         previous_checkpoint_text = self.store.metadata(checkpoint_key)
         previous_checkpoint = from_block - 1
         if previous_checkpoint_text is not None:
-            try:
+            with suppress(ValueError):
                 previous_checkpoint = max(previous_checkpoint, int(previous_checkpoint_text))
-            except ValueError:
-                pass
 
         inserted = 0
         new_oracles: set[str] = set()
