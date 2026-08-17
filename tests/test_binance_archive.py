@@ -11,6 +11,8 @@ from pancake_prediction.binance_archive import (
     iter_archive_aggtrades,
     normalize_archive_timestamp,
     parse_archive_aggtrade_row,
+    read_checksum_file,
+    verify_archive_checksum,
 )
 
 
@@ -91,6 +93,35 @@ def test_archive_iterator_rejects_non_increasing_ids(tmp_path: Path) -> None:
                 availability_lag_ms=0,
             )
         )
+
+
+def test_official_checksum_verification_accepts_matching_archive(tmp_path: Path) -> None:
+    archive = tmp_path / "BNBUSDT-aggTrades-2026-08.zip"
+    archive.write_bytes(b"deterministic-archive-bytes")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    checksum = tmp_path / f"{archive.name}.CHECKSUM"
+    checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+
+    assert read_checksum_file(checksum, expected_filename=archive.name) == digest
+    assert verify_archive_checksum(archive, checksum) == digest
+
+
+def test_official_checksum_verification_rejects_corruption(tmp_path: Path) -> None:
+    archive = tmp_path / "BNBUSDT-aggTrades-2026-08.zip"
+    archive.write_bytes(b"corrupted")
+    checksum = tmp_path / f"{archive.name}.CHECKSUM"
+    checksum.write_text(f"{'0' * 64}  {archive.name}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        verify_archive_checksum(archive, checksum)
+
+
+def test_checksum_rejects_wrong_archive_filename(tmp_path: Path) -> None:
+    checksum = tmp_path / "data.CHECKSUM"
+    checksum.write_text(f"{'a' * 64}  other.zip\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="filename mismatch"):
+        read_checksum_file(checksum, expected_filename="expected.zip")
 
 
 def test_inspect_zip_emits_source_provenance(tmp_path: Path) -> None:
