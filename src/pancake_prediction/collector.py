@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any, Protocol
@@ -103,6 +104,42 @@ class HistoricalCollector:
         )
         return any(marker in message for marker in markers)
 
+    @staticmethod
+    def _checkpoint_key(
+        *,
+        chain_id: int,
+        address: str,
+        market: str | None,
+        source: str,
+        specs: tuple[EventSpec, ...],
+        from_block: int,
+        topic0s: tuple[str, ...] | None,
+    ) -> str:
+        identity = {
+            "chain_id": chain_id,
+            "address": address.lower(),
+            "market": market,
+            "source": source,
+            "specs": tuple((spec.name, spec.topic0) for spec in specs),
+            "from_block": from_block,
+            "topic0s": None if topic0s is None else tuple(sorted(topic0s)),
+        }
+        digest = hashlib.sha256(repr(identity).encode()).hexdigest()[:24]
+        return f"collector.progress.{digest}"
+
+    def _resume_cursor(self, checkpoint_key: str, from_block: int, to_block: int) -> int:
+        checkpoint_text = self.store.metadata(checkpoint_key)
+        if checkpoint_text is None:
+            return from_block
+        try:
+            checkpoint = int(checkpoint_text)
+        except ValueError:
+            return from_block
+        if checkpoint < from_block:
+            return from_block
+        completed_through = min(checkpoint, to_block)
+        return max(from_block, completed_through + 1 - self.reorg_lookback)
+
     def _fetch_consistent_chunk(
         self,
         *,
@@ -151,9 +188,28 @@ class HistoricalCollector:
     ) -> tuple[int, set[str]]:
         if self.chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
+        if self.reorg_lookback < 0:
+            raise ValueError("reorg_lookback must be non-negative")
+        checkpoint_key = self._checkpoint_key(
+            chain_id=chain_id,
+            address=address,
+            market=market,
+            source=source,
+            specs=specs,
+            from_block=from_block,
+            topic0s=topic0s,
+        )
+        previous_checkpoint_text = self.store.metadata(checkpoint_key)
+        previous_checkpoint = from_block - 1
+        if previous_checkpoint_text is not None:
+            try:
+                previous_checkpoint = max(previous_checkpoint, int(previous_checkpoint_text))
+            except ValueError:
+                pass
+
         inserted = 0
         new_oracles: set[str] = set()
-        cursor = from_block
+        cursor = self._resume_cursor(checkpoint_key, from_block, to_block)
         effective_chunk_size = self.chunk_size
         while cursor <= to_block:
             end = min(cursor + effective_chunk_size - 1, to_block)
@@ -189,6 +245,8 @@ class HistoricalCollector:
                     decoded=decoded,
                 ):
                     inserted += 1
+            previous_checkpoint = max(previous_checkpoint, end)
+            self.store.record_metadata(checkpoint_key, str(previous_checkpoint))
             cursor = end + 1
         return inserted, new_oracles
 
