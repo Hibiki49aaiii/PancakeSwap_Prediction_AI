@@ -4,7 +4,11 @@ import pytest
 
 from pancake_prediction.binance import AggTrade
 from pancake_prediction.replay import ChainEvent, ReplaySnapshot, RoundRecord
-from pancake_prediction.research_dataset import TradeTimeIndex, build_research_dataset
+from pancake_prediction.research_dataset import (
+    ChainlinkEventIndex,
+    TradeTimeIndex,
+    build_research_dataset,
+)
 
 
 def _round(epoch: int, start: int, end: int, label: str) -> RoundRecord:
@@ -122,6 +126,15 @@ def test_trade_time_index_rejects_duplicate_aggregate_ids() -> None:
     )
     with pytest.raises(ValueError, match="duplicate aggregate trade id"):
         TradeTimeIndex.build(trades, expected_symbol="BNBUSDT")
+
+
+def test_chainlink_index_applies_availability_lag_before_recent_window() -> None:
+    events = (_chainlink(0, 98), _chainlink(1, 99))
+    without_lag = ChainlinkEventIndex.build(events)
+    with_lag = ChainlinkEventIndex.build(events, availability_lag_ms=1_500)
+
+    assert without_lag.recent_before(100_000, limit=2) == events
+    assert with_lag.recent_before(100_000, limit=2) == (events[0],)
 
 
 def test_research_dataset_uses_only_market_data_available_before_cutoff() -> None:
