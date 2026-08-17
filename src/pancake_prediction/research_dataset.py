@@ -156,6 +156,7 @@ def build_research_dataset(
     max_spot_age_ms: int = 5_000,
     max_perp_age_ms: int = 5_000,
     max_chainlink_age_ms: int | None = None,
+    chainlink_availability_lag_ms: int = 0,
     oracle_history_updates: int = 512,
     oracle_hazard_horizon_ms: int = 5_000,
     oracle_hazard_min_intervals: int = 8,
@@ -168,6 +169,8 @@ def build_research_dataset(
         raise ValueError("Binance max age values must be non-negative")
     if max_chainlink_age_ms is not None and max_chainlink_age_ms < 0:
         raise ValueError("max_chainlink_age_ms must be non-negative")
+    if chainlink_availability_lag_ms < 0:
+        raise ValueError("chainlink_availability_lag_ms must be non-negative")
     if oracle_history_updates < oracle_hazard_min_intervals + 1:
         raise ValueError("oracle_history_updates must cover hazard minimum intervals")
 
@@ -221,6 +224,7 @@ def build_research_dataset(
             max_spot_age_ms=max_spot_age_ms,
             max_perp_age_ms=max_perp_age_ms,
             max_chainlink_age_ms=max_chainlink_age_ms,
+            chainlink_availability_lag_ms=chainlink_availability_lag_ms,
         )
         if aligned is None:
             skipped_market_data += 1
