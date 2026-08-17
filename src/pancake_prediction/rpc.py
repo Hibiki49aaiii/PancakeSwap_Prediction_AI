@@ -27,7 +27,7 @@ class JsonRpcClient:
             payload = json.dumps(
                 {"jsonrpc": "2.0", "id": self._request_id, "method": method, "params": params}
             ).encode()
-            request = urllib.request.Request(  # noqa: S310  # nosec B310 - configured RPC URL
+            request = urllib.request.Request(  # noqa: S310  # nosec B310
                 self.url,
                 data=payload,
                 headers={"Content-Type": "application/json"},

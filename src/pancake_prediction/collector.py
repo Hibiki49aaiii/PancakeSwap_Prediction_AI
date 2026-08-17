@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 from .abi import (
@@ -107,7 +108,7 @@ class HistoricalCollector:
                     break
             if consistent:
                 ordered = sorted(blocks)
-                for left, right in zip(ordered, ordered[1:], strict=False):
+                for left, right in pairwise(ordered):
                     if right != left + 1:
                         continue
                     parent_hash = str(blocks[right]["parentHash"]).lower()
