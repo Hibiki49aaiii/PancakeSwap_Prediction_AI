@@ -93,6 +93,26 @@ class _ReorgDuringChunkRpc(_RangeLimitedRpc):
         }
 
 
+class _FailOnCallRpc(_RangeLimitedRpc):
+    def __init__(self, *, fail_on_call: int) -> None:
+        super().__init__(max_span=4)
+        self.fail_on_call = fail_on_call
+
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        del address, topic0s
+        self.calls.append((from_block, to_block))
+        if len(self.calls) == self.fail_on_call:
+            raise RpcError("temporary provider outage")
+        return []
+
+
 def test_collector_adapts_only_to_log_range_limits(tmp_path: Path) -> None:
     store = EventStore(tmp_path / "events.sqlite3")
     store.initialize()
@@ -147,3 +167,98 @@ def test_collector_retries_chunk_if_log_block_hash_is_not_canonical(tmp_path: Pa
         row = conn.execute("SELECT block_hash FROM events").fetchone()
     assert row is not None
     assert row["block_hash"] == "0x" + "22" * 32
+
+
+def test_collector_resumes_after_last_successful_chunk(tmp_path: Path) -> None:
+    store = EventStore(tmp_path / "events.sqlite3")
+    store.initialize()
+    first_rpc = _FailOnCallRpc(fail_on_call=3)
+    first = HistoricalCollector(first_rpc, store, chunk_size=4, reorg_lookback=0)
+    with pytest.raises(RpcError, match="provider outage"):
+        first.collect_market(
+            MARKETS["BNBUSD"],
+            1,
+            12,
+            include_chainlink=False,
+            prediction_analytic_only=True,
+        )
+    assert first_rpc.calls == [(1, 4), (5, 8), (9, 12)]
+
+    second_rpc = _RangeLimitedRpc(max_span=4)
+    second = HistoricalCollector(second_rpc, store, chunk_size=4, reorg_lookback=0)
+    report = second.collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        12,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+    assert second_rpc.calls == [(9, 12)]
+    assert report["prediction_events_inserted"] == 0
+    assert store.metadata("BNBUSD.last_collected_block") == "12"
+
+
+def test_collector_checkpoint_identity_includes_topic_filter(tmp_path: Path) -> None:
+    store = EventStore(tmp_path / "events.sqlite3")
+    store.initialize()
+    analytic_rpc = _RangeLimitedRpc(max_span=4)
+    HistoricalCollector(
+        analytic_rpc,
+        store,
+        chunk_size=4,
+        reorg_lookback=0,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        8,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+
+    all_events_rpc = _RangeLimitedRpc(max_span=4)
+    HistoricalCollector(
+        all_events_rpc,
+        store,
+        chunk_size=4,
+        reorg_lookback=0,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        8,
+        include_chainlink=False,
+        prediction_analytic_only=False,
+    )
+    assert all_events_rpc.calls == [(1, 4), (5, 8)]
+
+
+def test_collector_checkpoint_rewinds_reorg_lookback(tmp_path: Path) -> None:
+    store = EventStore(tmp_path / "events.sqlite3")
+    store.initialize()
+    first_rpc = _RangeLimitedRpc(max_span=4)
+    HistoricalCollector(
+        first_rpc,
+        store,
+        chunk_size=4,
+        reorg_lookback=2,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        12,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+
+    second_rpc = _RangeLimitedRpc(max_span=4)
+    HistoricalCollector(
+        second_rpc,
+        store,
+        chunk_size=4,
+        reorg_lookback=2,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        12,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+    assert second_rpc.calls == [(11, 12)]
