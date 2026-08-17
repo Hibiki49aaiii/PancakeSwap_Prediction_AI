@@ -18,6 +18,7 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[dev]'
+      - run: pcs-prediction status
       - run: ruff check . --output-format=github
       - run: mypy src tests
       - run: pytest --cov=src/pancake_prediction --cov-report=term-missing
