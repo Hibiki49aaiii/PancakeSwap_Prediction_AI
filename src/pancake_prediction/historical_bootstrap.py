@@ -89,6 +89,19 @@ def resolve_collection_range(
     )
 
 
+def _persist_oracle_anchor(
+    store: EventStore,
+    preflight: HistoricalPreflightResult,
+) -> None:
+    market = preflight.market
+    anchor = preflight.archive_probe
+    store.record_metadata(f"{market}.oracle_anchor_block", str(anchor.block_number))
+    store.record_metadata(
+        f"{market}.oracle_anchor_address",
+        anchor.oracle_address.lower(),
+    )
+
+
 def run_historical_bootstrap(
     rpc: HistoricalBootstrapRpc,
     market: Market,
@@ -110,6 +123,8 @@ def run_historical_bootstrap(
     )
     store = EventStore(database)
     store.initialize()
+    if include_chainlink:
+        _persist_oracle_anchor(store, preflight)
     collector = HistoricalCollector(
         rpc=rpc,
         store=store,
