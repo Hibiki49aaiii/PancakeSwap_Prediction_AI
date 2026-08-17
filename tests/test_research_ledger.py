@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from pancake_prediction.research_ledger import (
@@ -35,6 +37,6 @@ def test_research_record_digest_is_deterministic() -> None:
 
 def test_research_record_rejects_non_oos_training_boundary() -> None:
     record = _record()
-    unsafe = ResearchPredictionRecord(**{**record.canonical_payload(), "train_max_epoch": 99})
+    unsafe = replace(record, train_max_epoch=99)
     with pytest.raises(ValueError, match="not purged OOS"):
         validate_research_prediction(unsafe, purge_rounds=2)

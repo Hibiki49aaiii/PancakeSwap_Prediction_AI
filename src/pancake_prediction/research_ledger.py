@@ -51,7 +51,9 @@ def feature_digest(features: Mapping[str, object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def validate_research_prediction(record: ResearchPredictionRecord, *, purge_rounds: int = 2) -> None:
+def validate_research_prediction(
+    record: ResearchPredictionRecord, *, purge_rounds: int = 2
+) -> None:
     if record.epoch < 0 or record.decision_timestamp_ms < 0:
         raise ValueError("epoch and decision timestamp must be non-negative")
     for value in (record.raw_probability_ppm, record.calibrated_probability_ppm):

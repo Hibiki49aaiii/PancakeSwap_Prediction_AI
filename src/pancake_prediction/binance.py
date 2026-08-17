@@ -85,7 +85,10 @@ def aggregate_order_flow(
     last_price: int | None = None
     last_timestamp = -1
     for trade in trades:
-        if trade.trade_timestamp_ms < start_timestamp_ms or trade.trade_timestamp_ms >= end_timestamp_ms:
+        if (
+            trade.trade_timestamp_ms < start_timestamp_ms
+            or trade.trade_timestamp_ms >= end_timestamp_ms
+        ):
             continue
         count += 1
         if trade.aggressive_side == "buy":
