@@ -119,8 +119,9 @@ class JsonRpcClient:
         tag = hex(block) if isinstance(block, int) else block
         return cast(str, self.call("eth_call", [{"to": to, "data": data}, tag]))
 
-    def balance(self, address: str, tag: str = "latest") -> int:
-        return int(cast(str, self.call("eth_getBalance", [address, tag])), 16)
+    def balance(self, address: str, tag: int | str = "latest") -> int:
+        block_tag = hex(tag) if isinstance(tag, int) else tag
+        return int(cast(str, self.call("eth_getBalance", [address, block_tag])), 16)
 
 
 def _is_loopback_rpc_url(url: str) -> bool:
