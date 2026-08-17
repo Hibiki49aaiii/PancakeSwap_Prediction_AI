@@ -74,7 +74,7 @@ Shadow -> Fork -> Tiny Live gate
 | 3 | Purged walk-forward / OOS evaluation | Implemented and unit-tested foundation |
 | 4 | Paper / Shadow | Partial research-ledger foundation; operational long-running shadow campaign not yet completed |
 | 5A | Durable execution fault model | Fork-only durable intent/reconciliation state machine implemented and adversarially unit-tested |
-| 5B | BSC fork execution | Loopback-only transaction adapter and Pancake Bull/Bear intent encoding implemented; actual local BSC-fork campaign pending |
+| 5B | BSC fork execution | Loopback-only transaction adapter, Pancake Bull/Bear intent encoding, and fixed-block bet preflight implemented; actual local BSC-fork campaign pending |
 | 6A | Tiny-live readiness / safety preflight | Not implemented as an executable live gate |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
@@ -101,6 +101,17 @@ pcs-prediction historical-bootstrap \
 ```
 
 The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
+
+Before any fork bet is submitted, the CLI performs a fixed-block read-only Prediction preflight. The standalone command is:
+
+```bash
+pcs-prediction fork-bet-preflight \
+  --fork-rpc-url http://127.0.0.1:8545 \
+  --db artifacts/fork-execution.sqlite3 \
+  --intent-id 1
+```
+
+The preflight checks current epoch, strict round timing, pause state, minimum bet, existing wallet bet, EOA compatibility, and stake balance. `fork-submit-intent` repeats the same check and fails before nonce reservation or send if it is not ready.
 
 ## Reference-design policy
 
