@@ -21,6 +21,16 @@ def _archive_probe(market: Market, block_number: int) -> ArchiveProbeResult:
     )
 
 
+class FakeBootstrapResult:
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": "BNBUSD",
+            "database": "history.sqlite3",
+            "collection_range": {"from_block": 10_333_825, "to_block": 69_999_936},
+            "replay_rounds": 123,
+        }
+
+
 def test_cli_status_exposes_research_safety_boundary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -85,6 +95,32 @@ def test_cli_historical_preflight_discovers_oldest_required_block_without_url_le
     assert "secret-token" not in output
 
 
+def test_cli_historical_bootstrap_uses_confirmed_defaults_without_url_leak(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_bootstrap(
+        rpc: object,
+        market: Market,
+        database: object,
+        **kwargs: object,
+    ) -> FakeBootstrapResult:
+        del rpc, market, database
+        assert kwargs["confirmations"] == 64
+        assert kwargs["include_chainlink"] is True
+        assert kwargs["prediction_analytic_only"] is True
+        return FakeBootstrapResult()
+
+    monkeypatch.setattr(cli, "run_historical_bootstrap", fake_bootstrap)
+    monkeypatch.setenv("BSC_RPC_URL", "https://secret-token.example.invalid")
+    args = ["historical-bootstrap", "--market", "BNBUSD", "--db", "history.sqlite3"]
+    assert cli.main(args) == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["replay_rounds"] == 123
+    assert "secret-token" not in output
+
+
 def test_cli_rpc_probe_requires_rpc_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BSC_RPC_URL", raising=False)
     with pytest.raises(SystemExit) as exc_info:
@@ -96,4 +132,11 @@ def test_cli_historical_preflight_requires_rpc_url(monkeypatch: pytest.MonkeyPat
     monkeypatch.delenv("BSC_RPC_URL", raising=False)
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["historical-preflight", "--market", "BNBUSD"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_historical_bootstrap_requires_rpc_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BSC_RPC_URL", raising=False)
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["historical-bootstrap", "--market", "BNBUSD", "--db", "x.sqlite3"])
     assert exc_info.value.code == 2
