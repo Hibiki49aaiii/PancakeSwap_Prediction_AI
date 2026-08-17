@@ -204,6 +204,38 @@ class EventStore:
             conn.commit()
             return cursor.rowcount == 1
 
+    def canonical_decoded_events(
+        self,
+        *,
+        market: str,
+        source: str,
+        event_name: str,
+    ) -> list[dict[str, object]]:
+        with closing(self.connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT e.decoded_json
+                FROM events AS e
+                JOIN blocks AS b
+                  ON b.chain_id=e.chain_id
+                 AND b.number=e.block_number
+                 AND b.hash=e.block_hash
+                WHERE b.canonical=1
+                  AND e.market=?
+                  AND e.source=?
+                  AND e.event_name=?
+                  AND e.decoded_json IS NOT NULL
+                ORDER BY e.block_number,e.tx_index,e.log_index,e.tx_hash
+                """,
+                (market, source, event_name),
+            ).fetchall()
+        decoded_events: list[dict[str, object]] = []
+        for row in rows:
+            decoded = json.loads(str(row["decoded_json"]))
+            if isinstance(decoded, dict):
+                decoded_events.append(cast(dict[str, object], decoded))
+        return decoded_events
+
     def record_metadata(self, key: str, value: str) -> None:
         with closing(self.connect()) as conn:
             conn.execute(
