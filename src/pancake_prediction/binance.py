@@ -89,6 +89,7 @@ def aggregate_order_flow(
         if (
             trade.trade_timestamp_ms < start_timestamp_ms
             or trade.trade_timestamp_ms >= end_timestamp_ms
+            or trade.event_timestamp_ms >= end_timestamp_ms
         ):
             continue
         count += 1
