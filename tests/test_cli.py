@@ -7,6 +7,8 @@ from pancake_prediction.contracts import Market
 from pancake_prediction.historical_preflight import HistoricalPreflightResult
 from pancake_prediction.rpc_probe import ArchiveProbeResult
 
+SENDER = "0x" + "11" * 20
+
 
 def _archive_probe(market: Market, block_number: int) -> ArchiveProbeResult:
     return ArchiveProbeResult(
@@ -39,6 +41,8 @@ def test_cli_status_exposes_research_safety_boundary(
     assert payload["stage"] == "v0.7-alpha-research"
     assert payload["live_broadcast"] is False
     assert payload["signing_enabled"] is False
+    assert payload["fork_local_broadcast"] is True
+    assert payload["fork_rpc_loopback_only"] is True
     assert payload["markets"] == ["BNBUSD", "BTCUSD", "ETHUSD"]
 
 
@@ -119,6 +123,90 @@ def test_cli_historical_bootstrap_uses_confirmed_defaults_without_url_leak(
     payload = json.loads(output)
     assert payload["replay_rounds"] == 123
     assert "secret-token" not in output
+
+
+def test_cli_fork_create_bet_intent_is_persistent_and_does_not_need_rpc(
+    tmp_path: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = str(tmp_path) + "/fork.sqlite3"
+    args = [
+        "fork-create-bet-intent",
+        "--db",
+        database,
+        "--market",
+        "BNBUSD",
+        "--sender",
+        SENDER,
+        "--epoch",
+        "123456",
+        "--side",
+        "bull",
+        "--stake-wei",
+        "1000000000000000",
+    ]
+    assert cli.main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "created"
+    assert payload["nonce"] is None
+    assert payload["sender"] == SENDER
+    assert payload["value_wei"] == 10**15
+
+    assert cli.main(args) == 0
+    repeated = json.loads(capsys.readouterr().out)
+    assert repeated["id"] == payload["id"]
+
+
+def test_cli_fork_opposite_side_same_wallet_round_is_rejected(
+    tmp_path: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = str(tmp_path) + "/fork.sqlite3"
+    base = [
+        "fork-create-bet-intent",
+        "--db",
+        database,
+        "--market",
+        "BNBUSD",
+        "--sender",
+        SENDER,
+        "--epoch",
+        "123456",
+        "--stake-wei",
+        "1000000000000000",
+    ]
+    assert cli.main([*base, "--side", "bull"]) == 0
+    capsys.readouterr()
+    with pytest.raises(ValueError, match="different payload"):
+        cli.main([*base, "--side", "bear"])
+
+
+def test_cli_fork_transaction_commands_reject_non_loopback_rpc(tmp_path: object) -> None:
+    database = str(tmp_path) + "/fork.sqlite3"
+    with pytest.raises(ValueError, match="loopback"):
+        cli.main(
+            [
+                "fork-prepare-account",
+                "--fork-rpc-url",
+                "https://bsc-dataseed.binance.org",
+                "--sender",
+                SENDER,
+                "--balance-wei",
+                "1",
+            ]
+        )
+    with pytest.raises(ValueError, match="loopback"):
+        cli.main(
+            [
+                "fork-submit-intent",
+                "--fork-rpc-url",
+                "https://bsc-dataseed.binance.org",
+                "--db",
+                database,
+                "--intent-id",
+                "1",
+            ]
+        )
 
 
 def test_cli_rpc_probe_requires_rpc_url(monkeypatch: pytest.MonkeyPatch) -> None:
