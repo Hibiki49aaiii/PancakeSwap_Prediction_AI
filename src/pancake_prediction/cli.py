@@ -148,7 +148,7 @@ def _rpc_url_or_error(parser: argparse.ArgumentParser, value: object) -> str:
     return str(rpc_url)
 
 
-def _execution_store(path: object) -> ExecutionIntentStore:
+def _execution_store(path: str | Path) -> ExecutionIntentStore:
     store = ExecutionIntentStore(Path(path))
     store.initialize()
     return store
