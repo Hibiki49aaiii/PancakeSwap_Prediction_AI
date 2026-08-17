@@ -142,6 +142,10 @@ def _is_loopback_rpc_url(url: str) -> bool:
 class LocalForkRpcClient(JsonRpcClient):
     """Transaction-capable RPC adapter that refuses every non-loopback endpoint."""
 
+    @property
+    def fork_only(self) -> bool:
+        return True
+
     def __post_init__(self) -> None:
         if not _is_loopback_rpc_url(self.url):
             raise ValueError("local fork RPC must use a loopback hostname/address")
