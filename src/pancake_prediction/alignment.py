@@ -81,7 +81,13 @@ def latest_available_price(
     return selected
 
 
-def chainlink_available_prices(events: Iterable[ChainEvent]) -> tuple[AvailablePrice, ...]:
+def chainlink_available_prices(
+    events: Iterable[ChainEvent],
+    *,
+    availability_lag_ms: int = 0,
+) -> tuple[AvailablePrice, ...]:
+    if availability_lag_ms < 0:
+        raise ValueError("Chainlink availability lag must be non-negative")
     observations: list[AvailablePrice] = []
     for event in events:
         if event.event_name != "AnswerUpdated":
@@ -93,7 +99,8 @@ def chainlink_available_prices(events: Iterable[ChainEvent]) -> tuple[AvailableP
         if current <= 0 or updated_at < 0:
             continue
         source_timestamp_ms = updated_at * 1_000
-        available_at_ms = max(source_timestamp_ms, event.block_timestamp * 1_000)
+        block_available_ms = event.block_timestamp * 1_000 + availability_lag_ms
+        available_at_ms = max(source_timestamp_ms, block_available_ms)
         observations.append(
             AvailablePrice(
                 source="chainlink",
@@ -144,13 +151,17 @@ def build_aligned_alpha_inputs(
     max_spot_age_ms: int = 5_000,
     max_perp_age_ms: int = 5_000,
     max_chainlink_age_ms: int | None = None,
+    chainlink_availability_lag_ms: int = 0,
 ) -> AlignedAlphaInputs | None:
     if flow_lookback_ms <= 0:
         raise ValueError("flow_lookback_ms must be positive")
     if decision_timestamp_ms < flow_lookback_ms:
         raise ValueError("decision timestamp precedes flow lookback window")
 
-    chainlink_prices = chainlink_available_prices(chainlink_events)
+    chainlink_prices = chainlink_available_prices(
+        chainlink_events,
+        availability_lag_ms=chainlink_availability_lag_ms,
+    )
     spot_prices = binance_available_prices(spot_trades, source="binance-spot")
     perp_prices = binance_available_prices(perp_trades, source="binance-perp")
 
