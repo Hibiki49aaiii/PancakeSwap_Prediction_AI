@@ -122,6 +122,8 @@ jobs:
                   "BNBUSD",
                   "--venue",
                   "spot",
+                  "--timestamp-unit",
+                  "auto",
                   "--availability-lag-ms",
                   "25",
                   "--start-ms",
@@ -132,6 +134,7 @@ jobs:
               text=True,
           )
           payload = json.loads(output)
+          assert payload["timestamp_unit"] == "auto", payload
           assert payload["rows"] == 3, payload
           assert payload["first_aggregate_trade_id"] == 1, payload
           assert payload["last_aggregate_trade_id"] == 3, payload
