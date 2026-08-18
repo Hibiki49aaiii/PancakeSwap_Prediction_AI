@@ -272,28 +272,49 @@ def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
     target = MARKETS[market].address.lower()
     with closing(sqlite3.connect(path)) as conn:
         rows = conn.execute(
-            "SELECT target,calldata,value_wei,state FROM execution_intents ORDER BY id"
+            "SELECT id,target,calldata,value_wei,state FROM execution_intents ORDER BY id"
         ).fetchall()
-    bull = 0
-    bear = 0
-    for target_raw, calldata_raw, value_wei_raw, state_raw in rows:
-        if IntentState(str(state_raw)) != IntentState.FINALIZED:
-            continue
-        if str(target_raw).lower() != target:
-            continue
-        if int(value_wei_raw) <= 0:
-            continue
-        calldata = str(calldata_raw).lower()
-        if len(calldata) != BET_CALLDATA_HEX_LENGTH:
-            continue
-        if calldata.startswith(BULL_SELECTOR):
-            bull += 1
-        elif calldata.startswith(BEAR_SELECTOR):
-            bear += 1
+        bull = 0
+        bear = 0
+        for intent_id_raw, target_raw, calldata_raw, value_wei_raw, state_raw in rows:
+            if IntentState(str(state_raw)) != IntentState.FINALIZED:
+                continue
+            if str(target_raw).lower() != target:
+                continue
+            if int(value_wei_raw) <= 0:
+                continue
+            intent_id = int(intent_id_raw)
+            submitted = conn.execute(
+                """
+                SELECT 1 FROM execution_attempts
+                WHERE intent_id=? AND outcome='submitted' AND tx_hash IS NOT NULL
+                LIMIT 1
+                """,
+                (intent_id,),
+            ).fetchone()
+            finalized_transition = conn.execute(
+                """
+                SELECT 1 FROM execution_transitions
+                WHERE intent_id=? AND to_state=?
+                LIMIT 1
+                """,
+                (intent_id, IntentState.FINALIZED.value),
+            ).fetchone()
+            if submitted is None or finalized_transition is None:
+                continue
+            calldata = str(calldata_raw).lower()
+            if len(calldata) != BET_CALLDATA_HEX_LENGTH:
+                continue
+            if calldata.startswith(BULL_SELECTOR):
+                bull += 1
+            elif calldata.startswith(BEAR_SELECTOR):
+                bear += 1
     return bull, bear
 
 
-def _ledger_scenario_observations(path: Path) -> dict[str, bool]:
+def _ledger_scenario_observations(
+    path: Path,
+) -> dict[str, tuple[bool, dict[str, Any] | None]]:
     try:
         with closing(sqlite3.connect(path)) as conn:
             rows = conn.execute(
@@ -302,32 +323,121 @@ def _ledger_scenario_observations(path: Path) -> dict[str, bool]:
     except sqlite3.OperationalError:
         return {}
 
-    observations: dict[str, bool] = {}
+    observations: dict[str, tuple[bool, dict[str, Any] | None]] = {}
     for scenario_raw, observed_raw, detail_raw in rows:
         scenario = str(scenario_raw)
         try:
             detail = json.loads(str(detail_raw))
         except json.JSONDecodeError:
-            observations[scenario] = False
+            observations[scenario] = (False, None)
             continue
-        observations[scenario] = bool(observed_raw) and isinstance(detail, dict)
+        if not isinstance(detail, dict):
+            observations[scenario] = (False, None)
+            continue
+        observations[scenario] = (bool(observed_raw), cast(dict[str, Any], detail))
     return observations
 
 
-def _ledger_transition_pairs(path: Path) -> set[tuple[str, str]]:
-    try:
-        with closing(sqlite3.connect(path)) as conn:
-            rows = conn.execute(
-                """
-                SELECT from_state,to_state
-                FROM execution_transitions
-                WHERE from_state IS NOT NULL
-                ORDER BY id
-                """
-            ).fetchall()
-    except sqlite3.OperationalError:
-        return set()
-    return {(str(from_state), str(to_state)) for from_state, to_state in rows}
+def _scenario_support_blockers(
+    path: Path,
+    *,
+    scenario: str,
+    detail: dict[str, Any] | None,
+) -> list[str]:
+    if scenario == "non_loopback_rejection":
+        if detail is None or not isinstance(detail.get("probe_url"), str):
+            return [f"scenario_detail_invalid:{scenario}"]
+        return []
+
+    if detail is None:
+        return [f"scenario_detail_invalid:{scenario}"]
+    intent_id_raw = detail.get("intent_id")
+    if isinstance(intent_id_raw, bool) or not isinstance(intent_id_raw, int) or intent_id_raw <= 0:
+        return [f"scenario_intent_missing:{scenario}"]
+    intent_id = intent_id_raw
+
+    blockers: list[str] = []
+    with closing(sqlite3.connect(path)) as conn:
+        transition_rows = conn.execute(
+            """
+            SELECT from_state,to_state
+            FROM execution_transitions
+            WHERE intent_id=? AND from_state IS NOT NULL
+            ORDER BY id
+            """,
+            (intent_id,),
+        ).fetchall()
+        transitions = {
+            (str(from_state), str(to_state))
+            for from_state, to_state in transition_rows
+        }
+        for transition in REQUIRED_TRANSITIONS.get(scenario, ()):
+            if transition not in transitions:
+                blockers.append(
+                    "scenario_transition_missing:"
+                    f"{scenario}:{transition[0]}->{transition[1]}"
+                )
+
+        attempt_rows = conn.execute(
+            """
+            SELECT outcome,tx_hash
+            FROM execution_attempts
+            WHERE intent_id=?
+            ORDER BY attempt_number
+            """,
+            (intent_id,),
+        ).fetchall()
+        outcomes = [str(outcome) for outcome, _ in attempt_rows]
+        submitted_hashes = {
+            str(tx_hash).lower()
+            for outcome, tx_hash in attempt_rows
+            if str(outcome) == "submitted" and tx_hash is not None
+        }
+        intent_row = conn.execute(
+            "SELECT nonce FROM execution_intents WHERE id=?",
+            (intent_id,),
+        ).fetchone()
+
+    if intent_row is None:
+        blockers.append(f"scenario_intent_missing:{scenario}")
+        return blockers
+
+    if scenario == "restart_recovery":
+        if "interrupted" not in outcomes:
+            blockers.append("scenario_attempt_missing:restart_recovery:interrupted")
+        if detail.get("attempt_outcome") != "interrupted":
+            blockers.append("scenario_detail_invalid:restart_recovery")
+        return blockers
+
+    old_key = (
+        "dropped_tx_hash"
+        if scenario == "dropped_or_replaced_recovery"
+        else "reorged_tx_hash"
+    )
+    old_hash = detail.get(old_key)
+    replacement_hash = detail.get("replacement_tx_hash")
+    if not isinstance(old_hash, str) or not isinstance(replacement_hash, str):
+        blockers.append(f"scenario_detail_invalid:{scenario}")
+        return blockers
+    old_hash = old_hash.lower()
+    replacement_hash = replacement_hash.lower()
+    if old_hash == replacement_hash:
+        blockers.append(f"scenario_replacement_not_distinct:{scenario}")
+    if old_hash not in submitted_hashes:
+        blockers.append(f"scenario_attempt_hash_missing:{scenario}:original")
+    if replacement_hash not in submitted_hashes:
+        blockers.append(f"scenario_attempt_hash_missing:{scenario}:replacement")
+
+    nonce_raw = detail.get("reserved_nonce")
+    current_nonce = intent_row[0]
+    if (
+        isinstance(nonce_raw, bool)
+        or not isinstance(nonce_raw, int)
+        or current_nonce is None
+        or int(current_nonce) != nonce_raw
+    ):
+        blockers.append(f"scenario_nonce_mismatch:{scenario}")
+    return blockers
 
 
 def evaluate_stage5b_fork_gate(
@@ -339,7 +449,6 @@ def evaluate_stage5b_fork_gate(
     report = build_execution_intent_report(ledger_path)
     bull, bear = _finalized_bet_counts(ledger_path, market=evidence.market)
     observations = _ledger_scenario_observations(ledger_path)
-    transitions = _ledger_transition_pairs(ledger_path)
     blockers: list[str] = []
 
     if report.total == 0:
@@ -365,14 +474,16 @@ def evaluate_stage5b_fork_gate(
     for scenario in REQUIRED_SCENARIOS:
         if not scenario_map[scenario]:
             blockers.append(f"scenario_not_claimed:{scenario}")
-        if observations.get(scenario) is not True:
+        observed, detail = observations.get(scenario, (False, None))
+        if not observed:
             blockers.append(f"scenario_not_observed_in_ledger:{scenario}")
-        for transition in REQUIRED_TRANSITIONS.get(scenario, ()):
-            if transition not in transitions:
-                blockers.append(
-                    "scenario_transition_missing:"
-                    f"{scenario}:{transition[0]}->{transition[1]}"
-                )
+        blockers.extend(
+            _scenario_support_blockers(
+                ledger_path,
+                scenario=scenario,
+                detail=detail,
+            )
+        )
 
     return Stage5ForkGateReport(
         ready=not blockers,
