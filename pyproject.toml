@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pancake-prediction-ai"
+version = "0.7.0"
+description = "Evidence-gated research and execution-readiness tooling for PancakeSwap Prediction"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
