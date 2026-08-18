@@ -4,7 +4,7 @@ import urllib.request
 
 import pytest
 
-from pancake_prediction.rpc import JsonRpcClient, LocalForkRpcClient, RpcResponseError
+from pancake_prediction.rpc import JsonRpcClient, LocalForkRpcClient, RpcError, RpcResponseError
 
 
 class _Response:
@@ -117,6 +117,7 @@ def test_local_fork_fault_controls_use_anvil_rpc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, list[object]]] = []
+    tx_hash = "0x" + "aa" * 32
 
     def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
         del kwargs
@@ -127,12 +128,18 @@ def test_local_fork_fault_controls_use_anvil_rpc(
         method = str(payload["method"])
         params = list(payload["params"])
         calls.append((method, params))
-        result: object = "0xabc" if method == "anvil_snapshot" else True
+        if method == "anvil_dropTransaction":
+            result: object = tx_hash
+        elif method == "anvil_snapshot":
+            result = "0xabc"
+        elif method == "anvil_setAutomine":
+            result = None
+        else:
+            result = True
         return _Response({"jsonrpc": "2.0", "id": payload["id"], "result": result})
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     client = LocalForkRpcClient("http://127.0.0.1:8545")
-    tx_hash = "0x" + "aa" * 32
 
     client.set_automine(False)
     client.drop_transaction(tx_hash)
@@ -148,3 +155,28 @@ def test_local_fork_fault_controls_use_anvil_rpc(
         ("anvil_revert", ["0xabc"]),
         ("anvil_stopImpersonatingAccount", ["0x" + "11" * 20]),
     ]
+
+
+def test_local_fork_drop_transaction_rejects_missing_or_wrong_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results: list[object] = [None, "0x" + "bb" * 32]
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        return _Response(
+            {"jsonrpc": "2.0", "id": payload["id"], "result": results.pop(0)}
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    tx_hash = "0x" + "aa" * 32
+
+    with pytest.raises(RpcError, match="did not find"):
+        client.drop_transaction(tx_hash)
+    with pytest.raises(RpcError, match="unexpected"):
+        client.drop_transaction(tx_hash)
