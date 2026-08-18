@@ -109,7 +109,7 @@ def resolve_timestamp_block_range(
     if safe_head < 0:
         raise ValueError("confirmed head is negative")
     safe_head_timestamp = _block_timestamp(rpc, safe_head)
-    if end_timestamp > safe_head_timestamp + 1:
+    if end_timestamp > safe_head_timestamp:
         raise ValueError("requested end timestamp is later than the confirmed head")
 
     from_block = first_block_at_or_after(
