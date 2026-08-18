@@ -34,7 +34,11 @@ def test_clickhouse_cli_ping_does_not_print_connection_secret(
 ) -> None:
     monkeypatch.setenv("CLICKHOUSE_URL", "https://example.invalid")
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "super-secret")
-    monkeypatch.setattr(clickhouse_cli, "ClickHouseHttpClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClient(),
+    )
     assert clickhouse_cli.main(["ping"]) == 0
     output = capsys.readouterr().out
     assert json.loads(output) == {"ok": True}
@@ -48,7 +52,11 @@ def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
-    monkeypatch.setattr(clickhouse_cli, "ClickHouseHttpClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClient(),
+    )
 
     archive = tmp_path / "x.zip"
     checksum = tmp_path / "x.zip.CHECKSUM"
@@ -113,7 +121,11 @@ def test_clickhouse_cli_window_reports_only_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
-    monkeypatch.setattr(clickhouse_cli, "ClickHouseHttpClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClient(),
+    )
     monkeypatch.setattr(
         clickhouse_cli,
         "load_binance_trade_window",
