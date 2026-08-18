@@ -26,6 +26,117 @@ jobs:
       - run: bandit -c pyproject.toml -r src
       - run: pip-audit
 
+  clickhouse-integration:
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - name: Apply ClickHouse schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+      - run: pcs-clickhouse ping
+      - run: pcs-clickhouse schema-check
+      - name: Build synthetic Binance archive
+        run: |
+          python - <<'PY'
+          import hashlib
+          import zipfile
+          from pathlib import Path
+
+          root = Path("/tmp/clickhouse-fixture")
+          root.mkdir(parents=True, exist_ok=True)
+          archive_path = root / "BNBUSDT-aggTrades-2026-08-01.zip"
+          payload = (
+              b"1,600.0,1.0,10,10,1785542400000000,false,true\n"
+              b"2,601.0,2.0,11,12,1785542400001000,true,true\n"
+              b"3,602.0,3.0,13,13,1785542400002000,false,true\n"
+          )
+          with zipfile.ZipFile(archive_path, "w") as archive:
+              archive.writestr("BNBUSDT-aggTrades-2026-08-01.csv", payload)
+          digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+          checksum = archive_path.with_name(archive_path.name + ".CHECKSUM")
+          checksum.write_text(f"{digest}  {archive_path.name}\n", encoding="utf-8")
+          PY
+      - name: Prove retry-safe ingest and FINAL window read
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+
+          base = [
+              "pcs-clickhouse",
+              "binance-ingest",
+              "--market",
+              "BNBUSD",
+              "--archive",
+              "/tmp/clickhouse-fixture/BNBUSDT-aggTrades-2026-08-01.zip",
+              "--checksum",
+              "/tmp/clickhouse-fixture/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM",
+              "--venue",
+              "spot",
+              "--timestamp-unit",
+              "auto",
+              "--availability-lag-ms",
+              "25",
+              "--batch-size",
+              "2",
+          ]
+          for _ in range(2):
+              subprocess.run(base, check=True)
+          output = subprocess.check_output(
+              [
+                  "pcs-clickhouse",
+                  "binance-window",
+                  "--market",
+                  "BNBUSD",
+                  "--venue",
+                  "spot",
+                  "--availability-lag-ms",
+                  "25",
+                  "--start-ms",
+                  "1785542400000",
+                  "--end-ms",
+                  "1785542401000",
+              ],
+              text=True,
+          )
+          payload = json.loads(output)
+          assert payload["rows"] == 3, payload
+          assert payload["first_aggregate_trade_id"] == 1, payload
+          assert payload["last_aggregate_trade_id"] == 3, payload
+          PY
+
   secrets:
     runs-on: ubuntu-latest
     steps:
