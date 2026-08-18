@@ -15,7 +15,7 @@ from .contracts import CHAIN_ID_BSC, MARKETS
 from .execution_intent import IntentState
 from .execution_report import build_execution_intent_report
 
-EVIDENCE_VERSION = 2
+EVIDENCE_VERSION = 3
 BULL_SELECTOR = function_selector("betBull(uint256)").lower()
 BEAR_SELECTOR = function_selector("betBear(uint256)").lower()
 BET_CALLDATA_HEX_LENGTH = 2 + 8 + 64
@@ -116,9 +116,13 @@ class Stage5ForkEvidence:
     recorded_at: str
     campaign_id: str
     market: str
+    epoch: int
+    round_start_timestamp: int
+    round_lock_timestamp: int
     chain_id: int
     fork_block_number: int
     fork_block_hash: str
+    fork_block_timestamp: int
     anvil_version: str
     ledger_sha256: str
     scenarios: tuple[tuple[str, bool], ...]
@@ -132,9 +136,13 @@ class Stage5ForkEvidence:
             "recorded_at": self.recorded_at,
             "campaign_id": self.campaign_id,
             "market": self.market,
+            "epoch": self.epoch,
+            "round_start_timestamp": self.round_start_timestamp,
+            "round_lock_timestamp": self.round_lock_timestamp,
             "chain_id": self.chain_id,
             "fork_block_number": self.fork_block_number,
             "fork_block_hash": self.fork_block_hash,
+            "fork_block_timestamp": self.fork_block_timestamp,
             "anvil_version": self.anvil_version,
             "ledger_sha256": self.ledger_sha256,
             "scenarios": dict(self.scenarios),
@@ -154,9 +162,13 @@ class Stage5ForkEvidence:
         recorded_at: str,
         campaign_id: str,
         market: str,
+        epoch: int,
+        round_start_timestamp: int,
+        round_lock_timestamp: int,
         chain_id: int,
         fork_block_number: int,
         fork_block_hash: str,
+        fork_block_timestamp: int,
         anvil_version: str,
         ledger_sha256: str,
         scenarios: Mapping[str, bool],
@@ -165,10 +177,20 @@ class Stage5ForkEvidence:
             raise ValueError("campaign_id is required")
         if market not in MARKETS:
             raise ValueError(f"unsupported Prediction market: {market}")
+        if epoch <= 0:
+            raise ValueError("epoch must be positive")
+        if round_start_timestamp <= 0:
+            raise ValueError("round_start_timestamp must be positive")
+        if round_lock_timestamp <= round_start_timestamp:
+            raise ValueError("round_lock_timestamp must be after round_start_timestamp")
         if chain_id <= 0:
             raise ValueError("chain_id must be positive")
         if fork_block_number <= 0:
             raise ValueError("fork_block_number must be positive")
+        if not (
+            round_start_timestamp < fork_block_timestamp < round_lock_timestamp
+        ):
+            raise ValueError("fork block must be strictly inside the betting window")
         if not anvil_version.strip():
             raise ValueError("anvil_version is required")
         provisional = cls(
@@ -177,9 +199,13 @@ class Stage5ForkEvidence:
             recorded_at=_validate_recorded_at(recorded_at),
             campaign_id=campaign_id,
             market=market,
+            epoch=epoch,
+            round_start_timestamp=round_start_timestamp,
+            round_lock_timestamp=round_lock_timestamp,
             chain_id=chain_id,
             fork_block_number=fork_block_number,
             fork_block_hash=_validate_block_hash(fork_block_hash),
+            fork_block_timestamp=fork_block_timestamp,
             anvil_version=anvil_version.strip(),
             ledger_sha256=_validate_sha256(ledger_sha256, field="ledger_sha256"),
             scenarios=_normalize_scenarios(scenarios),
@@ -192,9 +218,13 @@ class Stage5ForkEvidence:
             recorded_at=provisional.recorded_at,
             campaign_id=provisional.campaign_id,
             market=provisional.market,
+            epoch=provisional.epoch,
+            round_start_timestamp=provisional.round_start_timestamp,
+            round_lock_timestamp=provisional.round_lock_timestamp,
             chain_id=provisional.chain_id,
             fork_block_number=provisional.fork_block_number,
             fork_block_hash=provisional.fork_block_hash,
+            fork_block_timestamp=provisional.fork_block_timestamp,
             anvil_version=provisional.anvil_version,
             ledger_sha256=provisional.ledger_sha256,
             scenarios=provisional.scenarios,
@@ -223,9 +253,13 @@ class Stage5ForkEvidence:
             recorded_at=str(obj["recorded_at"]),
             campaign_id=str(obj["campaign_id"]),
             market=str(obj["market"]),
+            epoch=int(obj["epoch"]),
+            round_start_timestamp=int(obj["round_start_timestamp"]),
+            round_lock_timestamp=int(obj["round_lock_timestamp"]),
             chain_id=int(obj["chain_id"]),
             fork_block_number=int(obj["fork_block_number"]),
             fork_block_hash=str(obj["fork_block_hash"]),
+            fork_block_timestamp=int(obj["fork_block_timestamp"]),
             anvil_version=str(obj["anvil_version"]),
             ledger_sha256=str(obj["ledger_sha256"]),
             scenarios=scenario_values,
@@ -268,7 +302,21 @@ def ledger_sha256(path: Path) -> str:
     return _sha256_bytes(path.read_bytes())
 
 
-def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
+def _calldata_epoch(calldata: str) -> int | None:
+    if len(calldata) != BET_CALLDATA_HEX_LENGTH or not calldata.startswith("0x"):
+        return None
+    try:
+        return int(calldata[10:], 16)
+    except ValueError:
+        return None
+
+
+def _finalized_bet_counts(
+    path: Path,
+    *,
+    market: str,
+    epoch: int,
+) -> tuple[int, int]:
     target = MARKETS[market].address.lower()
     with closing(sqlite3.connect(path)) as conn:
         rows = conn.execute(
@@ -282,6 +330,9 @@ def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
             if str(target_raw).lower() != target:
                 continue
             if int(value_wei_raw) <= 0:
+                continue
+            calldata = str(calldata_raw).lower()
+            if _calldata_epoch(calldata) != epoch:
                 continue
             intent_id = int(intent_id_raw)
             submitted = conn.execute(
@@ -301,9 +352,6 @@ def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
                 (intent_id, IntentState.FINALIZED.value),
             ).fetchone()
             if submitted is None or finalized_transition is None:
-                continue
-            calldata = str(calldata_raw).lower()
-            if len(calldata) != BET_CALLDATA_HEX_LENGTH:
                 continue
             if calldata.startswith(BULL_SELECTOR):
                 bull += 1
@@ -352,7 +400,11 @@ def _scenario_support_blockers(
     if detail is None:
         return [f"scenario_detail_invalid:{scenario}"]
     intent_id_raw = detail.get("intent_id")
-    if isinstance(intent_id_raw, bool) or not isinstance(intent_id_raw, int) or intent_id_raw <= 0:
+    if (
+        isinstance(intent_id_raw, bool)
+        or not isinstance(intent_id_raw, int)
+        or intent_id_raw <= 0
+    ):
         return [f"scenario_intent_missing:{scenario}"]
     intent_id = intent_id_raw
 
@@ -447,7 +499,11 @@ def evaluate_stage5b_fork_gate(
     expected_source_sha: str | None = None,
 ) -> Stage5ForkGateReport:
     report = build_execution_intent_report(ledger_path)
-    bull, bear = _finalized_bet_counts(ledger_path, market=evidence.market)
+    bull, bear = _finalized_bet_counts(
+        ledger_path,
+        market=evidence.market,
+        epoch=evidence.epoch,
+    )
     observations = _ledger_scenario_observations(ledger_path)
     blockers: list[str] = []
 
