@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pancake_prediction.contracts import CHAIN_ID_BSC, MARKETS
@@ -175,7 +175,10 @@ def _observe_drop_recovery(
         if rpc.transaction_by_hash(tx_hash) is not None:
             raise RuntimeError("dropped transaction is still visible in the local fork pool")
         recovered = coordinator.reconcile(intent.id)
-        observed = recovered.state == IntentState.RETRYABLE and recovered.nonce == submitted.nonce
+        observed = (
+            recovered.state == IntentState.RETRYABLE
+            and recovered.nonce == submitted.nonce
+        )
     finally:
         rpc.set_automine(True)
 
@@ -247,6 +250,7 @@ def run_campaign(
     evidence_path: Path,
     source_sha: str,
     fork_block_number: int,
+    anvil_version: str,
     non_loopback_probe_url: str,
 ) -> dict[str, object]:
     if db_path.exists():
@@ -259,6 +263,10 @@ def run_campaign(
         raise RuntimeError("local fork does not report BSC chain id 56")
     if fork_block_number <= 0 or rpc.block_number() < fork_block_number:
         raise RuntimeError("local fork head is inconsistent with the requested fork block")
+    fork_block = rpc.block(fork_block_number)
+    fork_block_hash = str(fork_block.get("hash", ""))
+    if not fork_block_hash.startswith("0x"):
+        raise RuntimeError("local fork did not expose the source fork block hash")
 
     store = ExecutionIntentStore(db_path)
     store.initialize()
@@ -314,10 +322,13 @@ def run_campaign(
     evidence = Stage5ForkEvidence.create(
         origin=EvidenceOrigin.OBSERVED,
         source_sha=source_sha,
-        recorded_at=datetime.now(timezone.utc).isoformat(),
+        recorded_at=datetime.now(UTC).isoformat(),
         campaign_id=f"stage5b-{source_sha[:12]}-{fork_block_number}",
+        market=MARKET,
         chain_id=rpc.chain_id(),
         fork_block_number=fork_block_number,
+        fork_block_hash=fork_block_hash,
+        anvil_version=anvil_version,
         ledger_sha256=ledger_sha256(db_path),
         scenarios=scenarios,
     )
@@ -337,6 +348,8 @@ def run_campaign(
         "epoch": epoch,
         "stake_wei": stake_wei,
         "fork_block_number": fork_block_number,
+        "fork_block_hash": fork_block_hash,
+        "anvil_version": anvil_version,
         "scenarios": scenarios,
         "gate": gate.as_dict(),
     }
@@ -351,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--fork-block-number", type=int, required=True)
+    parser.add_argument("--anvil-version", required=True)
     parser.add_argument(
         "--non-loopback-probe-url",
         default="https://bsc-dataseed.bnbchain.org",
@@ -366,6 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         evidence_path=Path(args.evidence),
         source_sha=str(args.source_sha),
         fork_block_number=int(args.fork_block_number),
+        anvil_version=str(args.anvil_version),
         non_loopback_probe_url=str(args.non_loopback_probe_url),
     )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
