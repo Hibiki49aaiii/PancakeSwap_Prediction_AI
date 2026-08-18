@@ -21,13 +21,17 @@ class FakeClient:
             yield {
                 "engine": "ReplacingMergeTree",
                 "engine_full": "ReplacingMergeTree(ingest_version)",
-                "sorting_key": "venue, symbol, availability_lag_ms, aggregate_trade_id",
+                "sorting_key": (
+                    "venue, symbol, timestamp_unit, availability_lag_ms, "
+                    "aggregate_trade_id"
+                ),
             }
             return
         if "system.columns" in query:
             columns = {
                 "venue": "LowCardinality(String)",
                 "symbol": "LowCardinality(String)",
+                "timestamp_unit": "LowCardinality(String)",
                 "event_timestamp_ms": "UInt64",
                 "trade_timestamp_ms": "UInt64",
                 "aggregate_trade_id": "UInt64",
@@ -212,6 +216,8 @@ def test_clickhouse_cli_window_reports_only_summary(
         "BNBUSD",
         "--venue",
         "spot",
+        "--timestamp-unit",
+        "auto",
         "--availability-lag-ms",
         "25",
         "--start-ms",
@@ -224,6 +230,7 @@ def test_clickhouse_cli_window_reports_only_summary(
     assert payload == {
         "market": "BNBUSD",
         "venue": "spot",
+        "timestamp_unit": "auto",
         "rows": 2,
         "first_aggregate_trade_id": 10,
         "last_aggregate_trade_id": 11,
@@ -261,7 +268,9 @@ def test_clickhouse_cli_dataset_summary_binds_canonical_inputs_and_assumptions(
         assert received_replay is replay
         assert received_events == events
         assert isinstance(source, FakeClient)
+        assert kwargs["spot_timestamp_unit"] == "auto"
         assert kwargs["spot_availability_lag_ms"] == 25
+        assert kwargs["perp_timestamp_unit"] == "milliseconds"
         assert kwargs["perp_availability_lag_ms"] == 40
         assert kwargs["include_perp"] is False
         assert kwargs["chunk_span_ms"] == 3_600_000
@@ -292,7 +301,9 @@ def test_clickhouse_cli_dataset_summary_binds_canonical_inputs_and_assumptions(
     output = capsys.readouterr().out
     payload = json.loads(output)
     assert payload["inputs"]["replay_rounds"] == 123
+    assert payload["assumptions"]["spot_timestamp_unit"] == "auto"
     assert payload["assumptions"]["spot_availability_lag_ms"] == 25
+    assert payload["assumptions"]["perp_timestamp_unit"] == "milliseconds"
     assert payload["assumptions"]["perp_availability_lag_ms"] == 40
     assert payload["assumptions"]["include_perp"] is False
     assert payload["assumptions"]["chainlink_availability_lag_ms"] == 500
