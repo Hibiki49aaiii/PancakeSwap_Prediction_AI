@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from typing import cast
 
 from .contracts import Market
 
@@ -138,15 +139,16 @@ def decode_prediction_v2_creation_transaction(
         contract_address=market.address.lower(),
         transaction_hash=transaction_hash.lower(),
         block_number=block_number,
-        creation_input_sha256=str(decoded["creation_input_sha256"]),
-        oracle_address=str(decoded["oracle_address"]),
-        admin_address=str(decoded["admin_address"]),
-        operator_address=str(decoded["operator_address"]),
-        interval_seconds=int(decoded["interval_seconds"]),
-        buffer_seconds=int(decoded["buffer_seconds"]),
-        min_bet_amount_wei=int(decoded["min_bet_amount_wei"]),
-        oracle_update_allowance_seconds=int(
-            decoded["oracle_update_allowance_seconds"]
+        creation_input_sha256=cast(str, decoded["creation_input_sha256"]),
+        oracle_address=cast(str, decoded["oracle_address"]),
+        admin_address=cast(str, decoded["admin_address"]),
+        operator_address=cast(str, decoded["operator_address"]),
+        interval_seconds=cast(int, decoded["interval_seconds"]),
+        buffer_seconds=cast(int, decoded["buffer_seconds"]),
+        min_bet_amount_wei=cast(int, decoded["min_bet_amount_wei"]),
+        oracle_update_allowance_seconds=cast(
+            int,
+            decoded["oracle_update_allowance_seconds"],
         ),
-        treasury_fee_bps=int(decoded["treasury_fee_bps"]),
+        treasury_fee_bps=cast(int, decoded["treasury_fee_bps"]),
     )
