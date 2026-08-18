@@ -1,0 +1,125 @@
+{
+  "any_positive_pnl_both_periods": false,
+  "any_stable_research_candidate": false,
+  "authoritative": false,
+  "confirmation_baseline_roi_ppm": -45995,
+  "cross_period_digest": "f36737a209f998d6edccb67bc87c73e2a3c00b6700aa05d3218fd7f064212ee6",
+  "evidence_version": 1,
+  "exploratory_baseline_roi_ppm": -158675,
+  "exploratory_selection": {
+    "complete_rounds": 1956,
+    "end_timestamp": 1660003200,
+    "start_timestamp": 1659398400
+  },
+  "independent_confirmation_selection": {
+    "complete_rounds": 1957,
+    "end_timestamp": 1660608000,
+    "start_timestamp": 1660003200
+  },
+  "positive_pnl_both_periods": [],
+  "profitability_gate_eligible": false,
+  "source_class": "third_party_historical_benchmark",
+  "stable_research_candidates": [],
+  "variant_set_precommitted_before_exploratory_result_review": true,
+  "variants": [
+    {
+      "confirmation_brier_skill": 0.0026232094118737725,
+      "confirmation_roi_ppm": -170119,
+      "exploratory_brier_skill": 0.005482856092793531,
+      "exploratory_roi_ppm": -109164,
+      "name": "v2_all",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.005965247355247505,
+      "confirmation_roi_ppm": -92144,
+      "exploratory_brier_skill": 0.0007373213309609383,
+      "exploratory_roi_ppm": -98893,
+      "name": "spot_micro",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.00844662043167732,
+      "confirmation_roi_ppm": -104044,
+      "exploratory_brier_skill": 0.004184005295078674,
+      "exploratory_roi_ppm": -95170,
+      "name": "perp_micro",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.006672082885696207,
+      "confirmation_roi_ppm": -84468,
+      "exploratory_brier_skill": 0.0050535498957959835,
+      "exploratory_roi_ppm": -106352,
+      "name": "returns",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": -0.0009347414734715009,
+      "confirmation_roi_ppm": -65259,
+      "exploratory_brier_skill": -0.0037084393428425955,
+      "exploratory_roi_ppm": -137145,
+      "name": "flow",
+      "positive_brier_skill_both_periods": false,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.003538448901373892,
+      "confirmation_roi_ppm": -80708,
+      "exploratory_brier_skill": 0.0005067945662234896,
+      "exploratory_roi_ppm": -77228,
+      "name": "intensity",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.002764270734212926,
+      "confirmation_roi_ppm": -101839,
+      "exploratory_brier_skill": -0.0071189636379134225,
+      "exploratory_roi_ppm": -144168,
+      "name": "horizon_5s",
+      "positive_brier_skill_both_periods": false,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": -0.0041375691961609284,
+      "confirmation_roi_ppm": -105127,
+      "exploratory_brier_skill": 0.0038030461102643853,
+      "exploratory_roi_ppm": -101904,
+      "name": "horizon_20s",
+      "positive_brier_skill_both_periods": false,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    },
+    {
+      "confirmation_brier_skill": 0.0063301338466307255,
+      "confirmation_roi_ppm": -98584,
+      "exploratory_brier_skill": 0.006960364364787419,
+      "exploratory_roi_ppm": -127072,
+      "name": "horizon_60s",
+      "positive_brier_skill_both_periods": true,
+      "positive_pnl_both_periods": false,
+      "roi_better_than_period_baseline_both_periods": false,
+      "stable_research_candidate": false
+    }
+  ]
+}
