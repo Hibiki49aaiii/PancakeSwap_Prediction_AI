@@ -4,7 +4,7 @@ import csv
 import gzip
 import hashlib
 from dataclasses import asdict, dataclass
-from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
 
 LEGACY_ROUNDS_SOURCE_REPOSITORY = "xcnecon/PancakeSwap-Arbitrage-Bot"
