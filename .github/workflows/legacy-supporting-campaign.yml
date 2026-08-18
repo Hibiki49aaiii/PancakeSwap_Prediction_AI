@@ -47,9 +47,13 @@ jobs:
           python-version: '3.12'
       - name: Install project
         run: pip install -e .
+      - name: Create diagnostic directories
+        run: mkdir -p artifacts evidence /tmp/legacy /tmp/binance/spot /tmp/binance/perp
       - name: Apply ClickHouse schema
+        id: schema
+        continue-on-error: true
         run: |
-          python - <<'PY'
+          python - <<'PY' > artifacts/schema.log 2>&1
           from pathlib import Path
           from pancake_prediction.clickhouse import ClickHouseHttpClient
 
@@ -63,8 +67,10 @@ jobs:
                   client.execute(statement)
           PY
       - name: Download pinned legacy rounds and official Binance daily archives
+        id: download
+        continue-on-error: true
         run: |
-          mkdir -p /tmp/legacy /tmp/binance/spot /tmp/binance/perp artifacts evidence
+          exec > >(tee artifacts/download.log) 2>&1
           curl -fsSL \
             https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
             -o /tmp/legacy/rounds.csv.gz
@@ -84,7 +90,10 @@ jobs:
               -o "/tmp/binance/perp/${base}.CHECKSUM"
           done
       - name: Ingest checksum-verified Spot and Perp archives
+        id: ingest
+        continue-on-error: true
         run: |
+          exec > >(tee artifacts/ingest.log) 2>&1
           pcs-clickhouse schema-check
           for day in 01 02 03 04 05 06 07 08; do
             base="BNBUSDT-aggTrades-2022-08-${day}.zip"
@@ -106,7 +115,10 @@ jobs:
               > "/tmp/binance/perp-${day}-ingest.json"
           done
       - name: Run non-authoritative bounded supporting campaign
+        id: campaign
+        continue-on-error: true
         run: |
+          exec > >(tee artifacts/campaign.log) 2>&1
           python scripts/run_legacy_supporting_campaign.py \
             --legacy-archive /tmp/legacy/rounds.csv.gz \
             --output artifacts/legacy-supporting-campaign-2022-08-02-to-08.json \
@@ -126,24 +138,88 @@ jobs:
             --calibration-rounds 100 \
             --pool-min-train-rounds 100 \
             --pool-window-rounds 1000
-          cp artifacts/legacy-supporting-campaign-2022-08-02-to-08.json \
-            evidence/legacy-supporting-campaign-2022-08-02-to-08.json
-      - name: Upload bounded supporting evidence
+      - name: Build diagnostic evidence
+        if: always()
+        env:
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          artifacts = Path("artifacts")
+
+          def tail(name: str) -> str | None:
+              path = artifacts / name
+              if not path.exists():
+                  return None
+              text = path.read_text(encoding="utf-8", errors="replace")
+              return text[-4000:]
+
+          campaign_path = artifacts / "legacy-supporting-campaign-2022-08-02-to-08.json"
+          payload = {
+              "diagnostic_version": 1,
+              "schema_outcome": os.environ["SCHEMA_OUTCOME"],
+              "download_outcome": os.environ["DOWNLOAD_OUTCOME"],
+              "ingest_outcome": os.environ["INGEST_OUTCOME"],
+              "campaign_outcome": os.environ["CAMPAIGN_OUTCOME"],
+              "campaign_evidence_exists": campaign_path.exists(),
+              "schema_log_tail": tail("schema.log"),
+              "download_log_tail": tail("download.log"),
+              "ingest_log_tail": tail("ingest.log"),
+              "campaign_log_tail": tail("campaign.log"),
+          }
+          output = Path("evidence/legacy-supporting-campaign-status.json")
+          output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          if campaign_path.exists():
+              Path("evidence/legacy-supporting-campaign-2022-08-02-to-08.json").write_text(
+                  campaign_path.read_text(encoding="utf-8"),
+                  encoding="utf-8",
+              )
+          print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Upload bounded supporting evidence and diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: legacy-supporting-campaign-${{ github.run_id }}
-          path: artifacts/legacy-supporting-campaign-2022-08-02-to-08.json
+          path: |
+            artifacts/
+            evidence/legacy-supporting-campaign-status.json
           if-no-files-found: error
           retention-days: 30
       - name: Persist deterministic supporting evidence
+        if: always()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/legacy-supporting-campaign-2022-08-02-to-08.json
+          git add evidence/legacy-supporting-campaign-status.json
+          if [ -f evidence/legacy-supporting-campaign-2022-08-02-to-08.json ]; then
+            git add evidence/legacy-supporting-campaign-2022-08-02-to-08.json
+          fi
           if git diff --cached --quiet; then
             echo 'Legacy supporting campaign evidence unchanged.'
-            exit 0
+          else
+            git commit -m 'chore: record legacy supporting campaign evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
           fi
-          git commit -m 'chore: record legacy supporting campaign evidence'
-          git pull --rebase origin agent/v0.7-alpha-research
-          git push origin HEAD:agent/v0.7-alpha-research
+      - name: Enforce supporting campaign gate
+        if: always()
+        env:
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+        run: |
+          if [ "$SCHEMA_OUTCOME" != success ] || \
+             [ "$DOWNLOAD_OUTCOME" != success ] || \
+             [ "$INGEST_OUTCOME" != success ] || \
+             [ "$CAMPAIGN_OUTCOME" != success ]; then
+            echo 'Legacy supporting campaign diagnostic gate failed.' >&2
+            exit 2
+          fi
