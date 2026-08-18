@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from typing import cast
 
+from .clickhouse import ClickHouseParameterizedJsonSource
 from .legacy_benchmark import run_legacy_economic_benchmark
 from .legacy_campaign import (
     LegacySupportingCampaignConfig,
@@ -19,7 +21,6 @@ from .legacy_microstructure_model import run_legacy_microstructure_v2_model
 from .legacy_model import legacy_oos_to_backtest_signals
 from .legacy_pool_projection import build_legacy_absolute_pool_projections
 from .legacy_rounds import LegacyRoundAuditReport, LegacyRoundRecord
-from .clickhouse import ClickHouseParameterizedJsonSource
 
 
 def _metric_delta(after: float | None, before: float | None) -> float | None:
@@ -157,7 +158,7 @@ def run_legacy_microstructure_comparison(
     v2_probability = v2_model.metrics.as_dict()
     v1_brier_skill = baseline.probability_metrics.brier_skill_score
     v2_brier_skill = v2_model.metrics.brier_skill_score
-    v1_pnl = int(baseline.economic_summary["pnl_wei"])
+    v1_pnl = cast(int, baseline.economic_summary["pnl_wei"])
     v2_summary = v2_economics.summary()
     v2_pnl = v2_economics.pnl_wei
     brier_improved = (
