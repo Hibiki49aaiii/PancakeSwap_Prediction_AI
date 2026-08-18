@@ -1,12 +1,12 @@
 {
-  "bandit": "skipped",
-  "coverage_percent": null,
+  "bandit": "success",
+  "coverage_percent": 87,
   "evidence_version": 1,
-  "mypy": "skipped",
-  "pip_audit": "skipped",
-  "pytest": "skipped",
-  "pytest_passed": null,
+  "mypy": "failure",
+  "pip_audit": "success",
+  "pytest": "success",
+  "pytest_passed": 254,
   "ready": false,
-  "ruff": "skipped",
-  "source_sha": "d061ea28f305219d48b1ab2ab91a05465c5d72dd"
+  "ruff": "failure",
+  "source_sha": "d3650d42ce8b4dfd755c190b133ab4d98324d6e9"
 }
