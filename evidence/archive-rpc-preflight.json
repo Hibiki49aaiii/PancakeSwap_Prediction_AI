@@ -1,0 +1,7 @@
+{
+  "archive_ready": false,
+  "configured": false,
+  "evidence_version": 1,
+  "market": "BNBUSD",
+  "reason": "BSC_ARCHIVE_RPC_URL secret is not configured"
+}
