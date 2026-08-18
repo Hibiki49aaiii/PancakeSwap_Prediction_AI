@@ -225,17 +225,7 @@ def test_economic_cost_changes_evaluation_digest_not_source_campaign_digest() ->
         report.economic_config,
         bet_gas_wei=report.economic_config.bet_gas_wei + 1,
     )
-    changed_report = replace(
-        report,
-        economic_config=changed_economics,
-        economic_summary={
-            **report.economic_summary,
-            "config": {
-                **report.economic_summary["config"],
-                "bet_gas_wei": changed_economics.bet_gas_wei,
-            },
-        },
-    )
+    changed_report = replace(report, economic_config=changed_economics)
 
     assert changed_report.manifest.digest == report.manifest.digest
     assert changed_report.evaluation_digest != report.evaluation_digest
