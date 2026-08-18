@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from pancake_prediction.baseline import ResearchFeatureRow
+from pancake_prediction.baseline import ResearchFeatureRow, WalkForwardBaselineResult
 from pancake_prediction.legacy_model import (
     LEGACY_FEATURE_NAMES,
     run_legacy_walkforward_model,
@@ -77,7 +77,7 @@ def _fixture() -> tuple[tuple[LegacyRoundRecord, ...], tuple[ResearchFeatureRow,
 def _run(
     rounds: tuple[LegacyRoundRecord, ...],
     rows: tuple[ResearchFeatureRow, ...],
-):
+) -> WalkForwardBaselineResult:
     return run_legacy_walkforward_model(
         rounds,
         rows,
