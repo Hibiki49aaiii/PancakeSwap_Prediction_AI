@@ -5,6 +5,7 @@
 CREATE TABLE IF NOT EXISTS binance_agg_trades (
     venue LowCardinality(String),
     symbol LowCardinality(String),
+    timestamp_unit LowCardinality(String),
     event_timestamp_ms UInt64,
     trade_timestamp_ms UInt64,
     aggregate_trade_id UInt64,
@@ -18,7 +19,7 @@ CREATE TABLE IF NOT EXISTS binance_agg_trades (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingest_version)
-ORDER BY (venue, symbol, availability_lag_ms, aggregate_trade_id);
+ORDER BY (venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id);
 
 -- ReplacingMergeTree deduplication happens during background merges. Research reads that require
 -- immediate retry-safe correctness must query binance_agg_trades FINAL.
