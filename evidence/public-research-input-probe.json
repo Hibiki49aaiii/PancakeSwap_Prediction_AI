@@ -1,0 +1,105 @@
+{
+  "archive_ready_endpoints": [],
+  "binance_ready": true,
+  "binance_results": [
+    {
+      "checksum_accessible": true,
+      "checksum_sha256": "b1b7db376aeefdfe3c90f9c6c5e6082c009c89bd5769d3d08e348b8d4e600547",
+      "checksum_url": "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM",
+      "error": null,
+      "venue": "spot",
+      "zip_accessible": true,
+      "zip_content_length": "1",
+      "zip_content_range": "bytes 0-0/2394368",
+      "zip_http_status": 206,
+      "zip_url": "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip"
+    },
+    {
+      "checksum_accessible": true,
+      "checksum_sha256": "1116867172dd84729d6c88f5f3b2288a7ab8fd120a74981e50247ab16ad03172",
+      "checksum_url": "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM",
+      "error": null,
+      "venue": "um_futures",
+      "zip_accessible": true,
+      "zip_content_length": "1",
+      "zip_content_range": "bytes 0-0/2289512",
+      "zip_http_status": 206,
+      "zip_url": "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip"
+    }
+  ],
+  "historical_probe_block": 10333826,
+  "prediction_contract": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+  "probe_version": 1,
+  "rpc_results": [
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 325,
+      "endpoint": "https://bsc-dataseed.bnbchain.org",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590673
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 1376,
+      "endpoint": "https://bsc-dataseed-public.bnbchain.org",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"not supported\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590675
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 301,
+      "endpoint": "https://bsc-dataseed.nariox.org",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590677
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 233,
+      "endpoint": "https://bsc-dataseed.defibit.io",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590677
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 179,
+      "endpoint": "https://bsc-dataseed.ninicoin.io",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590678
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 250,
+      "endpoint": "https://bsc.nodereal.io",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590679
+    },
+    {
+      "archive_ready": false,
+      "chain_id": null,
+      "elapsed_ms": 95,
+      "endpoint": "https://bnb.rpc.subquery.network/public",
+      "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": null
+    }
+  ]
+}
