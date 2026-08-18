@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
+from .backtest import BacktestSignal
 from .baseline import (
     ResearchFeatureRow,
     WalkForwardBaselineResult,
@@ -35,6 +36,28 @@ def _legacy_outcomes(
         outcomes[record.epoch] = 1 if record.label == "bull" else 0
         floors[record.epoch] = record.start_timestamp
     return outcomes, floors, ties
+
+
+def legacy_oos_to_backtest_signals(
+    signals: Mapping[int, OosSignal],
+) -> dict[int, BacktestSignal]:
+    """Convert generic OOS signals into the economic backtest contract explicitly."""
+
+    converted: dict[int, BacktestSignal] = {}
+    for epoch, signal in signals.items():
+        if epoch != signal.epoch:
+            raise ValueError(f"legacy signal map key/epoch mismatch at epoch {epoch}")
+        model_id = signal.fold or "legacy-wf-unlabeled"
+        candidate = BacktestSignal(
+            epoch=signal.epoch,
+            p_bull_ppm=signal.p_bull_ppm,
+            generated_at=signal.generated_at,
+            model_id=model_id,
+            train_max_epoch=signal.train_max_epoch,
+        )
+        candidate.validate()
+        converted[epoch] = candidate
+    return converted
 
 
 def run_legacy_walkforward_model(
