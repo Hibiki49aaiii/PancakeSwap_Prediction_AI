@@ -1,0 +1,147 @@
+name: legacy-supporting-sensitivity
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - src/pancake_prediction/legacy_*.py
+      - src/pancake_prediction/absolute_pool_projection.py
+      - scripts/run_legacy_supporting_sensitivity.py
+      - .github/workflows/legacy-supporting-sensitivity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: legacy-supporting-sensitivity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sensitivity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+      SPOT_LAG_MS: '250'
+      PERP_LAG_MS: '250'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Create directories
+        run: mkdir -p /tmp/legacy /tmp/binance/spot /tmp/binance/perp artifacts evidence
+      - name: Apply ClickHouse schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+      - name: Download pinned legacy rounds and official Binance archives
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
+            -o /tmp/legacy/rounds.csv.gz
+          for day in 01 02 03 04 05 06 07 08; do
+            base="BNBUSDT-aggTrades-2022-08-${day}.zip"
+            curl -fsSL \
+              "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/${base}" \
+              -o "/tmp/binance/spot/${base}"
+            curl -fsSL \
+              "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/${base}.CHECKSUM" \
+              -o "/tmp/binance/spot/${base}.CHECKSUM"
+            curl -fsSL \
+              "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/${base}" \
+              -o "/tmp/binance/perp/${base}"
+            curl -fsSL \
+              "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/${base}.CHECKSUM" \
+              -o "/tmp/binance/perp/${base}.CHECKSUM"
+          done
+      - name: Ingest checksum-verified Spot and Perp archives
+        run: |
+          pcs-clickhouse schema-check
+          for day in 01 02 03 04 05 06 07 08; do
+            base="BNBUSDT-aggTrades-2022-08-${day}.zip"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/spot/${base}" \
+              --checksum "/tmp/binance/spot/${base}.CHECKSUM" \
+              --venue spot \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms "$SPOT_LAG_MS" \
+              > "/tmp/binance/spot-${day}-ingest.json"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/perp/${base}" \
+              --checksum "/tmp/binance/perp/${base}.CHECKSUM" \
+              --venue um_futures \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms "$PERP_LAG_MS" \
+              > "/tmp/binance/perp-${day}-ingest.json"
+          done
+      - name: Run three-scenario economic sensitivity
+        run: |
+          python scripts/run_legacy_supporting_sensitivity.py \
+            --legacy-archive /tmp/legacy/rounds.csv.gz \
+            --output artifacts/legacy-supporting-sensitivity-2022-08-02-to-08.json \
+            --start-timestamp 1659398400 \
+            --end-timestamp 1660003200 \
+            --spot-availability-lag-ms "$SPOT_LAG_MS" \
+            --perp-availability-lag-ms "$PERP_LAG_MS" \
+            --feature-lead-seconds 20 \
+            --stake-wei 10000000000000000 \
+            --min-train-rounds 500 \
+            --test-rounds 250 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 100 \
+            --pool-min-train-rounds 100 \
+            --pool-window-rounds 1000
+          cp artifacts/legacy-supporting-sensitivity-2022-08-02-to-08.json \
+            evidence/legacy-supporting-sensitivity-2022-08-02-to-08.json
+      - name: Upload sensitivity evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-supporting-sensitivity-${{ github.run_id }}
+          path: artifacts/legacy-supporting-sensitivity-2022-08-02-to-08.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Persist deterministic sensitivity evidence
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/legacy-supporting-sensitivity-2022-08-02-to-08.json
+          if git diff --cached --quiet; then
+            echo 'Legacy supporting sensitivity evidence unchanged.'
+            exit 0
+          fi
+          git commit -m 'chore: record legacy supporting sensitivity evidence'
+          git pull --rebase origin agent/v0.7-alpha-research
+          git push origin HEAD:agent/v0.7-alpha-research
