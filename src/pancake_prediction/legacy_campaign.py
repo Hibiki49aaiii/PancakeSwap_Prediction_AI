@@ -101,7 +101,6 @@ class LegacySupportingCampaignManifest:
     feature_config: LegacyFeatureConfig
     model_config: LegacyModelConfig
     pool_config: AbsolutePoolProjectionConfig
-    economic_config: LegacyEconomicBenchmarkConfig
     feature_summary: dict[str, object]
     spot_sources: tuple[BinanceSourceSlice, ...]
     perp_sources: tuple[BinanceSourceSlice, ...]
@@ -115,7 +114,6 @@ class LegacySupportingCampaignManifest:
             "feature_config": asdict(self.feature_config),
             "model_config": asdict(self.model_config),
             "pool_config": asdict(self.pool_config),
-            "economic_config": asdict(self.economic_config),
             "feature_summary": self.feature_summary,
             "spot_sources": [item.as_dict() for item in self.spot_sources],
             "perp_sources": [item.as_dict() for item in self.perp_sources],
@@ -147,6 +145,7 @@ class LegacySupportingCampaignReport:
     probability_metrics: OosMetrics
     direction_signal_count: int
     pool_projection_count: int
+    economic_config: LegacyEconomicBenchmarkConfig
     economic_summary: dict[str, object]
 
     def payload(self) -> dict[str, object]:
@@ -156,6 +155,7 @@ class LegacySupportingCampaignReport:
             "probability_metrics": self.probability_metrics.as_dict(),
             "direction_signal_count": self.direction_signal_count,
             "pool_projection_count": self.pool_projection_count,
+            "economic_config": asdict(self.economic_config),
             "economic_summary": self.economic_summary,
         }
 
@@ -308,7 +308,6 @@ def run_legacy_supporting_campaign(
         feature_config=config.features,
         model_config=config.model,
         pool_config=config.pool,
-        economic_config=config.economics,
         feature_summary=features.as_dict(),
         spot_sources=spot_sources,
         perp_sources=perp_sources,
@@ -319,5 +318,6 @@ def run_legacy_supporting_campaign(
         probability_metrics=model.metrics,
         direction_signal_count=len(model.signals),
         pool_projection_count=len(projections),
+        economic_config=config.economics,
         economic_summary=economics.summary(),
     )
