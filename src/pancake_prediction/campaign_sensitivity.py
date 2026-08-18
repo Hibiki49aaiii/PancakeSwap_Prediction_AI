@@ -90,6 +90,25 @@ class EconomicSensitivityResult:
         }
 
 
+def _summary_int(item: EconomicSensitivityResult, key: str) -> int | None:
+    value = item.backtest_summary.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _summary_values(
+    scenarios: tuple[EconomicSensitivityResult, ...],
+    key: str,
+) -> tuple[int, ...]:
+    values: list[int] = []
+    for item in scenarios:
+        value = _summary_int(item, key)
+        if value is not None:
+            values.append(value)
+    return tuple(values)
+
+
 @dataclass(frozen=True, slots=True)
 class EconomicSensitivityReport:
     campaign_digest: str
@@ -97,47 +116,31 @@ class EconomicSensitivityReport:
 
     @property
     def positive_pnl_scenarios(self) -> int:
-        return sum(
-            1
-            for item in self.scenarios
-            if isinstance(item.backtest_summary.get("pnl_wei"), int)
-            and int(item.backtest_summary["pnl_wei"]) > 0
-        )
+        count = 0
+        for item in self.scenarios:
+            value = _summary_int(item, "pnl_wei")
+            if value is not None and value > 0:
+                count += 1
+        return count
 
     @property
     def min_pnl_wei(self) -> int | None:
-        values = [
-            int(item.backtest_summary["pnl_wei"])
-            for item in self.scenarios
-            if isinstance(item.backtest_summary.get("pnl_wei"), int)
-        ]
+        values = _summary_values(self.scenarios, "pnl_wei")
         return min(values) if values else None
 
     @property
     def max_pnl_wei(self) -> int | None:
-        values = [
-            int(item.backtest_summary["pnl_wei"])
-            for item in self.scenarios
-            if isinstance(item.backtest_summary.get("pnl_wei"), int)
-        ]
+        values = _summary_values(self.scenarios, "pnl_wei")
         return max(values) if values else None
 
     @property
     def min_roi_ppm(self) -> int | None:
-        values = [
-            int(item.backtest_summary["roi_ppm"])
-            for item in self.scenarios
-            if isinstance(item.backtest_summary.get("roi_ppm"), int)
-        ]
+        values = _summary_values(self.scenarios, "roi_ppm")
         return min(values) if values else None
 
     @property
     def max_drawdown_wei(self) -> int | None:
-        values = [
-            int(item.backtest_summary["max_drawdown_wei"])
-            for item in self.scenarios
-            if isinstance(item.backtest_summary.get("max_drawdown_wei"), int)
-        ]
+        values = _summary_values(self.scenarios, "max_drawdown_wei")
         return max(values) if values else None
 
     def payload(self) -> dict[str, object]:
@@ -236,13 +239,19 @@ def _structural_config(config: EconomicCampaignConfig) -> dict[str, object]:
 
 
 def _validate_scenarios(
-    scenarios: Iterable[EconomicSensitivityScenario],
+    scenarios: Iterable[object],
 ) -> tuple[EconomicSensitivityScenario, ...]:
-    ordered = tuple(scenarios)
-    if len(ordered) < 2:
+    raw = tuple(scenarios)
+    if len(raw) < 2:
         raise ValueError("at least two sensitivity scenarios are required")
-    if len(ordered) > 100:
+    if len(raw) > 100:
         raise ValueError("at most 100 sensitivity scenarios are allowed")
+    ordered: list[EconomicSensitivityScenario] = []
+    for index, scenario in enumerate(raw):
+        if not isinstance(scenario, EconomicSensitivityScenario):
+            raise TypeError(f"sensitivity scenario {index} has invalid type")
+        ordered.append(scenario)
+
     names: set[str] = set()
     structural: Mapping[str, object] | None = None
     for scenario in ordered:
@@ -266,7 +275,7 @@ def run_source_bound_economic_sensitivity(
     rows: Iterable[ResearchFeatureRow],
     *,
     campaign_digest: str,
-    scenarios: Iterable[EconomicSensitivityScenario],
+    scenarios: Iterable[object],
     feature_set_id: str = "full-v1",
 ) -> EconomicSensitivityReport:
     validated = _validate_scenarios(scenarios)
