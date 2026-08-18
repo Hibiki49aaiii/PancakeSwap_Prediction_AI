@@ -93,7 +93,7 @@ def test_microstructure_v2_uses_frozen_explicit_feature_set() -> None:
 
 def test_microstructure_v2_rejects_duplicate_epoch_rows() -> None:
     rounds, rows = _fixture()
-    duplicate = rows + (rows[0],)
+    duplicate = (*rows, rows[0])
     try:
         _run(rounds, duplicate)
     except ValueError as exc:
