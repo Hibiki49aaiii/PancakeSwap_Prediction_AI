@@ -76,6 +76,30 @@ def test_parse_futures_archive_row_maps_buyer_maker_to_sell() -> None:
     assert trade.event_timestamp_ms == 1_735_689_600_020
 
 
+def test_futures_archive_iterator_skips_official_snake_case_header(tmp_path: Path) -> None:
+    path = tmp_path / "BNBUSDT-aggTrades-2026-08-01.csv"
+    path.write_text(
+        "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker\n"
+        "26129,600.25,2.0,27781,27781,1735689600010,true\n",
+        encoding="utf-8",
+    )
+
+    trades = tuple(
+        iter_archive_aggtrades(
+            path,
+            symbol="BNBUSDT",
+            venue="um_futures",
+            timestamp_unit="milliseconds",
+            availability_lag_ms=10,
+        )
+    )
+
+    assert len(trades) == 1
+    assert trades[0].aggregate_trade_id == 26129
+    assert trades[0].trade_timestamp_ms == 1_735_689_600_010
+    assert trades[0].aggressive_side == "sell"
+
+
 def test_archive_iterator_rejects_non_increasing_ids(tmp_path: Path) -> None:
     path = tmp_path / "bad.csv"
     path.write_text(
