@@ -67,13 +67,17 @@ from completed historical update intervals. It is deliberately simple and exists
 
 ## Canonical research dataset path
 
-The safe in-process path is:
+The safe path is:
 
-`historical DB -> canonical Prediction events -> active-oracle Chainlink events -> Binance alignment -> PoolFeatureRow -> ResearchFeatureRow`
+`historical DB -> canonical Prediction events -> active-oracle Chainlink events -> bounded Binance ClickHouse windows -> PoolFeatureRow -> ResearchFeatureRow`
 
-`research_inputs.py` owns this canonical loader. Low-level feature functions remain testable independently, but production research campaigns should not manually concatenate raw Chainlink feeds.
+`research_inputs.py` owns the canonical SQLite/replay/oracle loader. `clickhouse_dataset.py` then supplies Binance Spot/Perp data in bounded time chunks. Low-level feature functions remain testable independently, but production research campaigns should not manually concatenate raw Chainlink feeds or materialize all Binance history in Python.
 
 Pool-history feature construction uses an incremental settlement cursor for normal epoch-ordered replay rather than rescanning all prior rounds for every row. Non-monotonic replay falls back to the slower reference implementation instead of silently changing semantics.
+
+The ClickHouse-backed builder groups decision rows by time chunk. The default chunk span is one hour. Each chunk loads Spot once and Perpetual once, then reuses those indexed trades for all decision rounds inside the chunk. This avoids a one-round/two-query N+1 pattern while keeping Python memory bounded to one chunk of exchange data plus replay/feature state.
+
+`pcs-clickhouse dataset-summary` is the standard command-line bridge from canonical SQLite history to chunked ClickHouse data. It prints input/replay/oracle digests, all timing assumptions, feature-row counts, chunk count, and maximum Spot/Perp rows held for one chunk. It intentionally does not dump the feature matrix.
 
 ## Calibration
 
@@ -95,6 +99,10 @@ Binance archive ingestion is bounded-memory. `clickhouse.py` verifies the offici
 
 The Binance table uses `ReplacingMergeTree(ingest_version)` keyed by venue, symbol, latency assumption, and aggregate-trade ID. This makes interrupted/repeated archive loads convergent after merges. Research reads use `FINAL` so retry duplicates cannot temporarily inflate order flow before background merging finishes.
 
+The previous v0.7 `MergeTree` shape is not silently accepted. `pcs-clickhouse schema-check` verifies the engine and required provenance/latency/version columns before either ingest or research reads. Existing old tables must be migrated or recreated explicitly.
+
+Trade-window values are sent through ClickHouse typed query parameters rather than interpolated into SQL strings.
+
 Connection secrets are supplied through environment variables and are not printed:
 
 ```bash
@@ -104,6 +112,7 @@ export CLICKHOUSE_USER='default'
 export CLICKHOUSE_PASSWORD='...'
 
 pcs-clickhouse ping
+pcs-clickhouse schema-check
 
 pcs-clickhouse binance-ingest \
   --market BNBUSD \
@@ -119,6 +128,13 @@ pcs-clickhouse binance-window \
   --availability-lag-ms 25 \
   --start-ms 1785542400000 \
   --end-ms 1785542460000
+
+pcs-clickhouse dataset-summary \
+  --market BNBUSD \
+  --db artifacts/bnbusd-history.sqlite \
+  --spot-availability-lag-ms 25 \
+  --perp-availability-lag-ms 40 \
+  --chainlink-availability-lag-ms 500
 ```
 
 A latency assumption is part of the stored logical key. Separate zero-lag and positive-lag campaigns therefore remain distinct and can be compared without rewriting the same rows in place.
