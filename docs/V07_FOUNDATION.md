@@ -1,0 +1,26 @@
+# v0.7 canonical foundation
+
+This is a clean-room re-bootstrap of the canonical repository. Legacy `PancakePredictionResearch` artifacts are evidence and design references, not the source tree.
+
+## Implemented in this slice
+
+1. BNB Chain (`chainId=56`) Prediction market registry for BNBUSD, BTCUSD, and ETHUSD.
+2. Explicit `betBull(uint256)` and `betBear(uint256)` calldata encoding.
+3. Deterministic unsigned semantic bet intent.
+4. Read-oriented JSON-RPC client with no signing surface.
+5. Loopback-only local-fork transaction client for future Anvil Stage 5B testing.
+6. Unit tests for contract registry, ABI pins, semantic stability, validation, and loopback isolation.
+
+## Evidence discipline
+
+The repository distinguishes three classes of state:
+
+- `implemented`: code and deterministic tests exist;
+- `observed`: behavior was actually measured against the intended external environment;
+- `economic evidence`: OOS/shadow/tiny-live measurements support a profitability claim.
+
+No class may be promoted by inference from another class.
+
+## Next slice
+
+Build the immutable event store and canonical chain-event schema, then add block-pinned historical collection with explicit reorg handling. That becomes the substrate for deterministic replay and leakage-safe feature snapshots.
