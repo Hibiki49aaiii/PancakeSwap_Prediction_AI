@@ -31,6 +31,7 @@ concurrency:
 env:
   BSC_FORK_SOURCE_RPC_URL: https://bsc-dataseed.bnbchain.org
   LOCAL_FORK_RPC_URL: http://127.0.0.1:8545
+  STAGE5_EVIDENCE_VERSION: "3"
 
 jobs:
   observed-fork-campaign:
@@ -128,6 +129,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(
+              Path("artifacts/stage5b-evidence.json").read_text(encoding="utf-8")
+          )
+          expected = int(os.environ["STAGE5_EVIDENCE_VERSION"])
+          actual = int(evidence.get("evidence_version", 0))
+          if actual != expected:
+              raise SystemExit(
+                  f"unexpected Stage 5 evidence version: expected={expected} actual={actual}"
+              )
+          PY
           python scripts/verify_stage5_fork_evidence.py \
             --db artifacts/stage5b-execution.sqlite3 \
             --evidence artifacts/stage5b-evidence.json \
@@ -150,7 +166,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage5b-fork-evidence-${{ github.run_id }}
+          name: stage5b-v3-fork-evidence-${{ github.run_id }}
           path: |
             artifacts/fork-block.txt
             artifacts/stage5b-execution.sqlite3
