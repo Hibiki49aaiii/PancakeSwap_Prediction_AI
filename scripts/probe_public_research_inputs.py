@@ -17,6 +17,9 @@ from pancake_prediction.deployment_provenance import (
 PREDICTION_BNBUSD = "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA"
 PREDICTION_CREATION_BLOCK = 10_333_825
 PAUSED_SELECTOR = "0x5c975abb"
+OWNERSHIP_TRANSFERRED_TOPIC0 = (
+    "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0"
+)
 
 PUBLIC_BSC_ENDPOINTS = (
     "https://bsc-dataseed.bnbchain.org",
@@ -164,13 +167,14 @@ def _probe_historical_logs(
                     "address": PREDICTION_BNBUSD,
                     "fromBlock": hex(PREDICTION_CREATION_BLOCK),
                     "toBlock": hex(PREDICTION_CREATION_BLOCK),
+                    "topics": [OWNERSHIP_TRANSFERRED_TOPIC0],
                 }
             ],
             timeout,
         )
         if not isinstance(raw, list):
             raise RuntimeError("historical log lookup did not return an array")
-        return len(raw) > 0, len(raw), None
+        return len(raw) == 1, len(raw), None
     except (TypeError, ValueError, RuntimeError) as exc:
         return False, None, f"{type(exc).__name__}: {exc}"
 
@@ -320,7 +324,7 @@ def build_report(timeout: float) -> dict[str, Any]:
     rpc_results = [_probe_rpc(endpoint, timeout) for endpoint in PUBLIC_BSC_ENDPOINTS]
     binance_results = [_probe_binance_archive(item, timeout) for item in BINANCE_ARCHIVES]
     return {
-        "probe_version": 3,
+        "probe_version": 4,
         "prediction_contract": PREDICTION_BNBUSD.lower(),
         "historical_probe_block": PREDICTION_CREATION_BLOCK + 1,
         "rpc_results": rpc_results,
