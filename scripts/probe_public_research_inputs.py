@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import re
-import ssl
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 PREDICTION_BNBUSD = "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA"
 PREDICTION_CREATION_BLOCK = 10_333_825
@@ -50,23 +49,70 @@ BINANCE_ARCHIVES = (
 )
 
 
+def _http_request(
+    url: str,
+    *,
+    method: str,
+    timeout: float,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    read_limit: int | None = None,
+) -> tuple[int, dict[str, str], bytes]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ValueError("URL must use http or https with a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("credentials must not be embedded in probe URLs")
+    if parsed.fragment:
+        raise ValueError("probe URL must not contain a fragment")
+
+    connection_type = (
+        http.client.HTTPSConnection
+        if parsed.scheme == "https"
+        else http.client.HTTPConnection
+    )
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    connection = connection_type(parsed.hostname, port, timeout=timeout)
+    target = parsed.path or "/"
+    if parsed.query:
+        target += "?" + parsed.query
+    try:
+        connection.request(method, target, body=body, headers=headers or {})
+        response = connection.getresponse()
+        payload = response.read() if read_limit is None else response.read(read_limit)
+        response_headers = {name: value for name, value in response.getheaders()}
+        if response.status >= 400:
+            detail = payload[:1_000].decode(errors="replace").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"HTTP {response.status}{suffix}")
+        return response.status, response_headers, payload
+    except (OSError, http.client.HTTPException) as exc:
+        raise RuntimeError(f"HTTP request failed: {exc}") from exc
+    finally:
+        connection.close()
+
+
 def _json_rpc(endpoint: str, method: str, params: list[object], timeout: float) -> object:
     payload = json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
         separators=(",", ":"),
     ).encode()
-    request = urllib.request.Request(
+    _, _, raw = _http_request(
         endpoint,
-        data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": "pcs-public-input-probe/1"},
         method="POST",
+        timeout=timeout,
+        body=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "pcs-public-input-probe/1",
+        },
     )
-    with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:
-        body = json.loads(response.read().decode())
+    body = json.loads(raw.decode())
     if not isinstance(body, dict):
         raise RuntimeError("RPC response is not an object")
     if "error" in body:
-        raise RuntimeError(json.dumps(body["error"], sort_keys=True, separators=(",", ":")))
+        error = json.dumps(body["error"], sort_keys=True, separators=(",", ":"))
+        raise RuntimeError(error)
     if "result" not in body:
         raise RuntimeError("RPC response has no result")
     return body["result"]
@@ -96,8 +142,15 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
         result["latest_block"] = int(latest_raw, 16)
 
         historical_block = hex(PREDICTION_CREATION_BLOCK + 1)
-        code = _json_rpc(endpoint, "eth_getCode", [PREDICTION_BNBUSD, historical_block], timeout)
-        result["historical_code"] = isinstance(code, str) and code not in {"0x", "0x0", ""}
+        code = _json_rpc(
+            endpoint,
+            "eth_getCode",
+            [PREDICTION_BNBUSD, historical_block],
+            timeout,
+        )
+        result["historical_code"] = (
+            isinstance(code, str) and code not in {"0x", "0x0", ""}
+        )
 
         paused = _json_rpc(
             endpoint,
@@ -113,7 +166,7 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
             and result["historical_code"]
             and result["historical_paused_call"]
         )
-    except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
+    except (OSError, ValueError, RuntimeError, http.client.HTTPException) as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return result
@@ -130,29 +183,35 @@ def _probe_binance_archive(item: dict[str, str], timeout: float) -> dict[str, ob
         "error": None,
     }
     try:
-        checksum_request = urllib.request.Request(
+        _, _, checksum_bytes = _http_request(
             item["checksum"],
+            method="GET",
+            timeout=timeout,
             headers={"User-Agent": "pcs-public-input-probe/1"},
+            read_limit=4_096,
         )
-        with urllib.request.urlopen(checksum_request, timeout=timeout) as response:
-            checksum_text = response.read(4096).decode().strip()
+        checksum_text = checksum_bytes.decode().strip()
         match = re.search(r"\b([0-9a-fA-F]{64})\b", checksum_text)
         if match is None:
             raise RuntimeError("checksum file did not contain SHA-256")
         result["checksum_accessible"] = True
         result["checksum_sha256"] = match.group(1).lower()
 
-        zip_request = urllib.request.Request(
+        status, response_headers, first_byte = _http_request(
             item["zip"],
-            headers={"Range": "bytes=0-0", "User-Agent": "pcs-public-input-probe/1"},
+            method="GET",
+            timeout=timeout,
+            headers={
+                "Range": "bytes=0-0",
+                "User-Agent": "pcs-public-input-probe/1",
+            },
+            read_limit=1,
         )
-        with urllib.request.urlopen(zip_request, timeout=timeout) as response:
-            first_byte = response.read(1)
-            result["zip_http_status"] = response.status
-            result["zip_content_length"] = response.headers.get("Content-Length")
-            result["zip_content_range"] = response.headers.get("Content-Range")
+        result["zip_http_status"] = status
+        result["zip_content_length"] = response_headers.get("Content-Length")
+        result["zip_content_range"] = response_headers.get("Content-Range")
         result["zip_accessible"] = len(first_byte) == 1
-    except (OSError, RuntimeError, urllib.error.URLError) as exc:
+    except (OSError, ValueError, RuntimeError, http.client.HTTPException) as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result
 
