@@ -11,10 +11,17 @@ CREATE TABLE IF NOT EXISTS binance_agg_trades (
     price_e8 UInt64,
     quantity_e8 UInt64,
     aggressive_side Enum8('buy' = 1, 'sell' = 2),
+    source_sha256 FixedString(64),
+    source_name String,
+    availability_lag_ms UInt32,
+    ingest_version UInt64,
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
-ENGINE = MergeTree
-ORDER BY (symbol, trade_timestamp_ms, aggregate_trade_id);
+ENGINE = ReplacingMergeTree(ingest_version)
+ORDER BY (venue, symbol, availability_lag_ms, aggregate_trade_id);
+
+-- ReplacingMergeTree deduplication happens during background merges. Research reads that require
+-- immediate retry-safe correctness must query binance_agg_trades FINAL.
 
 CREATE TABLE IF NOT EXISTS chainlink_updates (
     market LowCardinality(String),
