@@ -23,7 +23,11 @@ BLOCK_HASH = "0x" + "ab" * 32
 BULL_SENDER = "0x" + "11" * 20
 BEAR_SENDER = "0x" + "22" * 20
 OTHER_SENDER = "0x" + "33" * 20
+RESTART_SENDER = "0x" + "44" * 20
+DROP_SENDER = "0x" + "55" * 20
+REORG_SENDER = "0x" + "66" * 20
 WRONG_TARGET = "0x" + "99" * 20
+TX_HASH = "0x" + "aa" * 32
 
 
 def _store(tmp_path: Path) -> ExecutionIntentStore:
@@ -49,6 +53,75 @@ def _finalize_bet(
     )
     store.set_reconciliation_state(intent.id, IntentState.FINALIZED)
     return intent.id
+
+
+def _raw_intent(
+    store: ExecutionIntentStore,
+    *,
+    key: str,
+    sender: str,
+) -> int:
+    return store.get_or_create(
+        idempotency_key=key,
+        sender=sender,
+        target=WRONG_TARGET,
+        calldata="0x1234",
+        value_wei=1,
+    ).id
+
+
+def _record_scenario_journal(store: ExecutionIntentStore) -> None:
+    restart_id = _raw_intent(store, key="restart", sender=RESTART_SENDER)
+    store.reserve_nonce(restart_id, 0)
+    store.begin_submission(restart_id)
+    store.recover_submitting(
+        restart_id,
+        state=IntentState.RETRYABLE,
+        outcome="interrupted",
+        error="submission was interrupted before an outcome was durably recorded",
+    )
+    store.set_reconciliation_state(restart_id, IntentState.FAILED, error="fixture done")
+    store.record_observation(
+        scenario="restart_recovery",
+        observed=True,
+        detail={"intent_id": restart_id, "outcome": "interrupted"},
+    )
+
+    drop_id = _raw_intent(store, key="drop", sender=DROP_SENDER)
+    store.reserve_nonce(drop_id, 0)
+    store.begin_submission(drop_id)
+    store.mark_submitted(drop_id, TX_HASH)
+    store.set_reconciliation_state(
+        drop_id,
+        IntentState.RETRYABLE,
+        error="reserved nonce is unconsumed; safe to retry the same nonce on local fork",
+    )
+    store.set_reconciliation_state(drop_id, IntentState.FAILED, error="fixture done")
+    store.record_observation(
+        scenario="dropped_or_replaced_recovery",
+        observed=True,
+        detail={"intent_id": drop_id, "tx_hash": TX_HASH},
+    )
+
+    reorg_id = _raw_intent(store, key="reorg", sender=REORG_SENDER)
+    store.reserve_nonce(reorg_id, 0)
+    store.begin_submission(reorg_id)
+    store.mark_submitted(reorg_id, TX_HASH)
+    store.set_reconciliation_state(reorg_id, IntentState.MINED)
+    store.set_reconciliation_state(reorg_id, IntentState.REORGED, error="reorg")
+    store.set_reconciliation_state(reorg_id, IntentState.RETRYABLE, error="nonce free")
+    store.set_reconciliation_state(reorg_id, IntentState.FAILED, error="fixture done")
+    store.record_observation(
+        scenario="reorg_reconciliation",
+        observed=True,
+        detail={"intent_id": reorg_id, "tx_hash": TX_HASH},
+    )
+
+    store.record_observation(
+        scenario="non_loopback_rejection",
+        observed=True,
+        detail={"probe": "https://example.invalid"},
+    )
 
 
 def _evidence(
@@ -82,6 +155,7 @@ def _evidence(
 def _complete_campaign(store: ExecutionIntentStore) -> None:
     _finalize_bet(store, sender=BULL_SENDER, epoch=100, side=BetSide.BULL)
     _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _record_scenario_journal(store)
 
 
 def test_complete_observed_campaign_is_ready(tmp_path: Path) -> None:
@@ -96,6 +170,22 @@ def test_complete_observed_campaign_is_ready(tmp_path: Path) -> None:
     assert result.blockers == ()
     assert result.finalized_bull == 1
     assert result.finalized_bear == 1
+
+
+def test_json_claim_without_ledger_scenario_evidence_cannot_clear_gate(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _finalize_bet(store, sender=BULL_SENDER, epoch=100, side=BetSide.BULL)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+
+    result = evaluate_stage5b_fork_gate(
+        ledger_path=store.path,
+        evidence=_evidence(store.path),
+    )
+    assert result.ready is False
+    assert "scenario_not_observed_in_ledger:restart_recovery" in result.blockers
+    assert any(blocker.startswith("scenario_transition_missing:") for blocker in result.blockers)
 
 
 def test_empty_campaign_never_clears_gate(tmp_path: Path) -> None:
@@ -177,14 +267,14 @@ def test_assumed_origin_cannot_clear_gate(tmp_path: Path) -> None:
     assert "evidence_not_observed" in result.blockers
 
 
-def test_each_required_scenario_must_be_observed(tmp_path: Path) -> None:
+def test_each_required_scenario_must_be_claimed(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _complete_campaign(store)
     result = evaluate_stage5b_fork_gate(
         ledger_path=store.path,
         evidence=_evidence(store.path, reorg_reconciliation=False),
     )
-    assert "scenario_not_observed:reorg_reconciliation" in result.blockers
+    assert "scenario_not_claimed:reorg_reconciliation" in result.blockers
 
 
 def test_ledger_mutation_invalidates_evidence(tmp_path: Path) -> None:
