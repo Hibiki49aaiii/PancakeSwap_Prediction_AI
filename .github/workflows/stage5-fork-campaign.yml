@@ -63,7 +63,7 @@ jobs:
           anvil --version
           echo "anvil_version=$(anvil --version | head -n 1)" >> "$GITHUB_OUTPUT"
 
-      - name: Discover deterministic Prediction fork block
+      - name: Discover freshest confirmed bettable Prediction fork block
         id: fork
         shell: bash
         run: |
@@ -73,9 +73,8 @@ jobs:
             python scripts/discover_stage5_fork_block.py \
               --rpc-url "$BSC_FORK_SOURCE_RPC_URL" \
               --market BNBUSD \
-              --lookback-blocks 4000 \
-              --confirmation-lag 4 \
-              --chunk-size 500
+              --lookback-blocks 128 \
+              --confirmation-lag 4
           })"
           test -n "$FORK_BLOCK"
           echo "fork_block=$FORK_BLOCK" >> "$GITHUB_OUTPUT"
