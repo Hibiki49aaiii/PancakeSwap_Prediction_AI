@@ -34,72 +34,102 @@
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 325,
+      "elapsed_ms": 907,
       "endpoint": "https://bsc-dataseed.bnbchain.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590673
+      "latest_block": 116590877
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1376,
+      "elapsed_ms": 828,
       "endpoint": "https://bsc-dataseed-public.bnbchain.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"not supported\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590675
+      "latest_block": 116590878
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 301,
+      "elapsed_ms": 934,
       "endpoint": "https://bsc-dataseed.nariox.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590677
+      "latest_block": 116590881
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 233,
+      "elapsed_ms": 858,
       "endpoint": "https://bsc-dataseed.defibit.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590677
+      "latest_block": 116590883
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 179,
+      "elapsed_ms": 856,
       "endpoint": "https://bsc-dataseed.ninicoin.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590678
+      "latest_block": 116590885
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 250,
+      "elapsed_ms": 1094,
       "endpoint": "https://bsc.nodereal.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116590679
+      "latest_block": 116590887
     },
     {
       "archive_ready": false,
       "chain_id": null,
-      "elapsed_ms": 95,
+      "elapsed_ms": 47,
       "endpoint": "https://bnb.rpc.subquery.network/public",
       "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
       "historical_code": false,
       "historical_paused_call": false,
       "latest_block": null
+    },
+    {
+      "archive_ready": false,
+      "chain_id": null,
+      "elapsed_ms": 325,
+      "endpoint": "https://rpc.ankr.com/bsc",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"Unauthorized: You must authenticate your request with an API key. Create an account on https://www.ankr.com/rpc/ and generate your personal API key for free.\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": null
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 378,
+      "endpoint": "https://bsc-rpc.publicnode.com",
+      "error": "RuntimeError: HTTP 403: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode\"},\"id\":1}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590890
+    },
+    {
+      "archive_ready": false,
+      "chain_id": 56,
+      "elapsed_ms": 3689,
+      "endpoint": "https://public.1rpc.io/bnb",
+      "error": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}",
+      "historical_code": false,
+      "historical_paused_call": false,
+      "latest_block": 116590890
     }
   ]
 }
