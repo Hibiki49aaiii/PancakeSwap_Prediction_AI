@@ -256,6 +256,7 @@ def _archive_rows(
         yield {
             "venue": venue,
             "symbol": symbol,
+            "timestamp_unit": timestamp_unit,
             "event_timestamp_ms": trade.event_timestamp_ms,
             "trade_timestamp_ms": trade_timestamp_ms,
             "aggregate_trade_id": trade_id,
@@ -336,6 +337,7 @@ def load_binance_trade_window(
     *,
     market: str,
     venue: ArchiveVenue,
+    timestamp_unit: TimestampUnit,
     availability_lag_ms: int,
     start_timestamp_ms: int,
     end_timestamp_ms: int,
@@ -351,6 +353,7 @@ def load_binance_trade_window(
         "SELECT symbol,event_timestamp_ms,trade_timestamp_ms,price_e8,quantity_e8,"
         "aggressive_side,aggregate_trade_id FROM binance_agg_trades FINAL WHERE "
         "venue={venue:String} AND symbol={symbol:String} AND "
+        "timestamp_unit={timestamp_unit:String} AND "
         "availability_lag_ms={availability_lag_ms:UInt32} AND "
         "trade_timestamp_ms>={start_timestamp_ms:UInt64} AND "
         "trade_timestamp_ms<{end_timestamp_ms:UInt64} ORDER BY "
@@ -359,6 +362,7 @@ def load_binance_trade_window(
     parameters: dict[str, QueryParameter] = {
         "venue": venue,
         "symbol": symbol,
+        "timestamp_unit": timestamp_unit,
         "availability_lag_ms": availability_lag_ms,
         "start_timestamp_ms": start_timestamp_ms,
         "end_timestamp_ms": end_timestamp_ms,
