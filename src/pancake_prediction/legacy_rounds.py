@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
@@ -112,14 +112,14 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _required_value(row: dict[str, str | None], field: str) -> str:
+def _required_value(row: Mapping[str, str | None], field: str) -> str:
     value = row.get(field)
     if value is None or not value.strip():
         raise LegacyRoundDatasetError(f"legacy round row is missing {field}")
     return value.strip()
 
 
-def _parse_int(row: dict[str, str | None], field: str) -> int:
+def _parse_int(row: Mapping[str, str | None], field: str) -> int:
     raw = _required_value(row, field)
     try:
         value = int(raw)
@@ -130,7 +130,7 @@ def _parse_int(row: dict[str, str | None], field: str) -> int:
     return value
 
 
-def _parse_approx_wei(row: dict[str, str | None], field: str) -> int:
+def _parse_approx_wei(row: Mapping[str, str | None], field: str) -> int:
     raw = _required_value(row, field)
     try:
         value = Decimal(raw)
@@ -141,7 +141,10 @@ def _parse_approx_wei(row: dict[str, str | None], field: str) -> int:
     return int(value.to_integral_value(rounding=ROUND_HALF_EVEN))
 
 
-def _parse_oracle_id(row: dict[str, str | None], field: str) -> tuple[int, bool]:
+def _parse_oracle_id(
+    row: Mapping[str, str | None],
+    field: str,
+) -> tuple[int, bool]:
     raw = _required_value(row, field)
     try:
         value = int(raw)
@@ -162,7 +165,7 @@ def _parse_oracle_id(row: dict[str, str | None], field: str) -> tuple[int, bool]
     return int(integral), True
 
 
-def _parse_bool(row: dict[str, str | None], field: str) -> bool:
+def _parse_bool(row: Mapping[str, str | None], field: str) -> bool:
     raw = _required_value(row, field).lower()
     if raw == "true":
         return True
@@ -171,7 +174,7 @@ def _parse_bool(row: dict[str, str | None], field: str) -> bool:
     raise LegacyRoundDatasetError(f"legacy round {field} must be true/false")
 
 
-def parse_legacy_round_row(row: dict[str, str | None]) -> LegacyRoundRecord:
+def parse_legacy_round_row(row: Mapping[str, str | None]) -> LegacyRoundRecord:
     lock_oracle_id, lock_approximate = _parse_oracle_id(row, "lockOracleId")
     close_oracle_id, close_approximate = _parse_oracle_id(row, "closeOracleId")
     return LegacyRoundRecord(
@@ -193,7 +196,7 @@ def parse_legacy_round_row(row: dict[str, str | None]) -> LegacyRoundRecord:
     )
 
 
-def _validate_header(fieldnames: list[str] | None) -> None:
+def _validate_header(fieldnames: Sequence[str] | None) -> None:
     if fieldnames is None:
         raise LegacyRoundDatasetError("legacy round CSV has no header")
     missing = sorted(set(_REQUIRED_COLUMNS) - set(fieldnames))
