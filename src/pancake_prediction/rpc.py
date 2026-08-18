@@ -171,19 +171,19 @@ class LocalForkRpcClient(JsonRpcClient):
 
     def impersonate_account(self, address: str) -> None:
         result = self.call("anvil_impersonateAccount", [address])
-        if result is not True:
+        if result is not None and result is not True:
             raise RpcError("local fork refused account impersonation")
 
     def stop_impersonating_account(self, address: str) -> None:
         result = self.call("anvil_stopImpersonatingAccount", [address])
-        if result is not True:
+        if result is not None and result is not True:
             raise RpcError("local fork refused to stop account impersonation")
 
     def set_balance(self, address: str, value_wei: int) -> None:
         if value_wei < 0:
             raise ValueError("balance must be non-negative")
         result = self.call("anvil_setBalance", [address, hex(value_wei)])
-        if result is not True:
+        if result is not None and result is not True:
             raise RpcError("local fork refused balance update")
 
     def set_automine(self, enabled: bool) -> None:
