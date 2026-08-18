@@ -29,72 +29,72 @@
   ],
   "historical_probe_block": 10333826,
   "prediction_contract": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
-  "probe_version": 1,
+  "probe_version": 2,
   "rpc_results": [
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 890,
+      "elapsed_ms": 876,
       "endpoint": "https://bsc-dataseed.bnbchain.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591792
+      "latest_block": 116592232
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1309,
+      "elapsed_ms": 1136,
       "endpoint": "https://bsc-dataseed-public.bnbchain.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"not supported\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591793
+      "latest_block": 116592233
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1145,
+      "elapsed_ms": 1116,
       "endpoint": "https://bsc-dataseed.nariox.org",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591797
+      "latest_block": 116592237
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1131,
+      "elapsed_ms": 1259,
       "endpoint": "https://bsc-dataseed.defibit.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591799
+      "latest_block": 116592240
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1148,
+      "elapsed_ms": 1211,
       "endpoint": "https://bsc-dataseed.ninicoin.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591802
+      "latest_block": 116592243
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 817,
+      "elapsed_ms": 789,
       "endpoint": "https://bsc.nodereal.io",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591804
+      "latest_block": 116592244
     },
     {
       "archive_ready": false,
       "chain_id": null,
-      "elapsed_ms": 198,
+      "elapsed_ms": 76,
       "endpoint": "https://bnb.rpc.subquery.network/public",
       "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
       "historical_code": false,
@@ -104,7 +104,7 @@
     {
       "archive_ready": false,
       "chain_id": null,
-      "elapsed_ms": 293,
+      "elapsed_ms": 321,
       "endpoint": "https://rpc.ankr.com/bsc",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"Unauthorized: You must authenticate your request with an API key. Create an account on https://www.ankr.com/rpc/ and generate your personal API key for free.\"}",
       "historical_code": false,
@@ -114,22 +114,22 @@
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 599,
+      "elapsed_ms": 527,
       "endpoint": "https://bsc-rpc.publicnode.com",
       "error": "RuntimeError: HTTP 403: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode\"},\"id\":1}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591807
+      "latest_block": 116592247
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 710,
+      "elapsed_ms": 953,
       "endpoint": "https://public.1rpc.io/bnb",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}",
       "historical_code": false,
       "historical_paused_call": false,
-      "latest_block": 116591807
+      "latest_block": 116592248
     }
   ]
 }
