@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .abi import EventSpec
 from .collector import HistoricalCollector
 from .rpc import RpcError
 
@@ -14,11 +15,37 @@ class PublicHistoricalCollector(HistoricalCollector):
     limit on a *single block* when several topic0 alternatives are queried at
     once. At that point a range split cannot make progress.
 
-    This subclass keeps the base behavior for normal ranges, but once the query
-    has reached one block it recursively partitions topic0 alternatives until
-    each accepted request is small enough. Events are merged back in canonical
-    EVM order and deduplicated defensively.
+    Public endpoints can also reject an unfiltered address-only log request.
+    For this subclass, an omitted topic filter therefore means "all known event
+    specs" rather than a raw address-only query. The resulting explicit topic0
+    alternatives can then be partitioned without dropping any known event type.
     """
+
+    def _collect_address_logs(
+        self,
+        *,
+        chain_id: int,
+        address: str,
+        market: str | None,
+        source: str,
+        specs: tuple[EventSpec, ...],
+        from_block: int,
+        to_block: int,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> tuple[int, set[str]]:
+        effective_topic0s = (
+            tuple(spec.topic0 for spec in specs) if topic0s is None else topic0s
+        )
+        return super()._collect_address_logs(
+            chain_id=chain_id,
+            address=address,
+            market=market,
+            source=source,
+            specs=specs,
+            from_block=from_block,
+            to_block=to_block,
+            topic0s=effective_topic0s,
+        )
 
     def _fetch_consistent_chunk(
         self,
