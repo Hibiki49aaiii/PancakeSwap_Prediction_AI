@@ -43,7 +43,12 @@ class EconomicCampaignConfig:
         if self.calibration_rounds < 2:
             raise ValueError("calibration_rounds must be at least 2")
         projection = self.pool_projection_config()
-        projection.validate()
+        if projection.min_train_rounds <= 0:
+            raise ValueError("pool projection min_train_rounds must be positive")
+        if projection.window_rounds < projection.min_train_rounds:
+            raise ValueError("pool projection window_rounds must cover min_train_rounds")
+        if projection.purge_rounds < 0:
+            raise ValueError("pool projection purge_rounds must be non-negative")
 
     def backtest_config(self) -> BacktestConfig:
         return BacktestConfig(
