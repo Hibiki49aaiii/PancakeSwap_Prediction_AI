@@ -23,8 +23,12 @@ No class may be promoted by inference from another class.
 
 ## Stage 0 extension
 
-The branch now also contains the append-only raw block/log evidence store and block-pinned, reorg-aware historical collector described in `STAGE0_DATA_INTEGRITY.md`. Real BSC collection evidence is still pending and is not inferred from deterministic tests.
+The branch contains the append-only raw block/log evidence store and block-pinned, reorg-aware historical collector described in `STAGE0_DATA_INTEGRITY.md`. Real BSC collection evidence is still pending and is not inferred from deterministic tests.
+
+## Stage 1 extension
+
+The branch now also freezes explicit canonical snapshots, emits deterministic snapshot/raw-event hashes, strictly decodes the core Prediction V2 event lifecycle, and reconstructs round state with lifecycle and reward-base invariants. See `STAGE1_REPLAY.md`.
 
 ## Next slice
 
-Implement deterministic Prediction V2 event decoding and replay over an explicitly selected canonical snapshot, followed by data-quality manifests and reproducible export hashes.
+Add persisted collection/data-quality manifests and real historical RPC validation, then reconcile replayed epochs against sampled on-chain `rounds(epoch)` state before any Stage 2 backtest rebuild.

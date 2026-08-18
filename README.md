@@ -36,9 +36,11 @@ The first canonical implementation slice now contains:
 - deterministic unsigned semantic bet intents;
 - read-oriented JSON-RPC without any signer/private-key surface;
 - loopback-only Anvil transaction RPC for future Stage 5B tests;
-- deterministic unit tests and CI.
+- deterministic unit tests and CI;
+- frozen canonical snapshots and deterministic raw-event export hashes;
+- strict Prediction V2 event decoding and round-state replay.
 
-See `docs/V07_FOUNDATION.md`, `docs/STAGE0_DATA_INTEGRITY.md`, and `docs/SECURITY_BOUNDARY.md`.
+See `docs/V07_FOUNDATION.md`, `docs/STAGE0_DATA_INTEGRITY.md`, `docs/STAGE1_REPLAY.md`, and `docs/SECURITY_BOUNDARY.md`.
 
 ## Core architecture
 
@@ -82,7 +84,7 @@ Shadow -> Fork -> Tiny Live gate
 | Stage | Purpose | Current status |
 |---|---|---|
 | 0 | Historical data integrity | Canonical append-only store + reorg-aware collector implemented; real-data evidence pending |
-| 1 | Deterministic replay | Legacy foundation; canonical rebuild pending |
+| 1 | Deterministic replay | Canonical snapshot + event/replay engine implemented; real-data reconciliation pending |
 | 2 | Leakage-safe, cost-aware backtest | Legacy foundation; canonical rebuild pending |
 | 3 | Purged walk-forward / OOS evaluation | Legacy foundation; canonical rebuild pending |
 | 4 | Paper / Shadow | Legacy foundation; canonical rebuild pending |

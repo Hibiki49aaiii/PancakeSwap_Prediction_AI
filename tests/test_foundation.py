@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pancake_prediction.abi import BET_EVENT_TOPICS, encode_bet_calldata
+from pancake_prediction.abi import BET_EVENT_TOPICS, PREDICTION_EVENT_TOPICS, encode_bet_calldata
 from pancake_prediction.contracts import CHAIN_ID_BSC, MARKETS, market
 from pancake_prediction.execution import build_unsigned_bet, normalize_evm_address
 from pancake_prediction.rpc import LocalForkRpcClient
@@ -41,6 +41,10 @@ class AbiTests(unittest.TestCase):
             BET_EVENT_TOPICS["bear"],
             "0x0d8c1fe3e67ab767116a81f122b83c2557a8c2564019cb7c4f83de1aeb1f1f0d",
         )
+
+    def test_event_topic_registry_shares_bet_pins(self) -> None:
+        self.assertEqual(PREDICTION_EVENT_TOPICS["BetBull"], BET_EVENT_TOPICS["bull"])
+        self.assertEqual(PREDICTION_EVENT_TOPICS["BetBear"], BET_EVENT_TOPICS["bear"])
 
     def test_invalid_epoch_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

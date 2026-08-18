@@ -41,4 +41,4 @@ Stage 0 is not complete merely because tables exist. Before promotion to Stage 1
 - coverage/continuity metrics over the selected historical interval;
 - duplicate/missing-log reconciliation against at least one independent source or RPC;
 - persisted collection manifest (RPC identity, range, timestamps, config, code commit);
-- deterministic raw-event export hash.
+- deterministic raw-event export hash from a real frozen canonical snapshot (the hashing implementation now exists).
