@@ -8,6 +8,7 @@ from pancake_prediction.campaign_sensitivity import (
     EconomicSensitivityResult,
     EconomicSensitivityScenario,
     _validate_scenarios,
+    parse_sensitivity_scenarios,
 )
 
 
@@ -35,6 +36,28 @@ def _config(
         pool_window_rounds=20,
         run_ablation=False,
     )
+
+
+def _scenario_payload() -> dict[str, object]:
+    return {
+        "scenarios": [
+            {
+                "name": "base",
+                "stake_wei": 10**15,
+                "bet_gas_wei": 10**13,
+                "claim_gas_wei": 5 * 10**12,
+                "inclusion_latency_seconds": 3,
+            },
+            {
+                "name": "stress",
+                "stake_wei": 2 * 10**15,
+                "bet_gas_wei": 2 * 10**13,
+                "claim_gas_wei": 10**13,
+                "inclusion_latency_seconds": 8,
+                "min_expected_value_wei": 10**12,
+            },
+        ]
+    }
 
 
 def test_sensitivity_allows_only_economic_dimensions_to_vary() -> None:
@@ -79,6 +102,50 @@ def test_sensitivity_rejects_duplicate_names_and_single_scenario() -> None:
                 EconomicSensitivityScenario("same", _config(latency=5)),
             )
         )
+
+
+def test_parse_sensitivity_scenarios_requires_explicit_costs() -> None:
+    scenarios = parse_sensitivity_scenarios(
+        _scenario_payload(),
+        base_config=_config(),
+    )
+    by_name = {item.name: item for item in scenarios}
+
+    assert by_name["base"].config.bet_gas_wei == 10**13
+    assert by_name["base"].config.claim_gas_wei == 5 * 10**12
+    assert by_name["base"].config.inclusion_latency_seconds == 3
+    assert by_name["stress"].config.min_expected_value_wei == 10**12
+
+
+def test_parse_sensitivity_scenarios_rejects_missing_unknown_and_bool_costs() -> None:
+    missing = _scenario_payload()
+    assert isinstance(missing["scenarios"], list)
+    first = missing["scenarios"][0]
+    assert isinstance(first, dict)
+    del first["bet_gas_wei"]
+    with pytest.raises(ValueError, match="missing fields: bet_gas_wei"):
+        parse_sensitivity_scenarios(missing, base_config=_config())
+
+    unknown = _scenario_payload()
+    assert isinstance(unknown["scenarios"], list)
+    first_unknown = unknown["scenarios"][0]
+    assert isinstance(first_unknown, dict)
+    first_unknown["future_pool_wei"] = 123
+    with pytest.raises(ValueError, match="unknown fields: future_pool_wei"):
+        parse_sensitivity_scenarios(unknown, base_config=_config())
+
+    boolean_cost = _scenario_payload()
+    assert isinstance(boolean_cost["scenarios"], list)
+    first_bool = boolean_cost["scenarios"][0]
+    assert isinstance(first_bool, dict)
+    first_bool["bet_gas_wei"] = True
+    with pytest.raises(ValueError, match="bet_gas_wei must be an integer"):
+        parse_sensitivity_scenarios(boolean_cost, base_config=_config())
+
+
+def test_validate_scenarios_rejects_untyped_boundary_input() -> None:
+    with pytest.raises(TypeError, match="invalid type"):
+        _validate_scenarios((object(), object()))
 
 
 def _result(name: str, pnl: int, roi: int, drawdown: int) -> EconomicSensitivityResult:
