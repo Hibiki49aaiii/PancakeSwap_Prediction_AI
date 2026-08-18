@@ -21,6 +21,9 @@ PUBLIC_BSC_ENDPOINTS = (
     "https://bsc-dataseed.ninicoin.io",
     "https://bsc.nodereal.io",
     "https://bnb.rpc.subquery.network/public",
+    "https://rpc.ankr.com/bsc",
+    "https://bsc-rpc.publicnode.com",
+    "https://public.1rpc.io/bnb",
 )
 
 BINANCE_ARCHIVES = (
