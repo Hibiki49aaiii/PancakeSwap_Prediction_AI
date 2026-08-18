@@ -223,7 +223,7 @@ def build_report(timeout: float) -> dict[str, Any]:
     rpc_results = [_probe_rpc(endpoint, timeout) for endpoint in PUBLIC_BSC_ENDPOINTS]
     binance_results = [_probe_binance_archive(item, timeout) for item in BINANCE_ARCHIVES]
     return {
-        "probe_version": 1,
+        "probe_version": 2,
         "prediction_contract": PREDICTION_BNBUSD.lower(),
         "historical_probe_block": PREDICTION_CREATION_BLOCK + 1,
         "rpc_results": rpc_results,
