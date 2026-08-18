@@ -3,6 +3,7 @@ import pytest
 from pancake_prediction.replay import ReplaySnapshot, RoundRecord
 from pancake_prediction.walkforward import (
     OosSignal,
+    evaluate_binary_oos,
     evaluate_oos,
     generate_expanding_folds,
     validate_oos_provenance,
@@ -70,3 +71,42 @@ def test_oos_metrics_score_only_settled_non_tie_rounds() -> None:
     assert metrics.brier_score is not None and metrics.brier_score < 0.1
     assert metrics.brier_skill_score is not None and metrics.brier_skill_score > 0
     assert metrics.ece_10 is not None
+
+
+def test_binary_oos_scores_explicit_outcomes_with_partial_time_floors() -> None:
+    signals = {
+        10: OosSignal(10, 800_000, 1000, 7, "generic-1"),
+        11: OosSignal(11, 200_000, 1100, 8, "generic-1"),
+    }
+    metrics = evaluate_binary_oos(
+        market="BNBUSD",
+        outcomes={10: 1, 11: 0, 12: 1},
+        signals=signals,
+        purge_rounds=2,
+        generated_at_floor={10: 900},
+        n_ties_excluded=2,
+    )
+
+    assert metrics.n_scored == 2
+    assert metrics.n_missing_signal == 1
+    assert metrics.n_ties_excluded == 2
+    assert metrics.accuracy == 1.0
+
+
+def test_binary_oos_rejects_bad_outcome_and_early_signal() -> None:
+    signal = {10: OosSignal(10, 800_000, 999, 7, "generic-1")}
+    with pytest.raises(ValueError, match="binary 0/1"):
+        evaluate_binary_oos(
+            market="BNBUSD",
+            outcomes={10: 2},
+            signals=signal,
+            purge_rounds=2,
+        )
+    with pytest.raises(ValueError, match="predates allowed observation window"):
+        evaluate_binary_oos(
+            market="BNBUSD",
+            outcomes={10: 1},
+            signals=signal,
+            purge_rounds=2,
+            generated_at_floor={10: 1000},
+        )
