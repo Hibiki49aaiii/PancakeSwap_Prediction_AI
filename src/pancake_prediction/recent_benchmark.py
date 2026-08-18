@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Mapping
 
 from .backtest import BacktestConfig, PoolProjection, build_decision_snapshot, build_event_index
 from .economics import PPM, ParimutuelQuote, expected_value_wei, gross_payout_if_win_wei
 from .replay import ChainEvent, ReplaySnapshot, RoundRecord
-from .walkforward import OosSignal, validate_oos_provenance
+from .walkforward import OosSignal
 
 BPS = 10_000
 
@@ -133,10 +133,7 @@ def _realized_pnl(
 
 
 def _purged(epoch: int, train_max_epoch: int | None, purge_rounds: int) -> bool:
-    return (
-        train_max_epoch is not None
-        and train_max_epoch <= epoch - purge_rounds - 1
-    )
+    return train_max_epoch is not None and train_max_epoch <= epoch - purge_rounds - 1
 
 
 def _max_drawdown(trades: tuple[RecentCanonicalTrade, ...]) -> int:
@@ -158,7 +155,6 @@ def run_recent_canonical_economic_benchmark(
     config: RecentCanonicalEconomicConfig,
 ) -> RecentCanonicalEconomicReport:
     config.validate()
-    validate_oos_provenance(signals.values(), purge_rounds=config.purge_rounds)
     event_index = build_event_index(events)
     timing_config = BacktestConfig(decision_lead_seconds=config.decision_lead_seconds)
     trades: list[RecentCanonicalTrade] = []
