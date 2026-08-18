@@ -4,9 +4,9 @@
   "campaign_outcome": "skipped",
   "diagnostic_version": 1,
   "download_log_tail": "",
-  "download_outcome": "cancelled",
-  "ingest_log_tail": null,
-  "ingest_outcome": "skipped",
+  "download_outcome": "success",
+  "ingest_log_tail": "{\"engine\":\"ReplacingMergeTree\",\"engine_full\":\"ReplacingMergeTree(ingest_version) ORDER BY (venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id) SETTINGS index_granularity = 8192\",\"engine_version_ready\":true,\"incompatible_columns\":[],\"missing_columns\":[],\"ready\":true,\"sorting_key\":\"venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id\",\"sorting_key_ready\":true,\"table_exists\":true}\n",
+  "ingest_outcome": "cancelled",
   "schema_log_tail": "",
   "schema_outcome": "success"
 }
