@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,29 @@ class FakeClient:
     def execute(self, query: str) -> str:
         assert query == "SELECT 1"
         return "1\n"
+
+    def query_json_rows(self, query: str) -> Iterator[dict[str, object]]:
+        if "system.tables" in query:
+            yield {"engine": "ReplacingMergeTree"}
+            return
+        if "system.columns" in query:
+            columns = {
+                "venue": "LowCardinality(String)",
+                "symbol": "LowCardinality(String)",
+                "event_timestamp_ms": "UInt64",
+                "trade_timestamp_ms": "UInt64",
+                "aggregate_trade_id": "UInt64",
+                "price_e8": "UInt64",
+                "quantity_e8": "UInt64",
+                "source_sha256": "FixedString(64)",
+                "source_name": "String",
+                "availability_lag_ms": "UInt32",
+                "ingest_version": "UInt64",
+            }
+            for name, value_type in columns.items():
+                yield {"name": name, "type": value_type}
+            return
+        raise AssertionError(f"unexpected query: {query}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +68,22 @@ def test_clickhouse_cli_ping_does_not_print_connection_secret(
     assert json.loads(output) == {"ok": True}
     assert "super-secret" not in output
     assert "example.invalid" not in output
+
+
+def test_clickhouse_cli_schema_check_reports_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClient(),
+    )
+    assert clickhouse_cli.main(["schema-check"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is True
+    assert payload["engine"] == "ReplacingMergeTree"
 
 
 def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
