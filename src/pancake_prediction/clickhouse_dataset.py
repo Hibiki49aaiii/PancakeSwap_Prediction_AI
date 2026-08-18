@@ -7,6 +7,7 @@ from .alignment import build_aligned_alpha_feature_row, build_aligned_alpha_inpu
 from .backtest import BacktestConfig
 from .baseline import ResearchFeatureRow, build_research_feature_row
 from .binance import AggTrade
+from .binance_archive import TimestampUnit
 from .clickhouse import ClickHouseParameterizedJsonSource, load_binance_trade_window
 from .features import PoolFeatureRow, build_pool_feature_rows
 from .replay import ChainEvent, ReplaySnapshot
@@ -68,7 +69,9 @@ def build_chunked_clickhouse_research_dataset(
     source: ClickHouseParameterizedJsonSource,
     *,
     spot_availability_lag_ms: int,
+    spot_timestamp_unit: TimestampUnit = "auto",
     perp_availability_lag_ms: int = 0,
+    perp_timestamp_unit: TimestampUnit = "milliseconds",
     include_perp: bool = True,
     chunk_span_ms: int = 3_600_000,
     backtest_config: BacktestConfig | None = None,
@@ -136,6 +139,7 @@ def build_chunked_clickhouse_research_dataset(
             source,
             market=replay.market,
             venue="spot",
+            timestamp_unit=spot_timestamp_unit,
             availability_lag_ms=spot_availability_lag_ms,
             start_timestamp_ms=spot_query_start,
             end_timestamp_ms=chunk_end,
@@ -146,6 +150,7 @@ def build_chunked_clickhouse_research_dataset(
                 source,
                 market=replay.market,
                 venue="um_futures",
+                timestamp_unit=perp_timestamp_unit,
                 availability_lag_ms=perp_availability_lag_ms,
                 start_timestamp_ms=perp_query_start,
                 end_timestamp_ms=chunk_end,
