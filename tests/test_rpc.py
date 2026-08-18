@@ -132,7 +132,7 @@ def test_local_fork_fault_controls_use_anvil_rpc(
             result: object = tx_hash
         elif method == "anvil_snapshot":
             result = "0xabc"
-        elif method == "anvil_setAutomine":
+        elif method in {"anvil_setAutomine", "anvil_reorg"}:
             result = None
         else:
             result = True
@@ -143,6 +143,7 @@ def test_local_fork_fault_controls_use_anvil_rpc(
 
     client.set_automine(False)
     client.drop_transaction(tx_hash)
+    client.reorg(1)
     snapshot_id = client.snapshot()
     client.revert(snapshot_id)
     client.stop_impersonating_account("0x" + "11" * 20)
@@ -151,10 +152,17 @@ def test_local_fork_fault_controls_use_anvil_rpc(
     assert calls == [
         ("anvil_setAutomine", [False]),
         ("anvil_dropTransaction", [tx_hash]),
+        ("anvil_reorg", [{"depth": 1, "tx_block_pairs": []}]),
         ("anvil_snapshot", []),
         ("anvil_revert", ["0xabc"]),
         ("anvil_stopImpersonatingAccount", ["0x" + "11" * 20]),
     ]
+
+
+def test_local_fork_reorg_depth_must_be_positive() -> None:
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    with pytest.raises(ValueError, match="reorg depth"):
+        client.reorg(0)
 
 
 def test_local_fork_unit_methods_accept_null_success(
@@ -177,12 +185,14 @@ def test_local_fork_unit_methods_accept_null_success(
     client.impersonate_account(address)
     client.set_balance(address, 10**18)
     client.set_automine(False)
+    client.reorg(1)
     client.stop_impersonating_account(address)
 
     assert methods == [
         "anvil_impersonateAccount",
         "anvil_setBalance",
         "anvil_setAutomine",
+        "anvil_reorg",
         "anvil_stopImpersonatingAccount",
     ]
 
