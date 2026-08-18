@@ -45,6 +45,35 @@ class FakeTrade:
     aggregate_trade_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class FakeCanonicalInputs:
+    replay: object
+    events: tuple[object, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": "BNBUSD",
+            "replay_rounds": 123,
+            "replay_input_digest": "a" * 64,
+            "replay_output_digest": "b" * 64,
+            "active_chainlink_event_count": 456,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FakeDatasetResult:
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": "BNBUSD",
+            "candidate_rounds": 123,
+            "research_feature_rows": 100,
+            "chunk_span_ms": 3_600_000,
+            "chunks_loaded": 12,
+            "max_spot_chunk_rows": 50_000,
+            "max_perp_chunk_rows": 40_000,
+        }
+
+
 def test_clickhouse_cli_requires_environment_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLICKHOUSE_URL", raising=False)
     with pytest.raises(SystemExit) as exc_info:
@@ -193,3 +222,74 @@ def test_clickhouse_cli_window_reports_only_summary(
         "first_aggregate_trade_id": 10,
         "last_aggregate_trade_id": 11,
     }
+
+
+def test_clickhouse_cli_dataset_summary_binds_canonical_inputs_and_assumptions(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "dataset-secret")
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClient(),
+    )
+    replay = object()
+    events: tuple[object, ...] = ()
+    inputs = FakeCanonicalInputs(replay=replay, events=events)
+    database = tmp_path / "history.sqlite3"
+
+    def fake_load(path: Path, market: str) -> FakeCanonicalInputs:
+        assert path == database
+        assert market == "BNBUSD"
+        return inputs
+
+    def fake_build(
+        received_replay: object,
+        received_events: tuple[object, ...],
+        source: object,
+        **kwargs: object,
+    ) -> FakeDatasetResult:
+        assert received_replay is replay
+        assert received_events == events
+        assert isinstance(source, FakeClient)
+        assert kwargs["spot_availability_lag_ms"] == 25
+        assert kwargs["perp_availability_lag_ms"] == 40
+        assert kwargs["include_perp"] is False
+        assert kwargs["chunk_span_ms"] == 3_600_000
+        assert kwargs["chainlink_availability_lag_ms"] == 500
+        return FakeDatasetResult()
+
+    monkeypatch.setattr(clickhouse_cli, "load_canonical_research_inputs", fake_load)
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "build_chunked_clickhouse_research_dataset",
+        fake_build,
+    )
+    args = [
+        "dataset-summary",
+        "--market",
+        "BNBUSD",
+        "--db",
+        str(database),
+        "--spot-availability-lag-ms",
+        "25",
+        "--perp-availability-lag-ms",
+        "40",
+        "--no-perp",
+        "--chainlink-availability-lag-ms",
+        "500",
+    ]
+    assert clickhouse_cli.main(args) == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["inputs"]["replay_rounds"] == 123
+    assert payload["assumptions"]["spot_availability_lag_ms"] == 25
+    assert payload["assumptions"]["perp_availability_lag_ms"] == 40
+    assert payload["assumptions"]["include_perp"] is False
+    assert payload["assumptions"]["chainlink_availability_lag_ms"] == 500
+    assert payload["dataset"]["research_feature_rows"] == 100
+    assert payload["dataset"]["chunks_loaded"] == 12
+    assert "dataset-secret" not in output
