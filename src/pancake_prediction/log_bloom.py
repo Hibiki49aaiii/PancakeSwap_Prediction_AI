@@ -20,7 +20,11 @@ def _hex_bytes(value: str, *, expected_bytes: int, field: str) -> bytes:
 
 def bloom_bit_indexes(value: bytes) -> tuple[int, int, int]:
     digest = keccak256(value)
-    return tuple(((digest[offset] << 8) | digest[offset + 1]) & 2047 for offset in (0, 2, 4))
+    return (
+        ((digest[0] << 8) | digest[1]) & 2047,
+        ((digest[2] << 8) | digest[3]) & 2047,
+        ((digest[4] << 8) | digest[5]) & 2047,
+    )
 
 
 def bloom_might_contain(logs_bloom: str, value: bytes) -> bool:
