@@ -21,6 +21,10 @@ The repository distinguishes three classes of state:
 
 No class may be promoted by inference from another class.
 
+## Stage 0 extension
+
+The branch now also contains the append-only raw block/log evidence store and block-pinned, reorg-aware historical collector described in `STAGE0_DATA_INTEGRITY.md`. Real BSC collection evidence is still pending and is not inferred from deterministic tests.
+
 ## Next slice
 
-Build the immutable event store and canonical chain-event schema, then add block-pinned historical collection with explicit reorg handling. That becomes the substrate for deterministic replay and leakage-safe feature snapshots.
+Implement deterministic Prediction V2 event decoding and replay over an explicitly selected canonical snapshot, followed by data-quality manifests and reproducible export hashes.

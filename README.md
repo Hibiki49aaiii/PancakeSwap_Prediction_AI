@@ -38,7 +38,7 @@ The first canonical implementation slice now contains:
 - loopback-only Anvil transaction RPC for future Stage 5B tests;
 - deterministic unit tests and CI.
 
-See `docs/V07_FOUNDATION.md` and `docs/SECURITY_BOUNDARY.md`.
+See `docs/V07_FOUNDATION.md`, `docs/STAGE0_DATA_INTEGRITY.md`, and `docs/SECURITY_BOUNDARY.md`.
 
 ## Core architecture
 
@@ -81,7 +81,7 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Canonical rebuild in progress |
+| 0 | Historical data integrity | Canonical append-only store + reorg-aware collector implemented; real-data evidence pending |
 | 1 | Deterministic replay | Legacy foundation; canonical rebuild pending |
 | 2 | Leakage-safe, cost-aware backtest | Legacy foundation; canonical rebuild pending |
 | 3 | Purged walk-forward / OOS evaluation | Legacy foundation; canonical rebuild pending |

@@ -6,11 +6,25 @@ from itertools import count
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class RpcError(RuntimeError):
     pass
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        del req, fp, code, msg, headers, newurl
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +60,8 @@ class JsonRpcClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            opener = build_opener(_NoRedirect())
+            with opener.open(request, timeout=self.timeout_seconds) as response:  # noqa: S310
                 decoded = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RpcError(f"RPC request failed for {method}: {exc}") from exc
@@ -65,6 +80,25 @@ class JsonRpcClient:
 
     def block_number(self) -> int:
         return int(str(self._request("eth_blockNumber", [])), 16)
+
+    def block(self, number: int) -> dict[str, Any]:
+        result = self._request("eth_getBlockByNumber", [hex(number), False])
+        if not isinstance(result, dict):
+            raise RpcError(f"block {number} not found or invalid")
+        return result
+
+    def get_logs(
+        self, *, address: str, from_block: int, to_block: int
+    ) -> list[dict[str, Any]]:
+        if from_block < 0 or to_block < from_block:
+            raise ValueError("invalid log block range")
+        result = self._request(
+            "eth_getLogs",
+            [{"address": address, "fromBlock": hex(from_block), "toBlock": hex(to_block)}],
+        )
+        if not isinstance(result, list) or not all(isinstance(item, dict) for item in result):
+            raise RpcError("eth_getLogs returned invalid result")
+        return result
 
     def get_code(self, address: str, block: int | str = "latest") -> str:
         tag = hex(block) if isinstance(block, int) else block
