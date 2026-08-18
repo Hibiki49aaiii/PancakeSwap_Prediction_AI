@@ -189,12 +189,30 @@ def _validate_legacy_source(
         raise ValueError("unexpected legacy source class")
     if not audit.structurally_ready or not audit.expected_epoch_envelope_ready:
         raise ValueError("legacy source failed structural/envelope audit")
-    if audit.row_count != len(rounds):
-        raise ValueError("legacy audit row count does not match loaded rounds")
     if not rounds:
         raise ValueError("legacy campaign requires rounds")
-    if audit.first_epoch != rounds[0].epoch or audit.last_epoch != rounds[-1].epoch:
-        raise ValueError("legacy audit epoch envelope does not match loaded rounds")
+    if len({record.epoch for record in rounds}) != len(rounds):
+        raise ValueError("legacy campaign selection contains duplicate epochs")
+    if audit.first_epoch is None or audit.last_epoch is None:
+        raise ValueError("legacy audit is missing its full epoch envelope")
+    if rounds[0].epoch < audit.first_epoch or rounds[-1].epoch > audit.last_epoch:
+        raise ValueError("legacy campaign selection lies outside audited source envelope")
+
+
+def _legacy_source_payload(
+    audit: LegacyRoundAuditReport,
+    rounds: tuple[LegacyRoundRecord, ...],
+) -> dict[str, object]:
+    return {
+        "audit": audit.as_dict(),
+        "selection": {
+            "row_count": len(rounds),
+            "first_epoch": rounds[0].epoch,
+            "last_epoch": rounds[-1].epoch,
+            "first_start_timestamp": rounds[0].start_timestamp,
+            "last_close_timestamp": rounds[-1].close_timestamp,
+        },
+    }
 
 
 def _source_slices(
@@ -286,7 +304,7 @@ def run_legacy_supporting_campaign(
         schema_version=1,
         source_class=LEGACY_ROUNDS_SOURCE_CLASS,
         authoritative=False,
-        legacy_source=audit.as_dict(),
+        legacy_source=_legacy_source_payload(audit, ordered),
         feature_config=config.features,
         model_config=config.model,
         pool_config=config.pool,
