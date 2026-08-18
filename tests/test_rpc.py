@@ -157,6 +157,36 @@ def test_local_fork_fault_controls_use_anvil_rpc(
     ]
 
 
+def test_local_fork_unit_methods_accept_null_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[str] = []
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        methods.append(str(payload["method"]))
+        return _Response({"jsonrpc": "2.0", "id": payload["id"], "result": None})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    address = "0x" + "11" * 20
+    client.impersonate_account(address)
+    client.set_balance(address, 10**18)
+    client.set_automine(False)
+    client.stop_impersonating_account(address)
+
+    assert methods == [
+        "anvil_impersonateAccount",
+        "anvil_setBalance",
+        "anvil_setAutomine",
+        "anvil_stopImpersonatingAccount",
+    ]
+
+
 def test_local_fork_drop_transaction_rejects_missing_or_wrong_hash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
