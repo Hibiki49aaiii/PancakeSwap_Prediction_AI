@@ -73,11 +73,24 @@ Shadow -> Fork -> Tiny Live gate
 | 2 | Leakage-safe, cost-aware backtest | Legacy v0.6 foundation; canonical migration pending |
 | 3 | Purged walk-forward / OOS evaluation | Legacy v0.6 foundation; canonical migration pending |
 | 4 | Paper / Shadow | Legacy v0.6 foundation; observed economic evidence still required |
-| 5A | Durable execution fault model | Legacy drill passed; canonical migration pending |
-| 5B | BSC fork execution | **BLOCKED: observed fork evidence not yet recorded** |
+| 5A | Durable execution fault model | **Canonical v0.7 implementation complete; CI tested** |
+| 5B | BSC fork execution | Harness implemented; **BLOCKED until observed real local-fork evidence is recorded** |
 | 6A | Tiny-live readiness / safety preflight | v0.7 evidence gate implemented; cannot clear from assumed evidence |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
+
+### Stage 5A canonical fault model
+
+The canonical implementation includes:
+
+- explicit durable intent states;
+- unresolved transaction recovery through `UNKNOWN` rather than false failure classification;
+- mined-to-unknown rollback for reorg handling;
+- same-intent replacement transaction tracking;
+- terminal-state enforcement;
+- SQLite WAL persistence with full synchronous writes;
+- restart recovery of unresolved intents;
+- unique nonce reservation across unresolved intents.
 
 ### v0.7 evidence rule
 
