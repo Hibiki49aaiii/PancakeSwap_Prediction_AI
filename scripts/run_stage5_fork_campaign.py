@@ -44,6 +44,13 @@ def _decode_uint256(result: str) -> int:
     return int(raw, 16)
 
 
+def _quantity(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    return int(text, 16) if text.startswith("0x") else int(text)
+
+
 def _read_round_inputs(rpc: LocalForkRpcClient) -> tuple[int, int]:
     target = MARKETS[MARKET].address
     epoch = _decode_uint256(rpc.eth_call(target, CURRENT_EPOCH_SELECTOR))
@@ -296,8 +303,11 @@ def run_campaign(
         raise RuntimeError("local fork head is inconsistent with the requested fork block")
     fork_block = rpc.block(fork_block_number)
     fork_block_hash = str(fork_block.get("hash", ""))
+    fork_block_timestamp = _quantity(fork_block.get("timestamp", 0))
     if not fork_block_hash.startswith("0x"):
         raise RuntimeError("local fork did not expose the source fork block hash")
+    if fork_block_timestamp <= 0:
+        raise RuntimeError("local fork did not expose a valid source block timestamp")
 
     store = ExecutionIntentStore(db_path)
     store.initialize()
@@ -320,6 +330,14 @@ def run_campaign(
         side=BetSide.BEAR,
         stake_wei=stake_wei,
     )
+    initial_preflight = require_prediction_bet_ready(rpc, bull)
+    if initial_preflight.snapshot_block != fork_block_number:
+        raise RuntimeError("campaign did not start from the requested fork block")
+    if initial_preflight.snapshot_timestamp != fork_block_timestamp:
+        raise RuntimeError("preflight timestamp does not match the source fork block")
+    if initial_preflight.current_epoch != epoch or initial_preflight.round_epoch != epoch:
+        raise RuntimeError("campaign epoch is inconsistent with the fork snapshot")
+
     _submit_and_finalize(store, rpc, bull)
     _submit_and_finalize(store, rpc, bear)
 
@@ -365,9 +383,13 @@ def run_campaign(
         recorded_at=datetime.now(UTC).isoformat(),
         campaign_id=f"stage5b-{source_sha[:12]}-{fork_block_number}",
         market=MARKET,
+        epoch=epoch,
+        round_start_timestamp=initial_preflight.start_timestamp,
+        round_lock_timestamp=initial_preflight.lock_timestamp,
         chain_id=rpc.chain_id(),
         fork_block_number=fork_block_number,
         fork_block_hash=fork_block_hash,
+        fork_block_timestamp=fork_block_timestamp,
         anvil_version=anvil_version,
         ledger_sha256=ledger_sha256(db_path),
         scenarios=scenarios,
@@ -387,8 +409,11 @@ def run_campaign(
         "campaign_id": evidence.campaign_id,
         "epoch": epoch,
         "stake_wei": stake_wei,
+        "round_start_timestamp": initial_preflight.start_timestamp,
+        "round_lock_timestamp": initial_preflight.lock_timestamp,
         "fork_block_number": fork_block_number,
         "fork_block_hash": fork_block_hash,
+        "fork_block_timestamp": fork_block_timestamp,
         "anvil_version": anvil_version,
         "scenarios": scenarios,
         "gate": gate.as_dict(),
