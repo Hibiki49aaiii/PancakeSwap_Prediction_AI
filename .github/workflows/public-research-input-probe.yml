@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -18,15 +18,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Probe official/public research inputs
         run: |
-          mkdir -p artifacts
+          mkdir -p artifacts evidence
           python scripts/probe_public_research_inputs.py \
             --output artifacts/public-research-input-probe.json \
             --timeout 12
+          cp artifacts/public-research-input-probe.json \
+            evidence/public-research-input-probe.json
       - name: Print report
         run: cat artifacts/public-research-input-probe.json
       - uses: actions/upload-artifact@v4
@@ -35,3 +39,14 @@ jobs:
           path: artifacts/public-research-input-probe.json
           if-no-files-found: error
           retention-days: 14
+      - name: Persist evidence on branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/public-research-input-probe.json
+          if git diff --cached --quiet; then
+            echo 'Probe evidence unchanged.'
+            exit 0
+          fi
+          git commit -m 'chore: record public research input probe'
+          git push origin HEAD:agent/v0.7-alpha-research
