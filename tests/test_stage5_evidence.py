@@ -19,6 +19,7 @@ from pancake_prediction.stage5_evidence import (
 )
 
 SOURCE_SHA = "12" * 20
+BLOCK_HASH = "0x" + "ab" * 32
 BULL_SENDER = "0x" + "11" * 20
 BEAR_SENDER = "0x" + "22" * 20
 OTHER_SENDER = "0x" + "33" * 20
@@ -68,8 +69,11 @@ def _evidence(
         source_sha=SOURCE_SHA,
         recorded_at="2026-08-19T01:50:00+09:00",
         campaign_id="test-campaign",
+        market="BNBUSD",
         chain_id=56,
         fork_block_number=12_345_678,
+        fork_block_hash=BLOCK_HASH,
+        anvil_version="anvil 1.7.1",
         ledger_sha256=ledger_sha256(path),
         scenarios=scenarios,
     )
@@ -208,6 +212,21 @@ def test_claim_digest_binds_origin_and_claim_metadata(tmp_path: Path) -> None:
     payload = _evidence(store.path, origin=EvidenceOrigin.ASSUMED).as_dict()
     payload["origin"] = "observed"
 
+    with pytest.raises(ValueError, match="claim_sha256"):
+        Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
+
+
+def test_claim_digest_binds_fork_block_hash_and_anvil_version(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _complete_campaign(store)
+    payload = _evidence(store.path).as_dict()
+    payload["fork_block_hash"] = "0x" + "cd" * 32
+
+    with pytest.raises(ValueError, match="claim_sha256"):
+        Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
+
+    payload = _evidence(store.path).as_dict()
+    payload["anvil_version"] = "anvil other-version"
     with pytest.raises(ValueError, match="claim_sha256"):
         Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
 
