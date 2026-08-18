@@ -1,0 +1,78 @@
+name: recent-public-bootstrap
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - src/pancake_prediction/recent_bootstrap.py
+      - tests/test_recent_bootstrap.py
+      - scripts/run_recent_public_bootstrap.py
+      - .github/workflows/recent-public-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recent-public-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Run public recent canonical bootstrap
+        id: bootstrap
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts evidence
+          python scripts/run_recent_public_bootstrap.py \
+            --market BNBUSD \
+            --database artifacts/bnbusd-recent-2026-08-02-to-09.sqlite \
+            --output artifacts/recent-public-bootstrap-2026-08-02-to-09.json \
+            --start-timestamp 1785628800 \
+            --end-timestamp 1786233600 \
+            --confirmations 64 \
+            --chunk-size 2000
+      - name: Persist bootstrap evidence
+        if: always()
+        run: |
+          cp artifacts/recent-public-bootstrap-2026-08-02-to-09.json \
+            evidence/recent-public-bootstrap-2026-08-02-to-09.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-public-bootstrap-2026-08-02-to-09.json
+          if git diff --cached --quiet; then
+            echo 'Recent bootstrap evidence unchanged.'
+          else
+            git commit -m 'chore: record recent public bootstrap evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload recent canonical artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-public-bootstrap-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce bootstrap gate
+        if: always()
+        env:
+          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+        run: |
+          if [ "$BOOTSTRAP_OUTCOME" != success ]; then
+            echo 'Recent public canonical bootstrap failed; inspect persisted evidence.' >&2
+            exit 2
+          fi
