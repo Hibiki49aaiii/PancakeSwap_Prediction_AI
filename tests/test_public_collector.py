@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from pancake_prediction.abi import PREDICTION_EVENTS
 from pancake_prediction.public_collector import PublicHistoricalCollector
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
@@ -109,6 +110,23 @@ class PartitionForkRpc(TopicLimitRpc):
         return [_log(topic0s[0], int(topic0s[0][-1], 16), hash_suffix=suffix)]
 
 
+class ExplicitFilterRpc(TopicLimitRpc):
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert address
+        assert from_block == to_block == 100
+        self.calls.append(topic0s)
+        if topic0s is None:
+            raise RpcError("raw address-only log requests are forbidden")
+        return []
+
+
 def _collector(tmp_path: Path, rpc: TopicLimitRpc) -> PublicHistoricalCollector:
     store = EventStore(tmp_path / "events.sqlite3")
     store.initialize()
@@ -158,3 +176,23 @@ def test_public_collector_rejects_partition_block_hash_disagreement(tmp_path: Pa
             end=100,
             topic0s=("0x1", "0x2"),
         )
+
+
+def test_public_collector_turns_unfiltered_request_into_known_topics(tmp_path: Path) -> None:
+    rpc = ExplicitFilterRpc()
+    collector = _collector(tmp_path, rpc)
+
+    inserted, oracles = collector._collect_address_logs(
+        chain_id=56,
+        address="0x" + "22" * 20,
+        market="BNBUSD",
+        source="prediction",
+        specs=PREDICTION_EVENTS,
+        from_block=100,
+        to_block=100,
+        topic0s=None,
+    )
+
+    assert inserted == 0
+    assert oracles == set()
+    assert rpc.calls == [tuple(spec.topic0 for spec in PREDICTION_EVENTS)]
