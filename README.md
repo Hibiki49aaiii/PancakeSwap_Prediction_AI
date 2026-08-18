@@ -27,6 +27,21 @@ Economic evaluation must include at minimum:
 
 Prediction accuracy alone is not a profitability criterion.
 
+## v0.7 canonical foundation
+
+The first canonical implementation slice now contains:
+
+- current BNB Chain Prediction market registry for BNBUSD/BTCUSD/ETHUSD;
+- pinned deployed V2 bet selectors and event topics;
+- deterministic unsigned semantic bet intents;
+- read-oriented JSON-RPC without any signer/private-key surface;
+- loopback-only Anvil transaction RPC for future Stage 5B tests;
+- deterministic unit tests and CI;
+- frozen canonical snapshots and deterministic raw-event export hashes;
+- strict Prediction V2 event decoding and round-state replay.
+
+See `docs/V07_FOUNDATION.md`, `docs/STAGE0_DATA_INTEGRITY.md`, `docs/STAGE1_REPLAY.md`, and `docs/SECURITY_BOUNDARY.md`.
+
 ## Core architecture
 
 ```text
@@ -68,14 +83,14 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Implemented foundation |
-| 1 | Deterministic replay | Implemented foundation |
-| 2 | Leakage-safe, cost-aware backtest | Implemented foundation |
-| 3 | Purged walk-forward / OOS evaluation | Implemented foundation |
-| 4 | Paper / Shadow | Implemented foundation |
-| 5A | Durable execution fault model | Implemented and tested locally |
-| 5B | BSC fork execution | Harness ready; environment previously assumed for continued development |
-| 6A | Tiny-live readiness / safety preflight | Implemented foundation |
+| 0 | Historical data integrity | Canonical append-only store + reorg-aware collector implemented; real-data evidence pending |
+| 1 | Deterministic replay | Canonical snapshot + event/replay engine implemented; real-data reconciliation pending |
+| 2 | Leakage-safe, cost-aware backtest | Legacy foundation; canonical rebuild pending |
+| 3 | Purged walk-forward / OOS evaluation | Legacy foundation; canonical rebuild pending |
+| 4 | Paper / Shadow | Legacy foundation; canonical rebuild pending |
+| 5A | Durable execution fault model | Legacy evidence preserved; canonical rebuild pending |
+| 5B | BSC fork execution | Loopback RPC boundary re-established; observed fork evidence still required |
+| 6A | Tiny-live readiness / safety preflight | Legacy evidence preserved; canonical rebuild pending |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
 
@@ -85,21 +100,7 @@ Infrastructure assumptions are never treated as evidence of profitability. Shado
 
 Existing Polymarket and prediction-market repositories are reference material, not the codebase to fork.
 
-High-value reference concepts currently include:
-
-- PolyWeather: settlement-source-first probability modeling and calibration
-- ent0n29/polybot: research pipeline and separation of ingestion/analytics/execution
-- Polymarket_data: feature-hypothesis research from large-scale participant behavior
-- PydanticAI: typed research-agent orchestration only
-- CloddsBot: trade ledger, risk and experiment-tracking concepts
-
 Third-party wallet management, private-key handling, live executors, Polymarket CLOB assumptions, future-leaking final pool features, and LLM signing authority are excluded.
-
-## Security boundary
-
-Research and model layers must not hold private keys or signing authority.
-
-AI/LLM components may assist with research, feature analysis, model evaluation and explanation. They are not wallet controllers.
 
 ## Development rule
 
