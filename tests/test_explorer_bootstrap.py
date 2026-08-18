@@ -105,7 +105,7 @@ def test_explorer_bootstrap_seeds_chainlink_from_constructor_without_eth_call(
     assert payload["canonical_block_hash_verification"] is True
     assert payload["signing_enabled"] is False
     assert payload["live_broadcast"] is False
-    assert payload["explorer_manifest"]["credential_persisted"] is False
+    assert report.explorer_manifest["credential_persisted"] is False
     assert "fixture-secret" not in str(payload)
 
 
