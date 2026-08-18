@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from .baseline import ResearchFeatureRow
 from .campaign_evaluation import (
@@ -22,6 +22,16 @@ _ECONOMIC_FIELDS = frozenset(
         "min_expected_value_wei",
     }
 )
+_SCENARIO_REQUIRED_FIELDS = frozenset(
+    {
+        "name",
+        "stake_wei",
+        "bet_gas_wei",
+        "claim_gas_wei",
+        "inclusion_latency_seconds",
+    }
+)
+_SCENARIO_ALLOWED_FIELDS = _SCENARIO_REQUIRED_FIELDS | {"min_expected_value_wei"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +173,59 @@ class EconomicSensitivityReport:
         payload = self.payload()
         payload["sensitivity_digest"] = self.sensitivity_digest
         return payload
+
+
+def _strict_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"sensitivity field {field} must be an integer")
+    return value
+
+
+def parse_sensitivity_scenarios(
+    payload: object,
+    *,
+    base_config: EconomicCampaignConfig,
+) -> tuple[EconomicSensitivityScenario, ...]:
+    if not isinstance(payload, dict):
+        raise ValueError("sensitivity file root must be an object")
+    raw_scenarios = payload.get("scenarios")
+    if not isinstance(raw_scenarios, list):
+        raise ValueError("sensitivity file must contain a scenarios array")
+    scenarios: list[EconomicSensitivityScenario] = []
+    for index, raw in enumerate(raw_scenarios):
+        if not isinstance(raw, dict):
+            raise ValueError(f"sensitivity scenario {index} must be an object")
+        keys = {str(key) for key in raw}
+        missing = sorted(_SCENARIO_REQUIRED_FIELDS - keys)
+        unknown = sorted(keys - _SCENARIO_ALLOWED_FIELDS)
+        if missing:
+            raise ValueError(
+                f"sensitivity scenario {index} missing fields: {', '.join(missing)}"
+            )
+        if unknown:
+            raise ValueError(
+                f"sensitivity scenario {index} has unknown fields: {', '.join(unknown)}"
+            )
+        name = raw.get("name")
+        if not isinstance(name, str):
+            raise ValueError(f"sensitivity scenario {index} name must be a string")
+        scenario_config = replace(
+            base_config,
+            stake_wei=_strict_int(raw.get("stake_wei"), field="stake_wei"),
+            bet_gas_wei=_strict_int(raw.get("bet_gas_wei"), field="bet_gas_wei"),
+            claim_gas_wei=_strict_int(raw.get("claim_gas_wei"), field="claim_gas_wei"),
+            inclusion_latency_seconds=_strict_int(
+                raw.get("inclusion_latency_seconds"),
+                field="inclusion_latency_seconds",
+            ),
+            min_expected_value_wei=_strict_int(
+                raw.get("min_expected_value_wei", 0),
+                field="min_expected_value_wei",
+            ),
+            run_ablation=False,
+        )
+        scenarios.append(EconomicSensitivityScenario(name=name, config=scenario_config))
+    return _validate_scenarios(scenarios)
 
 
 def _structural_config(config: EconomicCampaignConfig) -> dict[str, object]:
