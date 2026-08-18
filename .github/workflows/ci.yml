@@ -88,11 +88,14 @@ jobs:
           checksum = archive_path.with_name(archive_path.name + ".CHECKSUM")
           checksum.write_text(f"{digest}  {archive_path.name}\n", encoding="utf-8")
           PY
-      - name: Prove retry-safe ingest and FINAL window read
+      - name: Prove retry-safe ingest, FINAL reads, and source provenance
         run: |
           python - <<'PY'
           import json
           import subprocess
+
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+          from pancake_prediction.clickhouse_manifest import load_binance_source_slices
 
           base = [
               "pcs-clickhouse",
@@ -138,6 +141,21 @@ jobs:
           assert payload["rows"] == 3, payload
           assert payload["first_aggregate_trade_id"] == 1, payload
           assert payload["last_aggregate_trade_id"] == 3, payload
+
+          slices = load_binance_source_slices(
+              ClickHouseHttpClient("http://127.0.0.1:8123"),
+              market="BNBUSD",
+              venue="spot",
+              timestamp_unit="auto",
+              availability_lag_ms=25,
+              start_timestamp_ms=1785542400000,
+              end_timestamp_ms=1785542401000,
+          )
+          assert len(slices) == 1, slices
+          assert slices[0].row_count == 3, slices
+          assert slices[0].timestamp_unit == "auto", slices
+          assert slices[0].first_aggregate_trade_id == 1, slices
+          assert slices[0].last_aggregate_trade_id == 3, slices
           PY
 
   secrets:
