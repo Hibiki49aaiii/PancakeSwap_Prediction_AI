@@ -158,6 +158,33 @@ jobs:
           assert slices[0].last_aggregate_trade_id == 3, slices
           PY
 
+  legacy-rounds-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Download pinned 144k-round benchmark
+        run: |
+          mkdir -p artifacts
+          curl -fsSL \
+            https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
+            -o /tmp/rounds.csv.gz
+      - name: Audit all 144000 rows
+        run: |
+          python scripts/audit_legacy_rounds.py \
+            --archive /tmp/rounds.csv.gz \
+            --output artifacts/legacy-rounds-audit.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-rounds-audit-${{ github.run_id }}
+          path: artifacts/legacy-rounds-audit.json
+          if-no-files-found: error
+          retention-days: 14
+
   secrets:
     runs-on: ubuntu-latest
     steps:
