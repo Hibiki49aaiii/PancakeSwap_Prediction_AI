@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pancake_prediction.baseline import ResearchFeatureRow
+from pancake_prediction.baseline import ResearchFeatureRow, WalkForwardBaselineResult
 from pancake_prediction.legacy_microstructure_model import (
     LEGACY_MICROSTRUCTURE_V2_FEATURE_NAMES,
     run_legacy_microstructure_v2_model,
@@ -66,7 +66,7 @@ def _fixture() -> tuple[tuple[LegacyRoundRecord, ...], tuple[ResearchFeatureRow,
 def _run(
     rounds: tuple[LegacyRoundRecord, ...],
     rows: tuple[ResearchFeatureRow, ...],
-):
+) -> WalkForwardBaselineResult:
     return run_legacy_microstructure_v2_model(
         rounds,
         rows,
