@@ -15,7 +15,12 @@ from .legacy_model import LEGACY_FEATURE_NAMES, legacy_oos_to_backtest_signals
 from .legacy_rounds import LegacyRoundRecord
 
 
-def _micro_names(*, venue: str | None = None, kind: str | None = None, seconds: int | None = None) -> tuple[str, ...]:
+def _micro_names(
+    *,
+    venue: str | None = None,
+    kind: str | None = None,
+    seconds: int | None = None,
+) -> tuple[str, ...]:
     names: list[str] = []
     venues = (venue,) if venue is not None else ("spot", "perp")
     kinds = (kind,) if kind is not None else ("return", "flow_imbalance", "trade_count")
