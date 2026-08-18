@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -143,9 +144,9 @@ def test_campaign_evaluate_binds_manifest_and_explicit_economic_config(
     )
     database = tmp_path / "history.sqlite3"
 
-    def fake_bundle(args: object, client: object) -> FakeBundle:
+    def fake_bundle(args: argparse.Namespace, client: object) -> FakeBundle:
         assert isinstance(client, ReadyClient)
-        assert getattr(args, "db") == database
+        assert args.db == database
         return bundle
 
     captured: dict[str, object] = {}
