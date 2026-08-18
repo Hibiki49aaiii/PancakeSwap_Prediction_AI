@@ -1,0 +1,77 @@
+{
+  "archive_date": "2026-08-01",
+  "availability_lag_ms": 0,
+  "availability_lag_note": "zero is used only for parser/ingest validation; it is not profitability evidence",
+  "clickhouse_final_groups": [
+    {
+      "availability_lag_ms": 0,
+      "first_aggregate_trade_id": 847221020,
+      "first_trade_timestamp_ms": 1785542400496,
+      "last_aggregate_trade_id": 847368033,
+      "last_trade_timestamp_ms": 1785628797781,
+      "rows": 147014,
+      "timestamp_unit": "auto",
+      "venue": "spot"
+    }
+  ],
+  "clickhouse_query_error": null,
+  "errors": {
+    "perp_ingest": "Traceback (most recent call last):\n  File \"/opt/hostedtoolcache/Python/3.12.13/x64/bin/pcs-clickhouse\", line 6, in <module>\n    sys.exit(main())\n             ^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/clickhouse_cli.py\", line 284, in main\n    ingest_report = ingest_binance_archive(\n                    ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/clickhouse.py\", line 303, in ingest_binance_archive\n    insert_report = sink.insert_json_rows(\n                    ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/clickhouse.py\", line 205, in insert_json_rows\n    for batch in _batches(rows, batch_size=batch_size):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/clickhouse.py\", line 105, in _batches\n    for row in rows:\n               ^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/clickhouse.py\", line 242, in _archive_rows\n    for trade in iter_archive_aggtrades(\n                 ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/binance_archive.py\", line 191, in iter_archive_aggtrades\n    trade = parse_archive_aggtrade_row(\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/binance_archive.py\", line 131, in parse_archive_aggtrade_row\n    aggregate_trade_id = int(row[0])\n                         ^^^^^^^^^^^\nValueError: invalid literal for int() with base 10: 'agg_trade_id'",
+    "perp_inspect": "Traceback (most recent call last):\n  File \"/opt/hostedtoolcache/Python/3.12.13/x64/bin/pcs-prediction\", line 6, in <module>\n    sys.exit(main())\n             ^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/cli.py\", line 264, in main\n    archive_report = inspect_archive_aggtrades(\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/binance_archive.py\", line 227, in inspect_archive_aggtrades\n    for trade in iter_archive_aggtrades(\n                 ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/binance_archive.py\", line 191, in iter_archive_aggtrades\n    trade = parse_archive_aggtrade_row(\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/src/pancake_prediction/binance_archive.py\", line 131, in parse_archive_aggtrade_row\n    aggregate_trade_id = int(row[0])\n                         ^^^^^^^^^^^\nValueError: invalid literal for int() with base 10: 'agg_trade_id'",
+    "schema_check": null,
+    "spot_ingest": null,
+    "spot_inspect": null
+  },
+  "evidence_version": 2,
+  "market": "BNBUSD",
+  "perp_ingest": null,
+  "perp_inspect": null,
+  "schema_check": {
+    "engine": "ReplacingMergeTree",
+    "engine_full": "ReplacingMergeTree(ingest_version) ORDER BY (venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id) SETTINGS index_granularity = 8192",
+    "engine_version_ready": true,
+    "incompatible_columns": [],
+    "missing_columns": [],
+    "ready": true,
+    "sorting_key": "venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id",
+    "sorting_key_ready": true,
+    "table_exists": true
+  },
+  "spot_ingest": {
+    "availability_lag_ms": 0,
+    "batches": 3,
+    "first_aggregate_trade_id": 847221020,
+    "first_trade_timestamp_ms": 1785542400496,
+    "ingest_version": 1787027080990367456,
+    "last_aggregate_trade_id": 847368033,
+    "last_trade_timestamp_ms": 1785628797781,
+    "market": "BNBUSD",
+    "rows": 147014,
+    "source_name": "BNBUSDT-aggTrades-2026-08-01.zip",
+    "source_sha256": "b1b7db376aeefdfe3c90f9c6c5e6082c009c89bd5769d3d08e348b8d4e600547",
+    "symbol": "BNBUSDT",
+    "timestamp_unit": "auto",
+    "venue": "spot"
+  },
+  "spot_inspect": {
+    "availability_lag_ms": 0,
+    "checksum_verified": true,
+    "first_aggregate_trade_id": 847221020,
+    "first_trade_timestamp_ms": 1785542400496,
+    "last_aggregate_trade_id": 847368033,
+    "last_trade_timestamp_ms": 1785628797781,
+    "row_count": 147014,
+    "schema_version": 1,
+    "source_name": "BNBUSDT-aggTrades-2026-08-01.zip",
+    "source_sha256": "b1b7db376aeefdfe3c90f9c6c5e6082c009c89bd5769d3d08e348b8d4e600547",
+    "symbol": "BNBUSDT",
+    "timestamp_unit": "auto",
+    "venue": "spot"
+  },
+  "step_outcomes": {
+    "download": "success",
+    "ingest": "failure",
+    "inspect": "failure"
+  },
+  "validation_ready": false
+}
