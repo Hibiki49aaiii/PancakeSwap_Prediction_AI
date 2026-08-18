@@ -9,8 +9,10 @@ from typing import cast
 
 from .binance_archive import ArchiveVenue, TimestampUnit
 from .clickhouse import ClickHouseHttpClient, ingest_binance_archive, load_binance_trade_window
+from .clickhouse_dataset import build_chunked_clickhouse_research_dataset
 from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
 from .contracts import MARKETS
+from .research_inputs import load_canonical_research_inputs
 
 
 def _print_json(payload: dict[str, object]) -> None:
@@ -40,6 +42,24 @@ def _schema_or_error(
             "to a fresh/migrated table before research IO"
         )
     return report
+
+
+def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--market", choices=sorted(MARKETS), required=True)
+    parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--spot-availability-lag-ms", type=int, required=True)
+    parser.add_argument("--perp-availability-lag-ms", type=int, default=0)
+    parser.add_argument("--no-perp", action="store_true")
+    parser.add_argument("--chunk-span-ms", type=int, default=3_600_000)
+    parser.add_argument("--feature-lead-seconds", type=int, default=20)
+    parser.add_argument("--flow-lookback-ms", type=int, default=60_000)
+    parser.add_argument("--max-spot-age-ms", type=int, default=5_000)
+    parser.add_argument("--max-perp-age-ms", type=int, default=5_000)
+    parser.add_argument("--max-chainlink-age-ms", type=int, default=None)
+    parser.add_argument("--chainlink-availability-lag-ms", type=int, default=0)
+    parser.add_argument("--oracle-history-updates", type=int, default=512)
+    parser.add_argument("--oracle-hazard-horizon-ms", type=int, default=5_000)
+    parser.add_argument("--oracle-hazard-min-intervals", type=int, default=8)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,7 +102,33 @@ def build_parser() -> argparse.ArgumentParser:
     window.add_argument("--availability-lag-ms", type=int, required=True)
     window.add_argument("--start-ms", type=int, required=True)
     window.add_argument("--end-ms", type=int, required=True)
+
+    dataset = subparsers.add_parser(
+        "dataset-summary",
+        help="build a canonical research dataset from SQLite plus chunked ClickHouse windows",
+    )
+    _add_dataset_arguments(dataset)
     return parser
+
+
+def _dataset_assumptions(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "spot_availability_lag_ms": int(args.spot_availability_lag_ms),
+        "perp_availability_lag_ms": int(args.perp_availability_lag_ms),
+        "include_perp": not bool(args.no_perp),
+        "chunk_span_ms": int(args.chunk_span_ms),
+        "feature_lead_seconds": int(args.feature_lead_seconds),
+        "flow_lookback_ms": int(args.flow_lookback_ms),
+        "max_spot_age_ms": int(args.max_spot_age_ms),
+        "max_perp_age_ms": int(args.max_perp_age_ms),
+        "max_chainlink_age_ms": (
+            None if args.max_chainlink_age_ms is None else int(args.max_chainlink_age_ms)
+        ),
+        "chainlink_availability_lag_ms": int(args.chainlink_availability_lag_ms),
+        "oracle_history_updates": int(args.oracle_history_updates),
+        "oracle_hazard_horizon_ms": int(args.oracle_hazard_horizon_ms),
+        "oracle_hazard_min_intervals": int(args.oracle_hazard_min_intervals),
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -139,6 +185,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "last_aggregate_trade_id": (
                     None if not trades else trades[-1].aggregate_trade_id
                 ),
+            }
+        )
+        return 0
+
+    if args.command == "dataset-summary":
+        _schema_or_error(parser, client)
+        market = str(args.market)
+        inputs = load_canonical_research_inputs(Path(args.db), market)
+        assumptions = _dataset_assumptions(args)
+        dataset_result = build_chunked_clickhouse_research_dataset(
+            inputs.replay,
+            inputs.events,
+            client,
+            spot_availability_lag_ms=int(args.spot_availability_lag_ms),
+            perp_availability_lag_ms=int(args.perp_availability_lag_ms),
+            include_perp=not bool(args.no_perp),
+            chunk_span_ms=int(args.chunk_span_ms),
+            feature_lead_seconds=int(args.feature_lead_seconds),
+            flow_lookback_ms=int(args.flow_lookback_ms),
+            max_spot_age_ms=int(args.max_spot_age_ms),
+            max_perp_age_ms=int(args.max_perp_age_ms),
+            max_chainlink_age_ms=(
+                None if args.max_chainlink_age_ms is None else int(args.max_chainlink_age_ms)
+            ),
+            chainlink_availability_lag_ms=int(args.chainlink_availability_lag_ms),
+            oracle_history_updates=int(args.oracle_history_updates),
+            oracle_hazard_horizon_ms=int(args.oracle_hazard_horizon_ms),
+            oracle_hazard_min_intervals=int(args.oracle_hazard_min_intervals),
+        )
+        _print_json(
+            {
+                "inputs": inputs.as_dict(),
+                "assumptions": assumptions,
+                "dataset": dataset_result.as_dict(),
             }
         )
         return 0
