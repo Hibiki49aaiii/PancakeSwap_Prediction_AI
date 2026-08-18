@@ -1,6 +1,11 @@
 name: historical-bootstrap
 
 on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - ops/historical-bootstrap-trigger.txt
   workflow_dispatch:
     inputs:
       market:
@@ -32,30 +37,38 @@ jobs:
     timeout-minutes: 300
     env:
       BSC_RPC_URL: ${{ secrets.BSC_ARCHIVE_RPC_URL }}
-      MARKET: ${{ inputs.market }}
-      CONFIRMATIONS: ${{ inputs.confirmations }}
-      CHUNK_SIZE: ${{ inputs.chunk_size }}
+      MARKET: ${{ inputs.market || 'BNBUSD' }}
+      CONFIRMATIONS: ${{ inputs.confirmations || '64' }}
+      CHUNK_SIZE: ${{ inputs.chunk_size || '2000' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Require archive RPC secret
+      - name: Check archive RPC secret
+        id: secret
         run: |
           if [ -z "$BSC_RPC_URL" ]; then
-            echo 'BSC_ARCHIVE_RPC_URL repository secret is not configured.' >&2
-            exit 2
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo 'BSC_ARCHIVE_RPC_URL repository secret is not configured.'
+          else
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+            echo 'Archive RPC secret is configured.'
           fi
       - name: Install project
+        if: steps.secret.outputs.configured == 'true'
         run: pip install -e .
       - name: Create artifact directory
+        if: steps.secret.outputs.configured == 'true'
         run: mkdir -p artifacts
       - name: Historical archive preflight
+        if: steps.secret.outputs.configured == 'true'
         run: |
           pcs-prediction historical-preflight \
             --market "$MARKET" \
             > artifacts/historical-preflight.json
       - name: Bootstrap canonical history
+        if: steps.secret.outputs.configured == 'true'
         id: bootstrap
         run: |
           pcs-prediction historical-bootstrap \
@@ -65,17 +78,19 @@ jobs:
             --chunk-size "$CHUNK_SIZE" \
             > artifacts/historical-bootstrap.json
       - name: Validate active oracle timeline
-        if: steps.bootstrap.outcome == 'success'
+        if: >-
+          steps.secret.outputs.configured == 'true' &&
+          steps.bootstrap.outcome == 'success'
         run: |
           pcs-prediction oracle-history-report \
             --market "$MARKET" \
             --db "artifacts/${MARKET,,}-history.sqlite" \
             > artifacts/oracle-history-report.json
       - name: Upload canonical history evidence
-        if: always()
+        if: always() && steps.secret.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: historical-bootstrap-${{ inputs.market }}-${{ github.run_id }}
+          name: historical-bootstrap-${{ env.MARKET }}-${{ github.run_id }}
           path: artifacts/
           if-no-files-found: warn
           retention-days: 30
