@@ -185,6 +185,9 @@ def test_chunked_clickhouse_dataset_matches_in_memory_builder_without_n_plus_one
     assert {str(call["venue"]) for call in source.calls} == {"spot", "um_futures"}
     assert actual.max_spot_chunk_rows == 4
     assert actual.max_perp_chunk_rows == 2
+    assert actual.spot_query_start_ms == 940_000
+    assert actual.perp_query_start_ms == 940_000
+    assert actual.query_end_ms == 2_000_000
 
 
 def test_chunked_builder_can_skip_perp_query() -> None:
@@ -210,3 +213,6 @@ def test_chunked_builder_can_skip_perp_query() -> None:
     assert len(source.calls) == 1
     assert source.calls[0]["venue"] == "spot"
     assert result.max_perp_chunk_rows == 0
+    assert result.spot_query_start_ms == 940_000
+    assert result.perp_query_start_ms is None
+    assert result.query_end_ms == 2_000_000
