@@ -174,12 +174,33 @@ class LocalForkRpcClient(JsonRpcClient):
         if result is not True:
             raise RpcError("local fork refused account impersonation")
 
+    def stop_impersonating_account(self, address: str) -> None:
+        result = self.call("anvil_stopImpersonatingAccount", [address])
+        if result is not True:
+            raise RpcError("local fork refused to stop account impersonation")
+
     def set_balance(self, address: str, value_wei: int) -> None:
         if value_wei < 0:
             raise ValueError("balance must be non-negative")
         result = self.call("anvil_setBalance", [address, hex(value_wei)])
         if result is not True:
             raise RpcError("local fork refused balance update")
+
+    def set_automine(self, enabled: bool) -> None:
+        self.call("anvil_setAutomine", [enabled])
+
+    def drop_transaction(self, tx_hash: str) -> None:
+        result = self.call("anvil_dropTransaction", [tx_hash])
+        if result is not True:
+            raise RpcError("local fork did not drop the requested transaction")
+
+    def snapshot(self) -> str:
+        return str(self.call("anvil_snapshot", []))
+
+    def revert(self, snapshot_id: str) -> None:
+        result = self.call("anvil_revert", [snapshot_id])
+        if result is not True:
+            raise RpcError("local fork refused snapshot revert")
 
     def send_transaction(
         self,
