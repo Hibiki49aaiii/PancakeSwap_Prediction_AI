@@ -4,7 +4,12 @@ from typing import Any
 
 import pytest
 
-from pancake_prediction.fork_discovery import discover_fork_block
+from pancake_prediction.fork_discovery import ForkPoint, discover_fork_block
+from pancake_prediction.prediction_preflight import CURRENT_EPOCH_SELECTOR, ROUNDS_SELECTOR
+
+
+def _word(value: int) -> str:
+    return f"{value:064x}"
 
 
 class _FakeRpc:
@@ -13,13 +18,13 @@ class _FakeRpc:
         *,
         chain_id: int = 56,
         head: int = 110,
-        logs: list[dict[str, Any]] | None = None,
         timestamps: dict[int, int] | None = None,
+        rounds: dict[int, tuple[int, int, int]] | None = None,
     ) -> None:
         self._chain_id = chain_id
         self._head = head
-        self._logs = logs or []
         self._timestamps = timestamps or {}
+        self._rounds = rounds or {}
 
     def chain_id(self) -> int:
         return self._chain_id
@@ -30,60 +35,82 @@ class _FakeRpc:
     def block(self, number: int) -> dict[str, Any]:
         return {"timestamp": hex(self._timestamps.get(number, number))}
 
-    def get_logs(
-        self,
-        address: str,
-        from_block: int,
-        to_block: int,
-        *,
-        topic0s: tuple[str, ...] | None = None,
-    ) -> list[dict[str, Any]]:
-        del address, topic0s
-        return [
-            log
-            for log in self._logs
-            if from_block <= int(str(log["blockNumber"]), 16) <= to_block
-        ]
+    def eth_call(self, to: str, data: str, block: int | str = "latest") -> str:
+        del to
+        assert isinstance(block, int)
+        epoch, start_timestamp, lock_timestamp = self._rounds.get(
+            block,
+            (0, 0, 0),
+        )
+        if data == CURRENT_EPOCH_SELECTOR:
+            return "0x" + _word(epoch)
+        if data.startswith(ROUNDS_SELECTOR):
+            requested_epoch = int(data[len(ROUNDS_SELECTOR) :], 16)
+            if requested_epoch != epoch:
+                return "0x" + "0" * (14 * 64)
+            values = [epoch, start_timestamp, lock_timestamp] + [0] * 11
+            return "0x" + "".join(_word(value) for value in values)
+        raise AssertionError(f"unexpected eth_call selector: {data}")
 
 
-def test_discovery_skips_same_timestamp_block_after_start_round() -> None:
+def test_discovery_prefers_newest_confirmed_bettable_state() -> None:
     rpc = _FakeRpc(
-        logs=[{"blockNumber": hex(100), "logIndex": "0x0"}],
-        timestamps={100: 1_000, 101: 1_000, 102: 1_001},
-    )
-    fork_block, start_round_block = discover_fork_block(
-        rpc,
-        market="BNBUSD",
-        lookback_blocks=50,
-        confirmation_lag=4,
-        chunk_size=50,
-    )
-    assert start_round_block == 100
-    assert fork_block == 102
-
-
-def test_discovery_falls_back_to_older_round_if_latest_is_not_ready() -> None:
-    rpc = _FakeRpc(
-        logs=[
-            {"blockNumber": hex(105), "logIndex": "0x0"},
-            {"blockNumber": hex(100), "logIndex": "0x0"},
-        ],
-        timestamps={
-            100: 1_000,
-            101: 1_001,
-            105: 2_000,
-            106: 2_000,
+        timestamps={106: 1_100, 105: 1_099},
+        rounds={
+            106: (700, 1_000, 1_300),
+            105: (700, 1_000, 1_300),
         },
     )
-    fork_block, start_round_block = discover_fork_block(
+    point = discover_fork_block(
         rpc,
         market="BNBUSD",
-        lookback_blocks=50,
+        lookback_blocks=20,
         confirmation_lag=4,
-        chunk_size=50,
     )
-    assert start_round_block == 100
-    assert fork_block == 101
+    assert point == ForkPoint(
+        block_number=106,
+        block_timestamp=1_100,
+        epoch=700,
+        round_start_timestamp=1_000,
+        round_lock_timestamp=1_300,
+    )
+
+
+def test_discovery_skips_safe_head_outside_betting_window() -> None:
+    rpc = _FakeRpc(
+        timestamps={106: 1_300, 105: 1_299},
+        rounds={
+            106: (700, 1_000, 1_300),
+            105: (700, 1_000, 1_300),
+        },
+    )
+    point = discover_fork_block(
+        rpc,
+        market="BNBUSD",
+        lookback_blocks=20,
+        confirmation_lag=4,
+    )
+    assert point.block_number == 105
+    assert point.block_timestamp == 1_299
+
+
+def test_discovery_skips_uninitialized_or_mismatched_round_state() -> None:
+    rpc = _FakeRpc(
+        timestamps={106: 1_100, 105: 1_099, 104: 1_098},
+        rounds={
+            106: (0, 0, 0),
+            105: (701, 0, 0),
+            104: (700, 1_000, 1_300),
+        },
+    )
+    point = discover_fork_block(
+        rpc,
+        market="BNBUSD",
+        lookback_blocks=20,
+        confirmation_lag=4,
+    )
+    assert point.block_number == 104
+    assert point.epoch == 700
 
 
 def test_discovery_rejects_non_bsc_source() -> None:
@@ -92,19 +119,24 @@ def test_discovery_rejects_non_bsc_source() -> None:
         discover_fork_block(
             rpc,
             market="BNBUSD",
-            lookback_blocks=50,
+            lookback_blocks=20,
             confirmation_lag=4,
-            chunk_size=50,
         )
 
 
-def test_discovery_fails_closed_without_confirmed_usable_round() -> None:
-    rpc = _FakeRpc(logs=[])
-    with pytest.raises(RuntimeError, match="no confirmed StartRound"):
+def test_discovery_fails_closed_without_confirmed_bettable_state() -> None:
+    rpc = _FakeRpc(
+        timestamps={106: 1_300, 105: 1_301, 104: 1_302},
+        rounds={
+            106: (700, 1_000, 1_300),
+            105: (700, 1_000, 1_300),
+            104: (700, 1_000, 1_300),
+        },
+    )
+    with pytest.raises(RuntimeError, match="no confirmed bettable Prediction state"):
         discover_fork_block(
             rpc,
             market="BNBUSD",
-            lookback_blocks=50,
+            lookback_blocks=3,
             confirmation_lag=4,
-            chunk_size=50,
         )
