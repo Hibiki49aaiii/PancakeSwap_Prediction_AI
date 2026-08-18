@@ -197,6 +197,16 @@ class LocalForkRpcClient(JsonRpcClient):
         if dropped_hash != tx_hash.lower():
             raise RpcError("local fork returned an unexpected dropped transaction hash")
 
+    def reorg(self, depth: int = 1) -> None:
+        if depth < 1:
+            raise ValueError("reorg depth must be positive")
+        result = self.call(
+            "anvil_reorg",
+            [{"depth": depth, "tx_block_pairs": []}],
+        )
+        if result is not None and result is not True:
+            raise RpcError("local fork refused reorg injection")
+
     def snapshot(self) -> str:
         return str(self.call("anvil_snapshot", []))
 
