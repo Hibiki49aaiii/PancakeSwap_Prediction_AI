@@ -159,9 +159,7 @@ def evaluate_binary_oos(
             raise ValueError(f"signal map key/epoch mismatch at epoch {epoch}")
         if generated_at_floor is not None:
             floor = generated_at_floor.get(epoch)
-            if floor is None:
-                raise ValueError(f"missing generated_at floor for epoch {epoch}")
-            if signal.generated_at < floor:
+            if floor is not None and signal.generated_at < floor:
                 raise ValueError(f"signal for epoch {epoch} predates allowed observation window")
         points.append((signal.p_bull_ppm / PPM, outcome))
 
@@ -225,12 +223,11 @@ def evaluate_oos(
         outcomes[record.epoch] = 1 if record.label == "bull" else 0
         if record.start_timestamp is not None:
             floors[record.epoch] = record.start_timestamp
-    floor_map: Mapping[int, int] | None = floors if len(floors) == len(outcomes) else None
     return evaluate_binary_oos(
         market=replay.market,
         outcomes=outcomes,
         signals=signals,
         purge_rounds=purge_rounds,
-        generated_at_floor=floor_map,
+        generated_at_floor=floors,
         n_ties_excluded=ties,
     )
