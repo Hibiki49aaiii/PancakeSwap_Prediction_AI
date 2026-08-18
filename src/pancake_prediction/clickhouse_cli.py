@@ -99,13 +99,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if value == "1" else 2
 
     if args.command == "schema-check":
-        report = inspect_binance_trade_schema(client)
-        _print_json(report.as_dict())
-        return 0 if report.ready else 2
+        schema_report = inspect_binance_trade_schema(client)
+        _print_json(schema_report.as_dict())
+        return 0 if schema_report.ready else 2
 
     if args.command == "binance-ingest":
         _schema_or_error(parser, client)
-        report = ingest_binance_archive(
+        ingest_report = ingest_binance_archive(
             client,
             Path(args.archive),
             Path(args.checksum),
@@ -115,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             availability_lag_ms=int(args.availability_lag_ms),
             batch_size=int(args.batch_size),
         )
-        _print_json(report.as_dict())
+        _print_json(ingest_report.as_dict())
         return 0
 
     if args.command == "binance-window":
