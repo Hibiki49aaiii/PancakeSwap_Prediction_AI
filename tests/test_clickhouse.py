@@ -113,6 +113,7 @@ def test_ingest_binance_archive_verifies_checksum_and_persists_provenance(
     ]
     assert len(rows) == 3
     assert all(row["source_sha256"] == digest for row in rows)
+    assert all(row["timestamp_unit"] == "auto" for row in rows)
     assert all(row["availability_lag_ms"] == 25 for row in rows)
     assert all(row["ingest_version"] == 123 for row in rows)
     assert rows[0]["event_timestamp_ms"] == 1_785_542_400_025
@@ -153,6 +154,7 @@ def test_trade_window_query_uses_final_and_typed_parameters() -> None:
         source,
         market="BNBUSD",
         venue="spot",
+        timestamp_unit="auto",
         availability_lag_ms=25,
         start_timestamp_ms=9_000,
         end_timestamp_ms=11_000,
@@ -160,10 +162,12 @@ def test_trade_window_query_uses_final_and_typed_parameters() -> None:
     assert len(trades) == 1
     assert trades[0].aggregate_trade_id == 42
     assert "FROM binance_agg_trades FINAL" in source.query
+    assert "timestamp_unit={timestamp_unit:String}" in source.query
     assert "availability_lag_ms={availability_lag_ms:UInt32}" in source.query
     assert source.parameters == {
         "venue": "spot",
         "symbol": "BNBUSDT",
+        "timestamp_unit": "auto",
         "availability_lag_ms": 25,
         "start_timestamp_ms": 9_000,
         "end_timestamp_ms": 11_000,
