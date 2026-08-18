@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from pancake_prediction.baseline import ResearchFeatureRow
+from pancake_prediction.baseline import ResearchFeatureRow, WalkForwardBaselineResult
 from pancake_prediction.recent_model import (
     RECENT_CEX_FEATURE_NAMES,
     run_recent_canonical_cex_model,
@@ -73,7 +73,10 @@ def _fixture() -> tuple[ReplaySnapshot, tuple[ResearchFeatureRow, ...]]:
     return replay, tuple(_row(record) for record in rounds)
 
 
-def _run(replay: ReplaySnapshot, rows: tuple[ResearchFeatureRow, ...]):
+def _run(
+    replay: ReplaySnapshot,
+    rows: tuple[ResearchFeatureRow, ...],
+) -> WalkForwardBaselineResult:
     return run_recent_canonical_cex_model(
         replay,
         rows,
