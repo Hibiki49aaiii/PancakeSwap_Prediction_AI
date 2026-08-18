@@ -3,7 +3,7 @@
   "baseline_campaign_digest": "c83c04f79e97effd2390f4123f9690834cf433a58ec6b8363447808705a2c3a4",
   "baseline_evaluation_digest": "9cb7770b35868d6a2bb3318343d6bff1172d173e84b664befaa71dcfdc9bb09d",
   "candidate_for_authoritative_retest": false,
-  "comparison_digest": "dc41169e9befee8fdc328666a19740d6ad47ce3874117870e327bc02ad8a3b39",
+  "comparison_digest": "7519f6027c37f03da661cfd288f8f0adb3d2d4d021e30be476274beeb79c16dc",
   "microstructure_build": {
     "chunks_loaded": 168,
     "max_perp_chunk_rows": 40289,
@@ -134,6 +134,19 @@
     "perp_trade_count_60s"
   ],
   "v2_pnl_improved": true,
+  "v2_pool_projection_diagnostics": {
+    "diagnostic_uses_final_pool": true,
+    "final_pool_ev_sum_wei": -61464690576795987,
+    "mean_abs_bull_share_error_ppm": 108256,
+    "mean_abs_total_pool_error_ppm": 339616,
+    "profitability_gate_eligible": false,
+    "projected_ev_optimism_wei": 358736172869279663,
+    "projected_ev_sum_wei": 297271482292483676,
+    "projected_positive_final_negative": 287,
+    "projected_side_differs_from_final_pool_side": 143,
+    "selected_trades": 464,
+    "tradeable_feature": false
+  },
   "v2_positive_oos_skill": true,
   "v2_positive_pnl": false,
   "v2_probability": {
