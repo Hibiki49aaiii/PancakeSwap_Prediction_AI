@@ -9,6 +9,7 @@ from typing import cast
 
 from .binance_archive import ArchiveVenue, TimestampUnit
 from .clickhouse import ClickHouseHttpClient, ingest_binance_archive, load_binance_trade_window
+from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
 from .contracts import MARKETS
 
 
@@ -28,6 +29,19 @@ def _client_or_error(parser: argparse.ArgumentParser) -> ClickHouseHttpClient:
     )
 
 
+def _schema_or_error(
+    parser: argparse.ArgumentParser,
+    client: ClickHouseHttpClient,
+) -> ClickHouseBinanceSchemaReport:
+    report = inspect_binance_trade_schema(client)
+    if not report.ready:
+        parser.error(
+            "binance_agg_trades schema is not retry-safe; apply sql/clickhouse/v0_7_core.sql "
+            "to a fresh/migrated table before research IO"
+        )
+    return report
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pcs-clickhouse",
@@ -37,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ping = subparsers.add_parser("ping", help="verify ClickHouse connectivity")
     ping.set_defaults(command="ping")
+
+    subparsers.add_parser(
+        "schema-check",
+        help="validate the retry-safe Binance research table before ingest/query",
+    )
 
     ingest = subparsers.add_parser(
         "binance-ingest",
@@ -79,7 +98,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json({"ok": value == "1"})
         return 0 if value == "1" else 2
 
+    if args.command == "schema-check":
+        report = inspect_binance_trade_schema(client)
+        _print_json(report.as_dict())
+        return 0 if report.ready else 2
+
     if args.command == "binance-ingest":
+        _schema_or_error(parser, client)
         report = ingest_binance_archive(
             client,
             Path(args.archive),
@@ -94,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "binance-window":
+        _schema_or_error(parser, client)
         trades = load_binance_trade_window(
             client,
             market=str(args.market),
