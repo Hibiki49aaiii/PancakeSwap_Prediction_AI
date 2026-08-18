@@ -30,7 +30,7 @@
   "historical_probe_block": 10333826,
   "log_replay_ready_endpoints": [],
   "prediction_contract": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
-  "probe_version": 3,
+  "probe_version": 4,
   "rpc_results": [
     {
       "archive_ready": false,
@@ -51,7 +51,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 1448,
+      "elapsed_ms": 965,
       "endpoint": "https://bsc-dataseed.bnbchain.org",
       "error": null,
       "errors": {
@@ -62,7 +62,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612219,
+      "latest_block": 116612508,
       "log_replay_ready": false
     },
     {
@@ -70,7 +70,7 @@
       "chain_id": 56,
       "creation_provenance": null,
       "creation_transaction_ready": false,
-      "elapsed_ms": 2667,
+      "elapsed_ms": 952,
       "endpoint": "https://bsc-dataseed-public.bnbchain.org",
       "error": null,
       "errors": {
@@ -82,7 +82,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612222,
+      "latest_block": 116612509,
       "log_replay_ready": false
     },
     {
@@ -104,7 +104,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 2225,
+      "elapsed_ms": 909,
       "endpoint": "https://bsc-dataseed.nariox.org",
       "error": null,
       "errors": {
@@ -115,7 +115,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612229,
+      "latest_block": 116612513,
       "log_replay_ready": false
     },
     {
@@ -137,7 +137,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 2187,
+      "elapsed_ms": 908,
       "endpoint": "https://bsc-dataseed.defibit.io",
       "error": null,
       "errors": {
@@ -148,7 +148,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612234,
+      "latest_block": 116612515,
       "log_replay_ready": false
     },
     {
@@ -170,7 +170,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 2169,
+      "elapsed_ms": 960,
       "endpoint": "https://bsc-dataseed.ninicoin.io",
       "error": null,
       "errors": {
@@ -181,7 +181,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612239,
+      "latest_block": 116612517,
       "log_replay_ready": false
     },
     {
@@ -203,7 +203,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 1438,
+      "elapsed_ms": 935,
       "endpoint": "https://bsc.nodereal.io",
       "error": null,
       "errors": {
@@ -214,7 +214,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612243,
+      "latest_block": 116612519,
       "log_replay_ready": false
     },
     {
@@ -222,7 +222,7 @@
       "chain_id": null,
       "creation_provenance": null,
       "creation_transaction_ready": false,
-      "elapsed_ms": 87,
+      "elapsed_ms": 117,
       "endpoint": "https://bnb.rpc.subquery.network/public",
       "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
       "errors": {},
@@ -238,7 +238,7 @@
       "chain_id": null,
       "creation_provenance": null,
       "creation_transaction_ready": false,
-      "elapsed_ms": 469,
+      "elapsed_ms": 229,
       "endpoint": "https://rpc.ankr.com/bsc",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"Unauthorized: You must authenticate your request with an API key. Create an account on https://www.ankr.com/rpc/ and generate your personal API key for free.\"}",
       "errors": {},
@@ -268,7 +268,7 @@
         "treasury_fee_bps": 300
       },
       "creation_transaction_ready": true,
-      "elapsed_ms": 958,
+      "elapsed_ms": 517,
       "endpoint": "https://bsc-rpc.publicnode.com",
       "error": null,
       "errors": {
@@ -279,7 +279,7 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612247,
+      "latest_block": 116612522,
       "log_replay_ready": false
     },
     {
@@ -287,19 +287,19 @@
       "chain_id": 56,
       "creation_provenance": null,
       "creation_transaction_ready": false,
-      "elapsed_ms": 2286,
+      "elapsed_ms": 4244,
       "endpoint": "https://public.1rpc.io/bnb",
       "error": null,
       "errors": {
         "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}",
         "creation_transaction": "RuntimeError: creation transaction lookup did not return an object",
-        "historical_logs": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}"
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
       },
       "historical_code": false,
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116612248,
+      "latest_block": 116612516,
       "log_replay_ready": false
     }
   ]
