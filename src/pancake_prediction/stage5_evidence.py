@@ -25,6 +25,14 @@ REQUIRED_SCENARIOS = (
     "reorg_reconciliation",
     "non_loopback_rejection",
 )
+REQUIRED_TRANSITIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "restart_recovery": (("submitting", "retryable"),),
+    "dropped_or_replaced_recovery": (("submitted", "retryable"),),
+    "reorg_reconciliation": (
+        ("mined", "reorged"),
+        ("reorged", "retryable"),
+    ),
+}
 
 
 class EvidenceOrigin(StrEnum):
@@ -285,6 +293,43 @@ def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
     return bull, bear
 
 
+def _ledger_scenario_observations(path: Path) -> dict[str, bool]:
+    try:
+        with closing(sqlite3.connect(path)) as conn:
+            rows = conn.execute(
+                "SELECT scenario,observed,detail_json FROM execution_observations ORDER BY id"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    observations: dict[str, bool] = {}
+    for scenario_raw, observed_raw, detail_raw in rows:
+        scenario = str(scenario_raw)
+        try:
+            detail = json.loads(str(detail_raw))
+        except json.JSONDecodeError:
+            observations[scenario] = False
+            continue
+        observations[scenario] = bool(observed_raw) and isinstance(detail, dict)
+    return observations
+
+
+def _ledger_transition_pairs(path: Path) -> set[tuple[str, str]]:
+    try:
+        with closing(sqlite3.connect(path)) as conn:
+            rows = conn.execute(
+                """
+                SELECT from_state,to_state
+                FROM execution_transitions
+                WHERE from_state IS NOT NULL
+                ORDER BY id
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return set()
+    return {(str(from_state), str(to_state)) for from_state, to_state in rows}
+
+
 def evaluate_stage5b_fork_gate(
     *,
     ledger_path: Path,
@@ -293,6 +338,8 @@ def evaluate_stage5b_fork_gate(
 ) -> Stage5ForkGateReport:
     report = build_execution_intent_report(ledger_path)
     bull, bear = _finalized_bet_counts(ledger_path, market=evidence.market)
+    observations = _ledger_scenario_observations(ledger_path)
+    transitions = _ledger_transition_pairs(ledger_path)
     blockers: list[str] = []
 
     if report.total == 0:
@@ -317,7 +364,15 @@ def evaluate_stage5b_fork_gate(
     scenario_map = dict(evidence.scenarios)
     for scenario in REQUIRED_SCENARIOS:
         if not scenario_map[scenario]:
-            blockers.append(f"scenario_not_observed:{scenario}")
+            blockers.append(f"scenario_not_claimed:{scenario}")
+        if observations.get(scenario) is not True:
+            blockers.append(f"scenario_not_observed_in_ledger:{scenario}")
+        for transition in REQUIRED_TRANSITIONS.get(scenario, ()):
+            if transition not in transitions:
+                blockers.append(
+                    "scenario_transition_missing:"
+                    f"{scenario}:{transition[0]}->{transition[1]}"
+                )
 
     return Stage5ForkGateReport(
         ready=not blockers,
