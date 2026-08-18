@@ -20,11 +20,63 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pcs-prediction status
       - run: pcs-clickhouse --help
-      - run: ruff check . --output-format=github
-      - run: mypy src tests
-      - run: pytest --cov=src/pancake_prediction --cov-report=term-missing
-      - run: bandit -c pyproject.toml -r src
-      - run: pip-audit
+      - run: mkdir -p artifacts
+      - name: Ruff
+        id: ruff
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ruff check . --output-format=github 2>&1 | tee artifacts/ruff.log
+      - name: mypy strict
+        id: mypy
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mypy src tests 2>&1 | tee artifacts/mypy.log
+      - name: pytest with coverage
+        id: pytest
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pytest --cov=src/pancake_prediction --cov-report=term-missing 2>&1 \
+            | tee artifacts/pytest.log
+      - name: Bandit
+        id: bandit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bandit -c pyproject.toml -r src 2>&1 | tee artifacts/bandit.log
+      - name: pip-audit
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pip-audit 2>&1 | tee artifacts/pip-audit.log
+      - name: Upload quality diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-diagnostics-${{ github.run_id }}
+          path: artifacts/*.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Enforce quality gate
+        if: always()
+        env:
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          MYPY_OUTCOME: ${{ steps.mypy.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          PIP_AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          if [ "$RUFF_OUTCOME" != success ] || \
+             [ "$MYPY_OUTCOME" != success ] || \
+             [ "$PYTEST_OUTCOME" != success ] || \
+             [ "$BANDIT_OUTCOME" != success ] || \
+             [ "$PIP_AUDIT_OUTCOME" != success ]; then
+            echo "quality gate failed: ruff=$RUFF_OUTCOME mypy=$MYPY_OUTCOME pytest=$PYTEST_OUTCOME bandit=$BANDIT_OUTCOME pip-audit=$PIP_AUDIT_OUTCOME" >&2
+            exit 2
+          fi
 
   clickhouse-integration:
     runs-on: ubuntu-latest
