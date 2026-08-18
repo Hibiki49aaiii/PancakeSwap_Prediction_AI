@@ -66,34 +66,59 @@ def _growth_ratios(row: PoolProjectionDatasetRow) -> tuple[int, int] | None:
     )
 
 
-def _flow_total_ppm(bull_wei: int, bear_wei: int, observed_total: int) -> float | None:
+def _flow_total_ppm(
+    bull_wei: int,
+    bear_wei: int,
+    observed_total: int,
+) -> float | None:
     if observed_total <= 0:
         return None
     return (bull_wei + bear_wei) * RATIO_SCALE / observed_total
+
+
+def _optional_float(value: int | None) -> float | None:
+    return None if value is None else float(value)
 
 
 def _vector(row: PoolProjectionDatasetRow) -> tuple[float | None, ...]:
     features = row.features
     observed_total = features.observed_bull_wei + features.observed_bear_wei
     return (
-        None if features.observed_bull_share_ppm is None else float(features.observed_bull_share_ppm),
-        None if features.flow_imbalance_5s_ppm is None else float(features.flow_imbalance_5s_ppm),
-        None if features.flow_imbalance_20s_ppm is None else float(features.flow_imbalance_20s_ppm),
-        None if features.flow_imbalance_60s_ppm is None else float(features.flow_imbalance_60s_ppm),
-        _flow_total_ppm(features.bull_flow_5s_wei, features.bear_flow_5s_wei, observed_total),
-        _flow_total_ppm(features.bull_flow_20s_wei, features.bear_flow_20s_wei, observed_total),
-        _flow_total_ppm(features.bull_flow_60s_wei, features.bear_flow_60s_wei, observed_total),
+        _optional_float(features.observed_bull_share_ppm),
+        _optional_float(features.flow_imbalance_5s_ppm),
+        _optional_float(features.flow_imbalance_20s_ppm),
+        _optional_float(features.flow_imbalance_60s_ppm),
+        _flow_total_ppm(
+            features.bull_flow_5s_wei,
+            features.bear_flow_5s_wei,
+            observed_total,
+        ),
+        _flow_total_ppm(
+            features.bull_flow_20s_wei,
+            features.bear_flow_20s_wei,
+            observed_total,
+        ),
+        _flow_total_ppm(
+            features.bull_flow_60s_wei,
+            features.bear_flow_60s_wei,
+            observed_total,
+        ),
         float(features.bet_count),
         float(features.unique_bettors),
     )
 
 
-def _training_stats(vectors: tuple[tuple[float | None, ...], ...]) -> tuple[tuple[float, ...], tuple[float, ...]]:
+def _training_stats(
+    vectors: tuple[tuple[float | None, ...], ...],
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
     means: list[float] = []
     scales: list[float] = []
     for column in range(len(_FEATURE_NAMES)):
-        observed = [vector[column] for vector in vectors if vector[column] is not None]
-        values = [float(value) for value in observed]
+        values: list[float] = []
+        for vector in vectors:
+            value = vector[column]
+            if value is not None:
+                values.append(value)
         if not values:
             means.append(0.0)
             scales.append(1.0)
@@ -174,7 +199,8 @@ def build_oos_feature_conditioned_pool_projections(
                 target_vector,
             ),
         )
-        neighbors = tuple(row for row, _ in ranked[: min(resolved.neighbors, len(ranked))])
+        neighbor_count = min(resolved.neighbors, len(ranked))
+        neighbors = tuple(row for row, _ in ranked[:neighbor_count])
         ratios = tuple(_growth_ratios(row) for row in neighbors)
         bull_ratios = [ratio[0] for ratio in ratios if ratio is not None]
         bear_ratios = [ratio[1] for ratio in ratios if ratio is not None]
