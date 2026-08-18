@@ -21,7 +21,7 @@ class ExecutionIntentReport:
 
     @property
     def gate_ready(self) -> bool:
-        return self.unresolved == 0
+        return self.total > 0 and self.unresolved == 0
 
     def as_dict(self) -> dict[str, object]:
         return {
