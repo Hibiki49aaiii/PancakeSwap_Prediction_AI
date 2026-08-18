@@ -11,6 +11,7 @@ from .legacy_campaign import (
     LegacySupportingCampaignConfig,
     run_legacy_supporting_campaign,
 )
+from .legacy_economic_diagnostics import diagnose_legacy_pool_projection
 from .legacy_features import build_legacy_clickhouse_feature_rows
 from .legacy_microstructure import (
     MICROSTRUCTURE_HORIZONS_MS,
@@ -41,6 +42,7 @@ class LegacyMicrostructureComparisonReport:
     probability_delta: dict[str, float | None]
     v1_economics: dict[str, object]
     v2_economics: dict[str, object]
+    v2_pool_projection_diagnostics: dict[str, object]
     v2_feature_names: tuple[str, ...]
     v2_brier_skill_improved: bool
     v2_positive_oos_skill: bool
@@ -60,6 +62,7 @@ class LegacyMicrostructureComparisonReport:
             "probability_delta": self.probability_delta,
             "v1_economics": self.v1_economics,
             "v2_economics": self.v2_economics,
+            "v2_pool_projection_diagnostics": self.v2_pool_projection_diagnostics,
             "v2_feature_names": self.v2_feature_names,
             "v2_brier_skill_improved": self.v2_brier_skill_improved,
             "v2_positive_oos_skill": self.v2_positive_oos_skill,
@@ -147,9 +150,16 @@ def run_legacy_microstructure_comparison(
         decision_lead_seconds=config.features.feature_lead_seconds,
         config=config.pool,
     )
+    v2_signals = legacy_oos_to_backtest_signals(v2_model.signals)
     v2_economics = run_legacy_economic_benchmark(
         ordered,
-        legacy_oos_to_backtest_signals(v2_model.signals),
+        v2_signals,
+        projections,
+        config.economics,
+    )
+    pool_diagnostics = diagnose_legacy_pool_projection(
+        ordered,
+        v2_signals,
         projections,
         config.economics,
     )
@@ -199,6 +209,7 @@ def run_legacy_microstructure_comparison(
         },
         v1_economics=baseline.economic_summary,
         v2_economics=v2_summary,
+        v2_pool_projection_diagnostics=pool_diagnostics.as_dict(),
         v2_feature_names=v2_model.feature_names,
         v2_brier_skill_improved=brier_improved,
         v2_positive_oos_skill=positive_skill,
