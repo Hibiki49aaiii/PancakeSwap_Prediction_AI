@@ -204,7 +204,6 @@ def _config() -> LegacySupportingCampaignConfig:
 def test_legacy_supporting_campaign_binds_sources_and_never_becomes_authoritative() -> None:
     rounds, audit, source = _fixture()
     report = run_legacy_supporting_campaign(rounds, audit, source, _config())
-    payload = report.as_dict()
 
     assert report.authoritative is False
     assert report.manifest.authoritative is False
@@ -215,7 +214,7 @@ def test_legacy_supporting_campaign_binds_sources_and_never_becomes_authoritativ
     assert report.manifest.perp_sources[0].source_sha256 == "b" * 64
     assert len(report.manifest.digest) == 64
     assert len(report.evaluation_digest) == 64
-    assert payload["economic_summary"]["authoritative"] is False
+    assert report.economic_summary["authoritative"] is False
 
 
 def test_economic_cost_changes_evaluation_digest_not_source_campaign_digest() -> None:
