@@ -5,7 +5,9 @@ on:
     branches:
       - agent/v0.7-alpha-research
     paths:
+      - src/pancake_prediction/public_collector.py
       - src/pancake_prediction/recent_bootstrap.py
+      - tests/test_public_collector.py
       - tests/test_recent_bootstrap.py
       - scripts/run_recent_public_bootstrap.py
       - .github/workflows/recent-public-bootstrap.yml
