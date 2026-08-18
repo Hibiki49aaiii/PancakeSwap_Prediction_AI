@@ -79,6 +79,19 @@ class FakeDatasetResult:
             "chunks_loaded": 12,
             "max_spot_chunk_rows": 50_000,
             "max_perp_chunk_rows": 40_000,
+            "spot_query_start_ms": 1_000,
+            "perp_query_start_ms": None,
+            "query_end_ms": 2_000,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FakeCampaignManifest:
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "campaign_digest": "c" * 64,
+            "spot_sources": [{"source_sha256": "d" * 64}],
+            "perp_sources": [],
         }
 
 
@@ -277,12 +290,31 @@ def test_clickhouse_cli_dataset_summary_binds_canonical_inputs_and_assumptions(
         assert kwargs["chainlink_availability_lag_ms"] == 500
         return FakeDatasetResult()
 
+    def fake_manifest(
+        source: object,
+        received_inputs: object,
+        dataset: object,
+        assumptions: object,
+        **kwargs: object,
+    ) -> FakeCampaignManifest:
+        assert isinstance(source, FakeClient)
+        assert received_inputs is inputs
+        assert isinstance(dataset, FakeDatasetResult)
+        assert isinstance(assumptions, dict)
+        assert kwargs["spot_timestamp_unit"] == "auto"
+        assert kwargs["spot_availability_lag_ms"] == 25
+        assert kwargs["perp_timestamp_unit"] == "milliseconds"
+        assert kwargs["perp_availability_lag_ms"] == 40
+        assert kwargs["include_perp"] is False
+        return FakeCampaignManifest()
+
     monkeypatch.setattr(clickhouse_cli, "load_canonical_research_inputs", fake_load)
     monkeypatch.setattr(
         clickhouse_cli,
         "build_chunked_clickhouse_research_dataset",
         fake_build,
     )
+    monkeypatch.setattr(clickhouse_cli, "build_clickhouse_campaign_manifest", fake_manifest)
     args = [
         "dataset-summary",
         "--market",
@@ -309,4 +341,6 @@ def test_clickhouse_cli_dataset_summary_binds_canonical_inputs_and_assumptions(
     assert payload["assumptions"]["chainlink_availability_lag_ms"] == 500
     assert payload["dataset"]["research_feature_rows"] == 100
     assert payload["dataset"]["chunks_loaded"] == 12
+    assert payload["campaign_manifest"]["campaign_digest"] == "c" * 64
+    assert payload["campaign_manifest"]["spot_sources"][0]["source_sha256"] == "d" * 64
     assert "dataset-secret" not in output
