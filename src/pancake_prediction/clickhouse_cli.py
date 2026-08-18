@@ -14,6 +14,8 @@ from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_tr
 from .contracts import MARKETS
 from .research_inputs import load_canonical_research_inputs
 
+_TIMESTAMP_UNITS = ("auto", "milliseconds", "microseconds")
+
 
 def _print_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
@@ -47,7 +49,13 @@ def _schema_or_error(
 def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--market", choices=sorted(MARKETS), required=True)
     parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--spot-timestamp-unit", choices=_TIMESTAMP_UNITS, default="auto")
     parser.add_argument("--spot-availability-lag-ms", type=int, required=True)
+    parser.add_argument(
+        "--perp-timestamp-unit",
+        choices=_TIMESTAMP_UNITS,
+        default="milliseconds",
+    )
     parser.add_argument("--perp-availability-lag-ms", type=int, default=0)
     parser.add_argument("--no-perp", action="store_true")
     parser.add_argument("--chunk-span-ms", type=int, default=3_600_000)
@@ -87,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--venue", choices=("spot", "um_futures"), required=True)
     ingest.add_argument(
         "--timestamp-unit",
-        choices=("auto", "milliseconds", "microseconds"),
+        choices=_TIMESTAMP_UNITS,
         default="auto",
     )
     ingest.add_argument("--availability-lag-ms", type=int, required=True)
@@ -99,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     window.add_argument("--market", choices=sorted(MARKETS), required=True)
     window.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    window.add_argument("--timestamp-unit", choices=_TIMESTAMP_UNITS, required=True)
     window.add_argument("--availability-lag-ms", type=int, required=True)
     window.add_argument("--start-ms", type=int, required=True)
     window.add_argument("--end-ms", type=int, required=True)
@@ -113,7 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _dataset_assumptions(args: argparse.Namespace) -> dict[str, object]:
     return {
+        "spot_timestamp_unit": str(args.spot_timestamp_unit),
         "spot_availability_lag_ms": int(args.spot_availability_lag_ms),
+        "perp_timestamp_unit": str(args.perp_timestamp_unit),
         "perp_availability_lag_ms": int(args.perp_availability_lag_ms),
         "include_perp": not bool(args.no_perp),
         "chunk_span_ms": int(args.chunk_span_ms),
@@ -170,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             client,
             market=str(args.market),
             venue=cast(ArchiveVenue, str(args.venue)),
+            timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
             availability_lag_ms=int(args.availability_lag_ms),
             start_timestamp_ms=int(args.start_ms),
             end_timestamp_ms=int(args.end_ms),
@@ -178,6 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             {
                 "market": str(args.market),
                 "venue": str(args.venue),
+                "timestamp_unit": str(args.timestamp_unit),
                 "rows": len(trades),
                 "first_aggregate_trade_id": (
                     None if not trades else trades[0].aggregate_trade_id
@@ -198,7 +211,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             inputs.replay,
             inputs.events,
             client,
+            spot_timestamp_unit=cast(TimestampUnit, str(args.spot_timestamp_unit)),
             spot_availability_lag_ms=int(args.spot_availability_lag_ms),
+            perp_timestamp_unit=cast(TimestampUnit, str(args.perp_timestamp_unit)),
             perp_availability_lag_ms=int(args.perp_availability_lag_ms),
             include_perp=not bool(args.no_perp),
             chunk_span_ms=int(args.chunk_span_ms),
