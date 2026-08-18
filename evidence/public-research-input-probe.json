@@ -28,108 +28,279 @@
     }
   ],
   "historical_probe_block": 10333826,
+  "log_replay_ready_endpoints": [],
   "prediction_contract": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
-  "probe_version": 2,
+  "probe_version": 3,
   "rpc_results": [
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 876,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 1448,
       "endpoint": "https://bsc-dataseed.bnbchain.org",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592232
+      "latest_block": 116612219,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1136,
+      "creation_provenance": null,
+      "creation_transaction_ready": false,
+      "elapsed_ms": 2667,
       "endpoint": "https://bsc-dataseed-public.bnbchain.org",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"not supported\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"not supported\"}",
+        "creation_transaction": "RuntimeError: creation transaction lookup did not return an object",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592233
+      "latest_block": 116612222,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1116,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 2225,
       "endpoint": "https://bsc-dataseed.nariox.org",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592237
+      "latest_block": 116612229,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1259,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 2187,
       "endpoint": "https://bsc-dataseed.defibit.io",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592240
+      "latest_block": 116612234,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 1211,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 2169,
       "endpoint": "https://bsc-dataseed.ninicoin.io",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592243
+      "latest_block": 116612239,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 789,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 1438,
       "endpoint": "https://bsc.nodereal.io",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"missing trie node\"}",
+        "historical_logs": "RuntimeError: {\"code\":-32005,\"message\":\"limit exceeded\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592244
+      "latest_block": 116612243,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": null,
-      "elapsed_ms": 76,
+      "creation_provenance": null,
+      "creation_transaction_ready": false,
+      "elapsed_ms": 87,
       "endpoint": "https://bnb.rpc.subquery.network/public",
       "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
+      "errors": {},
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": null
+      "latest_block": null,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": null,
-      "elapsed_ms": 321,
+      "creation_provenance": null,
+      "creation_transaction_ready": false,
+      "elapsed_ms": 469,
       "endpoint": "https://rpc.ankr.com/bsc",
       "error": "RuntimeError: {\"code\":-32000,\"message\":\"Unauthorized: You must authenticate your request with an API key. Create an account on https://www.ankr.com/rpc/ and generate your personal API key for free.\"}",
+      "errors": {},
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": null
+      "latest_block": null,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 527,
+      "creation_provenance": {
+        "admin_address": "0x56b81bff33110b7f810828ec35f0049aa9078d8f",
+        "block_number": 10333825,
+        "buffer_seconds": 30,
+        "contract_address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "creation_input_sha256": "9f6f8c32c0ef4b95efb79f6689e665428863111bb4df4f4f34001f28189fc6af",
+        "interval_seconds": 300,
+        "market": "BNBUSD",
+        "min_bet_amount_wei": 1000000000000000,
+        "operator_address": "0xf5b4c4e9e8fb4b0cc961197b6c512c66dcf55e01",
+        "oracle_address": "0xd276fcf34d54a926773c399ebaa772c12ec394ac",
+        "oracle_update_allowance_seconds": 300,
+        "transaction_hash": "0x9c223f125a698edadd81665082f4de89a20d44ad267e83cf2210a28225a5c89a",
+        "treasury_fee_bps": 300
+      },
+      "creation_transaction_ready": true,
+      "elapsed_ms": 958,
       "endpoint": "https://bsc-rpc.publicnode.com",
-      "error": "RuntimeError: HTTP 403: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode\"},\"id\":1}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: HTTP 403: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode\"},\"id\":1}",
+        "historical_logs": "RuntimeError: HTTP 403: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode\"},\"id\":1}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592247
+      "latest_block": 116612247,
+      "log_replay_ready": false
     },
     {
       "archive_ready": false,
       "chain_id": 56,
-      "elapsed_ms": 953,
+      "creation_provenance": null,
+      "creation_transaction_ready": false,
+      "elapsed_ms": 2286,
       "endpoint": "https://public.1rpc.io/bnb",
-      "error": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}",
+      "error": null,
+      "errors": {
+        "archive_state": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}",
+        "creation_transaction": "RuntimeError: creation transaction lookup did not return an object",
+        "historical_logs": "RuntimeError: {\"code\":-32000,\"message\":\"header not found\"}"
+      },
       "historical_code": false,
+      "historical_log_count": null,
+      "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116592248
+      "latest_block": 116612248,
+      "log_replay_ready": false
     }
   ]
 }
