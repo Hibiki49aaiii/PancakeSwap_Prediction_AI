@@ -23,14 +23,14 @@ def _intent(store: ExecutionIntentStore, key: str) -> int:
     ).id
 
 
-def test_empty_execution_report_is_gate_ready(tmp_path: Path) -> None:
+def test_empty_execution_report_is_not_gate_ready(tmp_path: Path) -> None:
     store = _store(tmp_path)
     report = build_execution_intent_report(store.path)
     assert report.total == 0
     assert report.resolved == 0
     assert report.unresolved == 0
     assert report.unresolved_ids == ()
-    assert report.gate_ready is True
+    assert report.gate_ready is False
     assert report.as_dict()["state_counts"] == {}
 
 
