@@ -1,0 +1,81 @@
+name: historical-bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: Prediction market
+        required: true
+        default: BNBUSD
+        type: choice
+        options:
+          - BNBUSD
+          - BTCUSD
+          - ETHUSD
+      confirmations:
+        description: Confirmations behind head
+        required: true
+        default: '64'
+        type: string
+      chunk_size:
+        description: eth_getLogs block chunk size
+        required: true
+        default: '2000'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      BSC_RPC_URL: ${{ secrets.BSC_ARCHIVE_RPC_URL }}
+      MARKET: ${{ inputs.market }}
+      CONFIRMATIONS: ${{ inputs.confirmations }}
+      CHUNK_SIZE: ${{ inputs.chunk_size }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require archive RPC secret
+        run: |
+          if [ -z "$BSC_RPC_URL" ]; then
+            echo 'BSC_ARCHIVE_RPC_URL repository secret is not configured.' >&2
+            exit 2
+          fi
+      - name: Install project
+        run: pip install -e .
+      - name: Create artifact directory
+        run: mkdir -p artifacts
+      - name: Historical archive preflight
+        run: |
+          pcs-prediction historical-preflight \
+            --market "$MARKET" \
+            > artifacts/historical-preflight.json
+      - name: Bootstrap canonical history
+        id: bootstrap
+        run: |
+          pcs-prediction historical-bootstrap \
+            --market "$MARKET" \
+            --db "artifacts/${MARKET,,}-history.sqlite" \
+            --confirmations "$CONFIRMATIONS" \
+            --chunk-size "$CHUNK_SIZE" \
+            > artifacts/historical-bootstrap.json
+      - name: Validate active oracle timeline
+        if: steps.bootstrap.outcome == 'success'
+        run: |
+          pcs-prediction oracle-history-report \
+            --market "$MARKET" \
+            --db "artifacts/${MARKET,,}-history.sqlite" \
+            > artifacts/oracle-history-report.json
+      - name: Upload canonical history evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-bootstrap-${{ inputs.market }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30
