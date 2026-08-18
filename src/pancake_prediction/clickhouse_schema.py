@@ -8,6 +8,7 @@ from .clickhouse import ClickHouseJsonSource
 _REQUIRED_BINANCE_COLUMNS: dict[str, str] = {
     "venue": "LowCardinality(String)",
     "symbol": "LowCardinality(String)",
+    "timestamp_unit": "LowCardinality(String)",
     "event_timestamp_ms": "UInt64",
     "trade_timestamp_ms": "UInt64",
     "aggregate_trade_id": "UInt64",
@@ -18,7 +19,9 @@ _REQUIRED_BINANCE_COLUMNS: dict[str, str] = {
     "availability_lag_ms": "UInt32",
     "ingest_version": "UInt64",
 }
-_REQUIRED_SORTING_KEY = "venue,symbol,availability_lag_ms,aggregate_trade_id"
+_REQUIRED_SORTING_KEY = (
+    "venue,symbol,timestamp_unit,availability_lag_ms,aggregate_trade_id"
+)
 
 
 def _normalize_expression(value: str) -> str:
