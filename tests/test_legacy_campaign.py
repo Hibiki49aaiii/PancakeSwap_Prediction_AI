@@ -7,7 +7,6 @@ import pytest
 
 from pancake_prediction.absolute_pool_projection import AbsolutePoolProjectionConfig
 from pancake_prediction.binance import AggTrade
-from pancake_prediction.campaign_evaluation import EconomicCampaignConfig
 from pancake_prediction.clickhouse import QueryParameter
 from pancake_prediction.legacy_benchmark import LegacyEconomicBenchmarkConfig
 from pancake_prediction.legacy_campaign import (
@@ -95,7 +94,7 @@ def _round(epoch: int) -> LegacyRoundRecord:
         total_amount_wei=2 * 10**18,
         bull_amount_wei=(12 if bull else 8) * 10**17,
         bear_amount_wei=(8 if bull else 12) * 10**17,
-        reward_base_cal_amount_wei=(12 if bull else 12) * 10**17,
+        reward_base_cal_amount_wei=12 * 10**17,
         reward_amount_wei=194 * 10**16,
         oracle_called=True,
     )
@@ -219,16 +218,27 @@ def test_legacy_supporting_campaign_binds_sources_and_never_becomes_authoritativ
     assert payload["economic_summary"]["authoritative"] is False
 
 
-def test_legacy_campaign_digest_changes_with_bound_economic_cost() -> None:
+def test_economic_cost_changes_evaluation_digest_not_source_campaign_digest() -> None:
     rounds, audit, source = _fixture()
     report = run_legacy_supporting_campaign(rounds, audit, source, _config())
     changed_economics = replace(
-        report.manifest.economic_config,
-        bet_gas_wei=report.manifest.economic_config.bet_gas_wei + 1,
+        report.economic_config,
+        bet_gas_wei=report.economic_config.bet_gas_wei + 1,
     )
-    changed_manifest = replace(report.manifest, economic_config=changed_economics)
+    changed_report = replace(
+        report,
+        economic_config=changed_economics,
+        economic_summary={
+            **report.economic_summary,
+            "config": {
+                **report.economic_summary["config"],
+                "bet_gas_wei": changed_economics.bet_gas_wei,
+            },
+        },
+    )
 
-    assert changed_manifest.digest != report.manifest.digest
+    assert changed_report.manifest.digest == report.manifest.digest
+    assert changed_report.evaluation_digest != report.evaluation_digest
 
 
 def test_legacy_campaign_rejects_timing_and_purge_mismatch() -> None:
