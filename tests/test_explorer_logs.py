@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -145,7 +146,7 @@ def test_hybrid_explorer_rpc_rejects_chain_mismatch() -> None:
         hybrid.chain_id()
 
 
-def test_existing_collector_rejects_explorer_block_hash_mismatch(tmp_path) -> None:
+def test_existing_collector_rejects_explorer_block_hash_mismatch(tmp_path: Path) -> None:
     explorer = FakeEtherscan({(TOPIC_A, 1): [_raw_log(block_hash=OTHER_BLOCK_HASH)]})
     hybrid = HybridExplorerRpc(CanonicalRpcFixture(), explorer)
     store = EventStore(tmp_path / "events.sqlite3")
@@ -161,7 +162,7 @@ def test_existing_collector_rejects_explorer_block_hash_mismatch(tmp_path) -> No
         )
 
 
-def test_transport_error_does_not_leak_api_key(monkeypatch) -> None:
+def test_transport_error_does_not_leak_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     key = "top-secret-api-key"
     client = EtherscanV2LogsClient(key, retries=1)
 
