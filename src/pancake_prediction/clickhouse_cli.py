@@ -13,6 +13,10 @@ from .campaign_evaluation import (
     EconomicCampaignConfig,
     run_source_bound_economic_campaign,
 )
+from .campaign_sensitivity import (
+    parse_sensitivity_scenarios,
+    run_source_bound_economic_sensitivity,
+)
 from .clickhouse import ClickHouseHttpClient, ingest_binance_archive, load_binance_trade_window
 from .clickhouse_dataset import (
     ChunkedResearchDatasetBuildResult,
@@ -90,12 +94,7 @@ def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--oracle-hazard-min-intervals", type=int, default=8)
 
 
-def _add_economic_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--stake-wei", type=int, required=True)
-    parser.add_argument("--bet-gas-wei", type=int, required=True)
-    parser.add_argument("--claim-gas-wei", type=int, required=True)
-    parser.add_argument("--inclusion-latency-seconds", type=int, required=True)
-    parser.add_argument("--min-expected-value-wei", type=int, default=0)
+def _add_shared_evaluation_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--initial-interval-seconds", type=int, default=300)
     parser.add_argument("--initial-treasury-fee-bps", type=int, default=300)
     parser.add_argument("--initial-buffer-seconds", type=int, default=30)
@@ -106,6 +105,15 @@ def _add_economic_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--calibration-rounds", type=int, default=50)
     parser.add_argument("--pool-min-train-rounds", type=int, default=50)
     parser.add_argument("--pool-window-rounds", type=int, default=500)
+
+
+def _add_economic_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--stake-wei", type=int, required=True)
+    parser.add_argument("--bet-gas-wei", type=int, required=True)
+    parser.add_argument("--claim-gas-wei", type=int, required=True)
+    parser.add_argument("--inclusion-latency-seconds", type=int, required=True)
+    parser.add_argument("--min-expected-value-wei", type=int, default=0)
+    _add_shared_evaluation_arguments(parser)
     parser.add_argument("--run-ablation", action="store_true")
 
 
@@ -163,6 +171,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_dataset_arguments(evaluate)
     _add_economic_arguments(evaluate)
+
+    sensitivity = subparsers.add_parser(
+        "campaign-sensitivity",
+        help="evaluate one source-bound campaign across explicit economic scenarios",
+    )
+    _add_dataset_arguments(sensitivity)
+    sensitivity.add_argument("--scenario-file", type=Path, required=True)
+    _add_shared_evaluation_arguments(sensitivity)
     return parser
 
 
@@ -239,13 +255,13 @@ def _build_dataset_bundle(
     )
 
 
-def _economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
+def _base_economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
     return EconomicCampaignConfig(
-        stake_wei=int(args.stake_wei),
-        bet_gas_wei=int(args.bet_gas_wei),
-        claim_gas_wei=int(args.claim_gas_wei),
-        inclusion_latency_seconds=int(args.inclusion_latency_seconds),
-        min_expected_value_wei=int(args.min_expected_value_wei),
+        stake_wei=1,
+        bet_gas_wei=0,
+        claim_gas_wei=0,
+        inclusion_latency_seconds=0,
+        min_expected_value_wei=0,
         decision_lead_seconds=int(args.feature_lead_seconds),
         initial_interval_seconds=int(args.initial_interval_seconds),
         initial_treasury_fee_bps=int(args.initial_treasury_fee_bps),
@@ -257,8 +273,46 @@ def _economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
         calibration_rounds=int(args.calibration_rounds),
         pool_min_train_rounds=int(args.pool_min_train_rounds),
         pool_window_rounds=int(args.pool_window_rounds),
+        run_ablation=False,
+    )
+
+
+def _economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
+    base = _base_economic_config(args)
+    return EconomicCampaignConfig(
+        stake_wei=int(args.stake_wei),
+        bet_gas_wei=int(args.bet_gas_wei),
+        claim_gas_wei=int(args.claim_gas_wei),
+        inclusion_latency_seconds=int(args.inclusion_latency_seconds),
+        min_expected_value_wei=int(args.min_expected_value_wei),
+        decision_lead_seconds=base.decision_lead_seconds,
+        initial_interval_seconds=base.initial_interval_seconds,
+        initial_treasury_fee_bps=base.initial_treasury_fee_bps,
+        initial_buffer_seconds=base.initial_buffer_seconds,
+        min_train_rounds=base.min_train_rounds,
+        test_rounds=base.test_rounds,
+        purge_rounds=base.purge_rounds,
+        embargo_rounds=base.embargo_rounds,
+        calibration_rounds=base.calibration_rounds,
+        pool_min_train_rounds=base.pool_min_train_rounds,
+        pool_window_rounds=base.pool_window_rounds,
         run_ablation=bool(args.run_ablation),
     )
+
+
+def _load_sensitivity_scenarios(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> tuple[object, ...]:
+    try:
+        payload = json.loads(Path(args.scenario_file).read_text(encoding="utf-8"))
+        scenarios = parse_sensitivity_scenarios(
+            payload,
+            base_config=_base_economic_config(args),
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(f"invalid sensitivity scenario file: {exc}")
+    return scenarios
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -321,7 +375,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    if args.command in {"dataset-summary", "campaign-evaluate"}:
+    if args.command in {
+        "dataset-summary",
+        "campaign-evaluate",
+        "campaign-sensitivity",
+    }:
         _schema_or_error(parser, client)
         bundle = _build_dataset_bundle(args, client)
         common_payload: dict[str, object] = {
@@ -333,14 +391,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "dataset-summary":
             _print_json(common_payload)
             return 0
-        evaluation = run_source_bound_economic_campaign(
+        if args.command == "campaign-evaluate":
+            evaluation = run_source_bound_economic_campaign(
+                bundle.inputs.replay,
+                bundle.inputs.events,
+                bundle.dataset.dataset.research_feature_rows,
+                campaign_digest=bundle.manifest.digest,
+                config=_economic_config(args),
+            )
+            common_payload["evaluation"] = evaluation.as_dict()
+            _print_json(common_payload)
+            return 0
+
+        sensitivity = run_source_bound_economic_sensitivity(
             bundle.inputs.replay,
             bundle.inputs.events,
             bundle.dataset.dataset.research_feature_rows,
             campaign_digest=bundle.manifest.digest,
-            config=_economic_config(args),
+            scenarios=_load_sensitivity_scenarios(parser, args),
         )
-        common_payload["evaluation"] = evaluation.as_dict()
+        common_payload["sensitivity"] = sensitivity.as_dict()
         _print_json(common_payload)
         return 0
 
