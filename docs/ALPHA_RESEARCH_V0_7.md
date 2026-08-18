@@ -89,7 +89,39 @@ The ledger is research evidence. It contains no key material and has no signing 
 
 ## ClickHouse
 
-`sql/clickhouse/v0_7_core.sql` defines the first high-volume analytical schema for Binance trades, Chainlink updates, Pancake pool snapshots, feature rows, and research predictions. SQLite/on-chain raw evidence remains the immutable/reorg-aware source for BSC reconstruction; ClickHouse is the normalized analytical plane.
+`sql/clickhouse/v0_7_core.sql` defines the high-volume analytical schema for Binance trades, Chainlink updates, Pancake pool snapshots, feature rows, and research predictions. SQLite/on-chain raw evidence remains the immutable/reorg-aware source for BSC reconstruction; ClickHouse is the normalized analytical plane.
+
+Binance archive ingestion is bounded-memory. `clickhouse.py` verifies the official checksum before any insert, streams the ZIP/CSV row by row, and sends bounded JSONEachRow batches instead of materializing the archive. The default batch size is 50,000 rows.
+
+The Binance table uses `ReplacingMergeTree(ingest_version)` keyed by venue, symbol, latency assumption, and aggregate-trade ID. This makes interrupted/repeated archive loads convergent after merges. Research reads use `FINAL` so retry duplicates cannot temporarily inflate order flow before background merging finishes.
+
+Connection secrets are supplied through environment variables and are not printed:
+
+```bash
+export CLICKHOUSE_URL='http://127.0.0.1:8123'
+export CLICKHOUSE_DATABASE='default'
+export CLICKHOUSE_USER='default'
+export CLICKHOUSE_PASSWORD='...'
+
+pcs-clickhouse ping
+
+pcs-clickhouse binance-ingest \
+  --market BNBUSD \
+  --archive BNBUSDT-aggTrades-2026-08-01.zip \
+  --checksum BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
+  --venue spot \
+  --timestamp-unit auto \
+  --availability-lag-ms 25
+
+pcs-clickhouse binance-window \
+  --market BNBUSD \
+  --venue spot \
+  --availability-lag-ms 25 \
+  --start-ms 1785542400000 \
+  --end-ms 1785542460000
+```
+
+A latency assumption is part of the stored logical key. Separate zero-lag and positive-lag campaigns therefore remain distinct and can be compared without rewriting the same rows in place.
 
 ## Acceptance criteria before richer models
 
