@@ -145,8 +145,8 @@ def parse_archive_aggtrade_row(
 def _looks_like_header(row: Sequence[str]) -> bool:
     if not row:
         return False
-    first = row[0].strip().lower().replace(" ", "")
-    return first in {"aggtradeid", "aggregatetradeid", "aggregate_tradeid"}
+    first = row[0].strip().lower().replace(" ", "").replace("_", "")
+    return first in {"aggtradeid", "aggregatetradeid"}
 
 
 def _iter_rows(handle: TextIO) -> Iterator[list[str]]:
