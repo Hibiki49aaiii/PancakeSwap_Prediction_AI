@@ -26,6 +26,9 @@ class ChunkedResearchDatasetBuildResult:
     chunks_loaded: int
     max_spot_chunk_rows: int
     max_perp_chunk_rows: int
+    spot_query_start_ms: int | None
+    perp_query_start_ms: int | None
+    query_end_ms: int | None
 
     def as_dict(self) -> dict[str, object]:
         payload = self.dataset.as_dict()
@@ -35,6 +38,9 @@ class ChunkedResearchDatasetBuildResult:
                 "chunks_loaded": self.chunks_loaded,
                 "max_spot_chunk_rows": self.max_spot_chunk_rows,
                 "max_perp_chunk_rows": self.max_perp_chunk_rows,
+                "spot_query_start_ms": self.spot_query_start_ms,
+                "perp_query_start_ms": self.perp_query_start_ms,
+                "query_end_ms": self.query_end_ms,
             }
         )
         return payload
@@ -124,6 +130,9 @@ def build_chunked_clickhouse_research_dataset(
     skipped_market_data = len(pool_rows) - sum(len(rows) for _, rows in groups)
     max_spot_rows = 0
     max_perp_rows = 0
+    campaign_spot_start: int | None = None
+    campaign_perp_start: int | None = None
+    campaign_end: int | None = None
 
     for chunk_start, rows in groups:
         chunk_end = chunk_start + chunk_span_ms
@@ -135,6 +144,19 @@ def build_chunked_clickhouse_research_dataset(
             0,
             chunk_start - _history_ms(flow_lookback_ms, max_perp_age_ms),
         )
+        campaign_spot_start = (
+            spot_query_start
+            if campaign_spot_start is None
+            else min(campaign_spot_start, spot_query_start)
+        )
+        if include_perp:
+            campaign_perp_start = (
+                perp_query_start
+                if campaign_perp_start is None
+                else min(campaign_perp_start, perp_query_start)
+            )
+        campaign_end = chunk_end if campaign_end is None else max(campaign_end, chunk_end)
+
         spot_trades = load_binance_trade_window(
             source,
             market=replay.market,
@@ -219,4 +241,7 @@ def build_chunked_clickhouse_research_dataset(
         chunks_loaded=len(groups),
         max_spot_chunk_rows=max_spot_rows,
         max_perp_chunk_rows=max_perp_rows,
+        spot_query_start_ms=campaign_spot_start,
+        perp_query_start_ms=campaign_perp_start,
+        query_end_ms=campaign_end,
     )
