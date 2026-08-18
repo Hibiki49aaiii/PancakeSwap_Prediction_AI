@@ -21,6 +21,10 @@ from pancake_prediction.stage5_evidence import (
 
 SOURCE_SHA = "12" * 20
 BLOCK_HASH = "0x" + "ab" * 32
+EPOCH = 100
+ROUND_START = 1_000
+FORK_TIMESTAMP = 1_100
+ROUND_LOCK = 1_300
 BULL_SENDER = "0x" + "11" * 20
 BEAR_SENDER = "0x" + "22" * 20
 OTHER_SENDER = "0x" + "33" * 20
@@ -61,7 +65,8 @@ def _finalize_bet(
     )
     store.reserve_nonce(intent.id, 0)
     store.begin_submission(intent.id)
-    store.mark_submitted(intent.id, _tx_hash(epoch))
+    side_offset = 1 if side is BetSide.BULL else 2
+    store.mark_submitted(intent.id, _tx_hash(epoch * 10 + side_offset))
     store.set_reconciliation_state(intent.id, IntentState.FINALIZED)
     return intent.id
 
@@ -180,9 +185,13 @@ def _evidence(
         recorded_at="2026-08-19T01:50:00+09:00",
         campaign_id="test-campaign",
         market="BNBUSD",
+        epoch=EPOCH,
+        round_start_timestamp=ROUND_START,
+        round_lock_timestamp=ROUND_LOCK,
         chain_id=56,
         fork_block_number=12_345_678,
         fork_block_hash=BLOCK_HASH,
+        fork_block_timestamp=FORK_TIMESTAMP,
         anvil_version="anvil 1.7.1",
         ledger_sha256=ledger_sha256(path),
         scenarios=scenarios,
@@ -190,8 +199,8 @@ def _evidence(
 
 
 def _complete_campaign(store: ExecutionIntentStore) -> dict[str, int]:
-    _finalize_bet(store, sender=BULL_SENDER, epoch=100, side=BetSide.BULL)
-    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _finalize_bet(store, sender=BULL_SENDER, epoch=EPOCH, side=BetSide.BULL)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH, side=BetSide.BEAR)
     return _record_scenario_journal(store)
 
 
@@ -209,12 +218,27 @@ def test_complete_observed_campaign_is_ready(tmp_path: Path) -> None:
     assert result.finalized_bear == 1
 
 
+def test_bull_and_bear_must_use_evidence_epoch(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _finalize_bet(store, sender=BULL_SENDER, epoch=EPOCH, side=BetSide.BULL)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH + 1, side=BetSide.BEAR)
+    _record_scenario_journal(store)
+
+    result = evaluate_stage5b_fork_gate(
+        ledger_path=store.path,
+        evidence=_evidence(store.path),
+    )
+    assert result.finalized_bull == 1
+    assert result.finalized_bear == 0
+    assert "finalized_bear_missing" in result.blockers
+
+
 def test_json_claim_without_ledger_scenario_evidence_cannot_clear_gate(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    _finalize_bet(store, sender=BULL_SENDER, epoch=100, side=BetSide.BULL)
-    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _finalize_bet(store, sender=BULL_SENDER, epoch=EPOCH, side=BetSide.BULL)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH, side=BetSide.BEAR)
 
     result = evaluate_stage5b_fork_gate(
         ledger_path=store.path,
@@ -275,12 +299,12 @@ def test_final_state_without_submitted_attempt_cannot_fake_bull(tmp_path: Path) 
         store,
         market="BNBUSD",
         sender=BULL_SENDER,
-        epoch=100,
+        epoch=EPOCH,
         side=BetSide.BULL,
         stake_wei=1,
     )
     store.set_reconciliation_state(fake.id, IntentState.FINALIZED)
-    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH, side=BetSide.BEAR)
 
     result = evaluate_stage5b_fork_gate(
         ledger_path=store.path,
@@ -295,14 +319,14 @@ def test_wrong_target_cannot_fake_finalized_bull(tmp_path: Path) -> None:
         idempotency_key="fake-bull",
         sender=OTHER_SENDER,
         target=WRONG_TARGET,
-        calldata=encode_bet_calldata(BetSide.BULL, 100),
+        calldata=encode_bet_calldata(BetSide.BULL, EPOCH),
         value_wei=1,
     )
     store.reserve_nonce(fake.id, 0)
     store.begin_submission(fake.id)
     store.mark_submitted(fake.id, _tx_hash(999))
     store.set_reconciliation_state(fake.id, IntentState.FINALIZED)
-    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH, side=BetSide.BEAR)
 
     result = evaluate_stage5b_fork_gate(
         ledger_path=store.path,
@@ -317,14 +341,14 @@ def test_zero_value_cannot_fake_finalized_bull(tmp_path: Path) -> None:
         idempotency_key="zero-bull",
         sender=OTHER_SENDER,
         target="0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA",
-        calldata=encode_bet_calldata(BetSide.BULL, 100),
+        calldata=encode_bet_calldata(BetSide.BULL, EPOCH),
         value_wei=0,
     )
     store.reserve_nonce(fake.id, 0)
     store.begin_submission(fake.id)
     store.mark_submitted(fake.id, _tx_hash(998))
     store.set_reconciliation_state(fake.id, IntentState.FINALIZED)
-    _finalize_bet(store, sender=BEAR_SENDER, epoch=101, side=BetSide.BEAR)
+    _finalize_bet(store, sender=BEAR_SENDER, epoch=EPOCH, side=BetSide.BEAR)
 
     result = evaluate_stage5b_fork_gate(
         ledger_path=store.path,
@@ -340,7 +364,7 @@ def test_unresolved_intent_blocks_even_with_bull_and_bear(tmp_path: Path) -> Non
         store,
         market="BNBUSD",
         sender=OTHER_SENDER,
-        epoch=102,
+        epoch=EPOCH,
         side=BetSide.BULL,
         stake_wei=1,
     )
@@ -401,7 +425,7 @@ def test_claim_digest_binds_origin_and_claim_metadata(tmp_path: Path) -> None:
         Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
 
 
-def test_claim_digest_binds_fork_block_hash_and_anvil_version(tmp_path: Path) -> None:
+def test_claim_digest_binds_fork_state_and_anvil_version(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _complete_campaign(store)
     payload = _evidence(store.path).as_dict()
@@ -411,9 +435,41 @@ def test_claim_digest_binds_fork_block_hash_and_anvil_version(tmp_path: Path) ->
         Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
 
     payload = _evidence(store.path).as_dict()
+    payload["fork_block_timestamp"] = FORK_TIMESTAMP + 1
+    with pytest.raises(ValueError, match="claim_sha256"):
+        Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
+
+    payload = _evidence(store.path).as_dict()
     payload["anvil_version"] = "anvil other-version"
     with pytest.raises(ValueError, match="claim_sha256"):
         Stage5ForkEvidence.from_json_bytes(json.dumps(payload).encode())
+
+
+def test_evidence_rejects_fork_outside_betting_window(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(ValueError, match="inside the betting window"):
+        Stage5ForkEvidence.create(
+            origin=EvidenceOrigin.OBSERVED,
+            source_sha=SOURCE_SHA,
+            recorded_at="2026-08-19T01:50:00+09:00",
+            campaign_id="bad-window",
+            market="BNBUSD",
+            epoch=EPOCH,
+            round_start_timestamp=ROUND_START,
+            round_lock_timestamp=ROUND_LOCK,
+            chain_id=56,
+            fork_block_number=12_345_678,
+            fork_block_hash=BLOCK_HASH,
+            fork_block_timestamp=ROUND_LOCK,
+            anvil_version="anvil 1.7.1",
+            ledger_sha256=ledger_sha256(store.path),
+            scenarios={
+                "restart_recovery": True,
+                "dropped_or_replaced_recovery": True,
+                "reorg_reconciliation": True,
+                "non_loopback_rejection": True,
+            },
+        )
 
 
 def test_non_boolean_scenario_is_rejected(tmp_path: Path) -> None:
