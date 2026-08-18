@@ -130,16 +130,15 @@ def test_source_bound_campaign_runs_purged_probability_and_economic_layers() -> 
         campaign_digest="b" * 64,
         config=_config(),
     )
-    payload = report.as_dict()
     assert report.campaign_digest == "b" * 64
     assert report.fold_count > 0
     assert report.direction_signal_count > 0
     assert report.pool_projection_count > 0
     assert report.joint_epoch_count > 0
-    assert payload["probability_metrics"]["n_scored"] > 0
-    assert payload["backtest_summary"]["trade_count"] > 0
-    assert "trades" not in payload["backtest_summary"]
-    assert len(payload["evaluation_digest"]) == 64
+    assert int(str(report.probability_metrics["n_scored"])) > 0
+    assert int(str(report.backtest_summary["trade_count"])) > 0
+    assert "trades" not in report.backtest_summary
+    assert len(report.evaluation_digest) == 64
 
 
 def test_evaluation_digest_binds_explicit_cost_and_latency_assumptions() -> None:
