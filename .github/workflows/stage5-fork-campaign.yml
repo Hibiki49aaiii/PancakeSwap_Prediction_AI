@@ -7,11 +7,15 @@ on:
       - agent/v0.7-alpha-research
     paths:
       - .github/workflows/stage5-fork-campaign.yml
+      - pyproject.toml
       - scripts/discover_stage5_fork_block.py
       - scripts/run_stage5_fork_campaign.py
       - scripts/verify_stage5_fork_evidence.py
+      - src/pancake_prediction/abi.py
+      - src/pancake_prediction/contracts.py
       - src/pancake_prediction/execution_intent.py
       - src/pancake_prediction/execution_report.py
+      - src/pancake_prediction/fork_discovery.py
       - src/pancake_prediction/prediction_preflight.py
       - src/pancake_prediction/prediction_tx.py
       - src/pancake_prediction/rpc.py
@@ -131,6 +135,18 @@ jobs:
             --source-sha "$GITHUB_SHA" \
             > artifacts/stage5b-verification.json
 
+      - name: Collect Anvil diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [ -f /tmp/stage5-anvil.log ]; then
+            cp /tmp/stage5-anvil.log artifacts/stage5-anvil.log
+          fi
+          if [ -f /tmp/stage5-anvil.pid ]; then
+            kill "$(cat /tmp/stage5-anvil.pid)" 2>/dev/null || true
+          fi
+
       - name: Upload observed campaign evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -142,5 +158,6 @@ jobs:
             artifacts/stage5b-evidence.json
             artifacts/stage5b-campaign-summary.json
             artifacts/stage5b-verification.json
+            artifacts/stage5-anvil.log
           if-no-files-found: warn
           retention-days: 30
