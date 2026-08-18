@@ -20,6 +20,9 @@ PAUSED_SELECTOR = "0x5c975abb"
 OWNERSHIP_TRANSFERRED_TOPIC0 = (
     "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0"
 )
+PREDICTION_V2_SUBGRAPH = (
+    "https://api.thegraph.com/subgraphs/name/pancakeswap/prediction-v2"
+)
 
 PUBLIC_BSC_ENDPOINTS = (
     "https://bsc-dataseed.bnbchain.org",
@@ -154,6 +157,40 @@ def _probe_creation_transaction(
         return False, None, f"{type(exc).__name__}: {exc}"
 
 
+def _probe_creation_receipt(
+    endpoint: str,
+    timeout: float,
+) -> tuple[bool, int | None, str | None]:
+    market = MARKETS["BNBUSD"]
+    if market.creation_tx_hash is None:
+        return False, None, "verified creation transaction metadata is missing"
+    try:
+        raw = _json_rpc(
+            endpoint,
+            "eth_getTransactionReceipt",
+            [market.creation_tx_hash],
+            timeout,
+        )
+        if not isinstance(raw, dict):
+            raise RuntimeError("creation receipt lookup did not return an object")
+        contract_address = raw.get("contractAddress")
+        if not isinstance(contract_address, str):
+            raise RuntimeError("creation receipt is missing contractAddress")
+        if contract_address.lower() != market.address.lower():
+            raise RuntimeError("creation receipt contractAddress mismatch")
+        block_number = raw.get("blockNumber")
+        if not isinstance(block_number, str):
+            raise RuntimeError("creation receipt is missing blockNumber")
+        if int(block_number, 16) != market.deployment_block_hint:
+            raise RuntimeError("creation receipt blockNumber mismatch")
+        logs = raw.get("logs")
+        if not isinstance(logs, list):
+            raise RuntimeError("creation receipt is missing logs")
+        return True, len(logs), None
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return False, None, f"{type(exc).__name__}: {exc}"
+
+
 def _probe_historical_logs(
     endpoint: str,
     timeout: float,
@@ -214,6 +251,8 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
         "latest_block": None,
         "creation_transaction_ready": False,
         "creation_provenance": None,
+        "creation_receipt_ready": False,
+        "creation_receipt_log_count": None,
         "historical_logs_ready": False,
         "historical_log_count": None,
         "log_replay_ready": False,
@@ -249,6 +288,15 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
     if creation_error is not None:
         errors["creation_transaction"] = creation_error
 
+    receipt_ready, receipt_logs, receipt_error = _probe_creation_receipt(
+        endpoint,
+        timeout,
+    )
+    result["creation_receipt_ready"] = receipt_ready
+    result["creation_receipt_log_count"] = receipt_logs
+    if receipt_error is not None:
+        errors["creation_receipt"] = receipt_error
+
     logs_ready, log_count, logs_error = _probe_historical_logs(endpoint, timeout)
     result["historical_logs_ready"] = logs_ready
     result["historical_log_count"] = log_count
@@ -273,6 +321,77 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
     )
     result["errors"] = errors
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+def _probe_prediction_subgraph(timeout: float) -> dict[str, object]:
+    query = """
+    {
+      _meta { block { number hash } hasIndexingErrors }
+      firstRounds: rounds(first: 2, orderBy: epoch, orderDirection: asc) {
+        id epoch startAt startBlock lockAt lockBlock lockPrice closeAt closeBlock closePrice
+        totalAmount bullAmount bearAmount
+      }
+      lastRounds: rounds(first: 2, orderBy: epoch, orderDirection: desc) {
+        id epoch startAt startBlock lockAt lockBlock lockPrice closeAt closeBlock closePrice
+        totalAmount bullAmount bearAmount
+      }
+      sampleBets: bets(first: 2, orderBy: block, orderDirection: asc) {
+        id block createdAt amount position hash
+      }
+    }
+    """
+    result: dict[str, object] = {
+        "endpoint": PREDICTION_V2_SUBGRAPH,
+        "reachable": False,
+        "query_ready": False,
+        "meta": None,
+        "first_rounds": None,
+        "last_rounds": None,
+        "sample_bets": None,
+        "error": None,
+    }
+    try:
+        payload = json.dumps({"query": query}, separators=(",", ":")).encode()
+        _, _, raw = _http_request(
+            PREDICTION_V2_SUBGRAPH,
+            method="POST",
+            timeout=timeout,
+            body=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "pcs-public-input-probe/1",
+            },
+        )
+        result["reachable"] = True
+        body = json.loads(raw.decode())
+        if not isinstance(body, dict):
+            raise RuntimeError("subgraph response is not an object")
+        errors = body.get("errors")
+        if errors:
+            raise RuntimeError(
+                "subgraph GraphQL error: "
+                + json.dumps(errors, sort_keys=True, separators=(",", ":"))[:1_000]
+            )
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("subgraph response has no data object")
+        first_rounds = data.get("firstRounds")
+        last_rounds = data.get("lastRounds")
+        sample_bets = data.get("sampleBets")
+        if not isinstance(first_rounds, list) or not first_rounds:
+            raise RuntimeError("subgraph returned no first rounds")
+        if not isinstance(last_rounds, list) or not last_rounds:
+            raise RuntimeError("subgraph returned no last rounds")
+        if not isinstance(sample_bets, list) or not sample_bets:
+            raise RuntimeError("subgraph returned no sample bets")
+        result["query_ready"] = True
+        result["meta"] = data.get("_meta")
+        result["first_rounds"] = first_rounds
+        result["last_rounds"] = last_rounds
+        result["sample_bets"] = sample_bets
+    except (TypeError, ValueError, RuntimeError) as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
     return result
 
 
@@ -323,8 +442,9 @@ def _probe_binance_archive(item: dict[str, str], timeout: float) -> dict[str, ob
 def build_report(timeout: float) -> dict[str, Any]:
     rpc_results = [_probe_rpc(endpoint, timeout) for endpoint in PUBLIC_BSC_ENDPOINTS]
     binance_results = [_probe_binance_archive(item, timeout) for item in BINANCE_ARCHIVES]
+    subgraph_result = _probe_prediction_subgraph(timeout)
     return {
-        "probe_version": 4,
+        "probe_version": 5,
         "prediction_contract": PREDICTION_BNBUSD.lower(),
         "historical_probe_block": PREDICTION_CREATION_BLOCK + 1,
         "rpc_results": rpc_results,
@@ -334,6 +454,7 @@ def build_report(timeout: float) -> dict[str, Any]:
         "log_replay_ready_endpoints": [
             item["endpoint"] for item in rpc_results if item["log_replay_ready"]
         ],
+        "prediction_subgraph": subgraph_result,
         "binance_results": binance_results,
         "binance_ready": all(
             item["zip_accessible"] and item["checksum_accessible"]
