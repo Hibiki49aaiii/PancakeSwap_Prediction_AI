@@ -6,7 +6,7 @@
   "pip_audit": "success",
   "pytest": "success",
   "pytest_passed": 241,
-  "ready": false,
-  "ruff": "failure",
-  "source_sha": "acd51f9e2ae44988e6637c6b151f4bfa5670e75c"
+  "ready": true,
+  "ruff": "success",
+  "source_sha": "df0b1cf4dde2e241053ebc3910b3ce20337d2818"
 }
