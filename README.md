@@ -68,16 +68,30 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Implemented foundation |
-| 1 | Deterministic replay | Implemented foundation |
-| 2 | Leakage-safe, cost-aware backtest | Implemented foundation |
-| 3 | Purged walk-forward / OOS evaluation | Implemented foundation |
-| 4 | Paper / Shadow | Implemented foundation |
-| 5A | Durable execution fault model | Implemented and tested locally |
-| 5B | BSC fork execution | Harness ready; environment previously assumed for continued development |
-| 6A | Tiny-live readiness / safety preflight | Implemented foundation |
+| 0 | Historical data integrity | Legacy v0.6 foundation; canonical migration pending |
+| 1 | Deterministic replay | Legacy v0.6 foundation; canonical migration pending |
+| 2 | Leakage-safe, cost-aware backtest | Legacy v0.6 foundation; canonical migration pending |
+| 3 | Purged walk-forward / OOS evaluation | Legacy v0.6 foundation; canonical migration pending |
+| 4 | Paper / Shadow | Legacy v0.6 foundation; observed economic evidence still required |
+| 5A | Durable execution fault model | Legacy drill passed; canonical migration pending |
+| 5B | BSC fork execution | **BLOCKED: observed fork evidence not yet recorded** |
+| 6A | Tiny-live readiness / safety preflight | v0.7 evidence gate implemented; cannot clear from assumed evidence |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
+
+### v0.7 evidence rule
+
+`src/pancake_prediction_ai/evidence_gate.py` enforces that Stage 6A can only become ready when all of the following are true:
+
+- Stage 5A evidence is an observed pass;
+- Stage 5B evidence is an observed pass from an actual local BSC fork;
+- shadow economics evidence is an observed pass;
+- kill switch, wallet binding, per-round cap and balance cap checks pass;
+- no unresolved execution intents remain;
+- the decision window is still open;
+- signing and mainnet broadcasting remain disabled during the Stage 6A preflight.
+
+`assumed` and `self_reported` evidence can never clear the gate. Evidence payloads are SHA-256 bound to prevent silent mutation.
 
 Infrastructure assumptions are never treated as evidence of profitability. Shadow economics, out-of-sample performance, and any funded validation must be demonstrated separately.
 
