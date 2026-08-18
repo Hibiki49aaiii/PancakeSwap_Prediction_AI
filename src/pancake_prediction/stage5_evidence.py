@@ -15,7 +15,7 @@ from .contracts import CHAIN_ID_BSC, MARKETS
 from .execution_intent import IntentState
 from .execution_report import build_execution_intent_report
 
-EVIDENCE_VERSION = 1
+EVIDENCE_VERSION = 2
 BULL_SELECTOR = function_selector("betBull(uint256)").lower()
 BEAR_SELECTOR = function_selector("betBear(uint256)").lower()
 BET_CALLDATA_HEX_LENGTH = 2 + 8 + 64
@@ -25,7 +25,6 @@ REQUIRED_SCENARIOS = (
     "reorg_reconciliation",
     "non_loopback_rejection",
 )
-PREDICTION_TARGETS = frozenset(market.address.lower() for market in MARKETS.values())
 
 
 class EvidenceOrigin(StrEnum):
@@ -50,6 +49,17 @@ def _validate_sha256(value: str, *, field: str) -> str:
         int(normalized, 16)
     except ValueError as exc:
         raise ValueError(f"{field} must be a SHA-256 hex digest") from exc
+    return normalized
+
+
+def _validate_block_hash(value: str) -> str:
+    normalized = value.lower()
+    if not normalized.startswith("0x") or len(normalized) != 66:
+        raise ValueError("fork_block_hash must be a 32-byte hex value")
+    try:
+        int(normalized[2:], 16)
+    except ValueError as exc:
+        raise ValueError("fork_block_hash must be a 32-byte hex value") from exc
     return normalized
 
 
@@ -97,8 +107,11 @@ class Stage5ForkEvidence:
     source_sha: str
     recorded_at: str
     campaign_id: str
+    market: str
     chain_id: int
     fork_block_number: int
+    fork_block_hash: str
+    anvil_version: str
     ledger_sha256: str
     scenarios: tuple[tuple[str, bool], ...]
     claim_sha256: str
@@ -110,8 +123,11 @@ class Stage5ForkEvidence:
             "source_sha": self.source_sha,
             "recorded_at": self.recorded_at,
             "campaign_id": self.campaign_id,
+            "market": self.market,
             "chain_id": self.chain_id,
             "fork_block_number": self.fork_block_number,
+            "fork_block_hash": self.fork_block_hash,
+            "anvil_version": self.anvil_version,
             "ledger_sha256": self.ledger_sha256,
             "scenarios": dict(self.scenarios),
         }
@@ -129,24 +145,34 @@ class Stage5ForkEvidence:
         source_sha: str,
         recorded_at: str,
         campaign_id: str,
+        market: str,
         chain_id: int,
         fork_block_number: int,
+        fork_block_hash: str,
+        anvil_version: str,
         ledger_sha256: str,
         scenarios: Mapping[str, bool],
     ) -> Stage5ForkEvidence:
         if not campaign_id:
             raise ValueError("campaign_id is required")
+        if market not in MARKETS:
+            raise ValueError(f"unsupported Prediction market: {market}")
         if chain_id <= 0:
             raise ValueError("chain_id must be positive")
         if fork_block_number <= 0:
             raise ValueError("fork_block_number must be positive")
+        if not anvil_version.strip():
+            raise ValueError("anvil_version is required")
         provisional = cls(
             origin=origin,
             source_sha=_validate_source_sha(source_sha),
             recorded_at=_validate_recorded_at(recorded_at),
             campaign_id=campaign_id,
+            market=market,
             chain_id=chain_id,
             fork_block_number=fork_block_number,
+            fork_block_hash=_validate_block_hash(fork_block_hash),
+            anvil_version=anvil_version.strip(),
             ledger_sha256=_validate_sha256(ledger_sha256, field="ledger_sha256"),
             scenarios=_normalize_scenarios(scenarios),
             claim_sha256="0" * 64,
@@ -157,8 +183,11 @@ class Stage5ForkEvidence:
             source_sha=provisional.source_sha,
             recorded_at=provisional.recorded_at,
             campaign_id=provisional.campaign_id,
+            market=provisional.market,
             chain_id=provisional.chain_id,
             fork_block_number=provisional.fork_block_number,
+            fork_block_hash=provisional.fork_block_hash,
+            anvil_version=provisional.anvil_version,
             ledger_sha256=provisional.ledger_sha256,
             scenarios=provisional.scenarios,
             claim_sha256=digest,
@@ -185,8 +214,11 @@ class Stage5ForkEvidence:
             source_sha=str(obj["source_sha"]),
             recorded_at=str(obj["recorded_at"]),
             campaign_id=str(obj["campaign_id"]),
+            market=str(obj["market"]),
             chain_id=int(obj["chain_id"]),
             fork_block_number=int(obj["fork_block_number"]),
+            fork_block_hash=str(obj["fork_block_hash"]),
+            anvil_version=str(obj["anvil_version"]),
             ledger_sha256=str(obj["ledger_sha256"]),
             scenarios=scenario_values,
         )
@@ -228,7 +260,8 @@ def ledger_sha256(path: Path) -> str:
     return _sha256_bytes(path.read_bytes())
 
 
-def _finalized_bet_counts(path: Path) -> tuple[int, int]:
+def _finalized_bet_counts(path: Path, *, market: str) -> tuple[int, int]:
+    target = MARKETS[market].address.lower()
     with closing(sqlite3.connect(path)) as conn:
         rows = conn.execute(
             "SELECT target,calldata,value_wei,state FROM execution_intents ORDER BY id"
@@ -238,7 +271,7 @@ def _finalized_bet_counts(path: Path) -> tuple[int, int]:
     for target_raw, calldata_raw, value_wei_raw, state_raw in rows:
         if IntentState(str(state_raw)) != IntentState.FINALIZED:
             continue
-        if str(target_raw).lower() not in PREDICTION_TARGETS:
+        if str(target_raw).lower() != target:
             continue
         if int(value_wei_raw) <= 0:
             continue
@@ -259,7 +292,7 @@ def evaluate_stage5b_fork_gate(
     expected_source_sha: str | None = None,
 ) -> Stage5ForkGateReport:
     report = build_execution_intent_report(ledger_path)
-    bull, bear = _finalized_bet_counts(ledger_path)
+    bull, bear = _finalized_bet_counts(ledger_path, market=evidence.market)
     blockers: list[str] = []
 
     if report.total == 0:
