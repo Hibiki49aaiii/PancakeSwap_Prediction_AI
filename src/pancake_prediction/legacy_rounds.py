@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
@@ -173,6 +174,18 @@ def _validate_header(fieldnames: list[str] | None) -> None:
         )
 
 
+def iter_legacy_rounds(path: Path) -> Iterator[LegacyRoundRecord]:
+    with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        _validate_header(reader.fieldnames)
+        for raw_row in reader:
+            yield parse_legacy_round_row(raw_row)
+
+
+def load_legacy_rounds(path: Path) -> tuple[LegacyRoundRecord, ...]:
+    return tuple(iter_legacy_rounds(path))
+
+
 def audit_legacy_rounds(path: Path) -> LegacyRoundAuditReport:
     source_sha256 = _sha256_file(path)
     seen_epochs: set[int] = set()
@@ -193,51 +206,45 @@ def audit_legacy_rounds(path: Path) -> LegacyRoundAuditReport:
     empty_bear = 0
     previous_epoch: int | None = None
 
-    with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        _validate_header(reader.fieldnames)
-        for raw_row in reader:
-            row = parse_legacy_round_row(raw_row)
-            row_count += 1
-            if first_epoch is None:
-                first_epoch = row.epoch
-                first_start = row.start_timestamp
-            last_epoch = row.epoch
-            last_close = row.close_timestamp
+    for row in iter_legacy_rounds(path):
+        row_count += 1
+        if first_epoch is None:
+            first_epoch = row.epoch
+            first_start = row.start_timestamp
+        last_epoch = row.epoch
+        last_close = row.close_timestamp
 
-            if row.epoch in seen_epochs:
-                duplicate_epochs += 1
-            seen_epochs.add(row.epoch)
-            if previous_epoch is not None and row.epoch > previous_epoch + 1:
-                epoch_gaps += row.epoch - previous_epoch - 1
-            if previous_epoch is not None and row.epoch <= previous_epoch:
-                non_monotonic_timestamps += 1
-            previous_epoch = row.epoch
+        if row.epoch in seen_epochs:
+            duplicate_epochs += 1
+        seen_epochs.add(row.epoch)
+        if previous_epoch is not None and row.epoch > previous_epoch + 1:
+            epoch_gaps += row.epoch - previous_epoch - 1
+        if previous_epoch is not None and row.epoch <= previous_epoch:
+            non_monotonic_timestamps += 1
+        previous_epoch = row.epoch
 
-            if not (
-                row.start_timestamp <= row.lock_timestamp <= row.close_timestamp
-            ):
-                non_monotonic_timestamps += 1
-            if row.total_amount_wei != row.bull_amount_wei + row.bear_amount_wei:
-                pool_sum_mismatches += 1
-            if row.reward_amount_wei > row.total_amount_wei:
-                reward_amount_exceeds_pool += 1
+        if not row.start_timestamp <= row.lock_timestamp <= row.close_timestamp:
+            non_monotonic_timestamps += 1
+        if row.total_amount_wei != row.bull_amount_wei + row.bear_amount_wei:
+            pool_sum_mismatches += 1
+        if row.reward_amount_wei > row.total_amount_wei:
+            reward_amount_exceeds_pool += 1
 
-            if not row.oracle_called:
-                refunded_rounds += 1
-            elif row.label == "tie":
-                tie_rounds += 1
-            else:
-                expected_base = (
-                    row.bull_amount_wei if row.label == "bull" else row.bear_amount_wei
-                )
-                if row.reward_base_cal_amount_wei != expected_base:
-                    reward_base_mismatches += 1
+        if not row.oracle_called:
+            refunded_rounds += 1
+        elif row.label == "tie":
+            tie_rounds += 1
+        else:
+            expected_base = (
+                row.bull_amount_wei if row.label == "bull" else row.bear_amount_wei
+            )
+            if row.reward_base_cal_amount_wei != expected_base:
+                reward_base_mismatches += 1
 
-            if row.bull_amount_wei == 0:
-                empty_bull += 1
-            if row.bear_amount_wei == 0:
-                empty_bear += 1
+        if row.bull_amount_wei == 0:
+            empty_bull += 1
+        if row.bear_amount_wei == 0:
+            empty_bear += 1
 
     envelope_ready = (
         row_count == LEGACY_ROUNDS_EXPECTED_ROWS
