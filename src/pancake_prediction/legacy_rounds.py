@@ -55,6 +55,7 @@ class LegacyRoundRecord:
     reward_base_cal_amount_wei: int
     reward_amount_wei: int
     oracle_called: bool
+    oracle_ids_approximate: bool = False
 
     @property
     def label(self) -> str:
@@ -94,6 +95,10 @@ class LegacyRoundAuditReport:
     expected_epoch_envelope_ready: bool
     structurally_ready: bool
     amount_precision_note: str
+    approximate_oracle_id_rows: int = 0
+    oracle_id_precision_note: str = (
+        "scientific-notation oracle IDs are approximate source values and are never model inputs"
+    )
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -136,6 +141,27 @@ def _parse_approx_wei(row: dict[str, str | None], field: str) -> int:
     return int(value.to_integral_value(rounding=ROUND_HALF_EVEN))
 
 
+def _parse_oracle_id(row: dict[str, str | None], field: str) -> tuple[int, bool]:
+    raw = _required_value(row, field)
+    try:
+        value = int(raw)
+        if value < 0:
+            raise LegacyRoundDatasetError(f"legacy round {field} must be non-negative")
+        return value, False
+    except ValueError:
+        pass
+    try:
+        decimal_value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise LegacyRoundDatasetError(f"legacy round {field} is not numeric") from exc
+    if not decimal_value.is_finite() or decimal_value < 0:
+        raise LegacyRoundDatasetError(f"legacy round {field} must be finite and non-negative")
+    integral = decimal_value.to_integral_value(rounding=ROUND_HALF_EVEN)
+    if decimal_value != integral:
+        raise LegacyRoundDatasetError(f"legacy round {field} must represent an integer")
+    return int(integral), True
+
+
 def _parse_bool(row: dict[str, str | None], field: str) -> bool:
     raw = _required_value(row, field).lower()
     if raw == "true":
@@ -146,6 +172,8 @@ def _parse_bool(row: dict[str, str | None], field: str) -> bool:
 
 
 def parse_legacy_round_row(row: dict[str, str | None]) -> LegacyRoundRecord:
+    lock_oracle_id, lock_approximate = _parse_oracle_id(row, "lockOracleId")
+    close_oracle_id, close_approximate = _parse_oracle_id(row, "closeOracleId")
     return LegacyRoundRecord(
         epoch=_parse_int(row, "epoch"),
         start_timestamp=_parse_int(row, "startTimestamp"),
@@ -153,14 +181,15 @@ def parse_legacy_round_row(row: dict[str, str | None]) -> LegacyRoundRecord:
         close_timestamp=_parse_int(row, "closeTimestamp"),
         lock_price_e8=_parse_int(row, "lockPrice"),
         close_price_e8=_parse_int(row, "closePrice"),
-        lock_oracle_id=_parse_int(row, "lockOracleId"),
-        close_oracle_id=_parse_int(row, "closeOracleId"),
+        lock_oracle_id=lock_oracle_id,
+        close_oracle_id=close_oracle_id,
         total_amount_wei=_parse_approx_wei(row, "totalAmount"),
         bull_amount_wei=_parse_approx_wei(row, "bullAmount"),
         bear_amount_wei=_parse_approx_wei(row, "bearAmount"),
         reward_base_cal_amount_wei=_parse_approx_wei(row, "rewardBaseCalAmount"),
         reward_amount_wei=_parse_approx_wei(row, "rewardAmount"),
         oracle_called=_parse_bool(row, "oracleCalled"),
+        oracle_ids_approximate=lock_approximate or close_approximate,
     )
 
 
@@ -204,6 +233,7 @@ def audit_legacy_rounds(path: Path) -> LegacyRoundAuditReport:
     tie_rounds = 0
     empty_bull = 0
     empty_bear = 0
+    approximate_oracle_ids = 0
     previous_epoch: int | None = None
 
     for row in iter_legacy_rounds(path):
@@ -245,6 +275,8 @@ def audit_legacy_rounds(path: Path) -> LegacyRoundAuditReport:
             empty_bull += 1
         if row.bear_amount_wei == 0:
             empty_bear += 1
+        if row.oracle_ids_approximate:
+            approximate_oracle_ids += 1
 
     envelope_ready = (
         row_count == LEGACY_ROUNDS_EXPECTED_ROWS
@@ -287,4 +319,5 @@ def audit_legacy_rounds(path: Path) -> LegacyRoundAuditReport:
             "source amount columns use approximately six significant digits; "
             "integer wei values are rounded half-even for benchmark use only"
         ),
+        approximate_oracle_id_rows=approximate_oracle_ids,
     )
