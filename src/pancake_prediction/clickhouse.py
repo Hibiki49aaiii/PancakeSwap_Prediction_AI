@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from .binance import AggTrade
 from .binance_archive import (
@@ -20,6 +20,7 @@ from .binance_archive import (
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+QueryParameter = str | int
 
 
 class ClickHouseError(RuntimeError):
@@ -70,6 +71,15 @@ class ClickHouseJsonSource(Protocol):
     def query_json_rows(self, query: str) -> Iterator[dict[str, object]]: ...
 
 
+class ClickHouseParameterizedJsonSource(Protocol):
+    def query_json_rows(
+        self,
+        query: str,
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> Iterator[dict[str, object]]: ...
+
+
 def _validated_identifier(value: str, *, field: str) -> str:
     if not _IDENTIFIER.fullmatch(value):
         raise ValueError(f"invalid ClickHouse {field}: {value!r}")
@@ -99,6 +109,14 @@ def _batches(
             batch.clear()
     if batch:
         yield tuple(batch)
+
+
+def _parameter_query_string(parameters: Mapping[str, QueryParameter]) -> str:
+    encoded: dict[str, str] = {}
+    for name, value in parameters.items():
+        parameter_name = _validated_identifier(name, field="query parameter")
+        encoded[f"param_{parameter_name}"] = str(value)
+    return urlencode(encoded)
 
 
 @dataclass(slots=True)
@@ -132,7 +150,13 @@ class ClickHouseHttpClient:
             headers["X-ClickHouse-Key"] = self.password
         return headers
 
-    def _post(self, query: str, data: bytes = b"") -> bytes:
+    def _post(
+        self,
+        query: str,
+        data: bytes = b"",
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> bytes:
         parsed = urlsplit(self.endpoint)
         if parsed.hostname is None:
             raise ClickHouseError("ClickHouse endpoint hostname is unavailable")
@@ -148,6 +172,8 @@ class ClickHouseHttpClient:
             timeout=self.timeout_seconds,
         )
         target = parsed.path or "/"
+        if parameters:
+            target += "?" + _parameter_query_string(parameters)
         payload = query.encode() + b"\n" + data
         try:
             connection.request("POST", target, body=payload, headers=self._headers())
@@ -183,8 +209,16 @@ class ClickHouseHttpClient:
             row_count += len(batch)
         return ClickHouseInsertReport(batches=batches, rows=row_count)
 
-    def query_json_rows(self, query: str) -> Iterator[dict[str, object]]:
-        raw = self._post(query.rstrip() + " FORMAT JSONEachRow")
+    def query_json_rows(
+        self,
+        query: str,
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> Iterator[dict[str, object]]:
+        raw = self._post(
+            query.rstrip() + " FORMAT JSONEachRow",
+            parameters=parameters,
+        )
         for line in raw.splitlines():
             if not line.strip():
                 continue
@@ -297,12 +331,8 @@ def ingest_binance_archive(
     )
 
 
-def _quoted(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 def load_binance_trade_window(
-    source: ClickHouseJsonSource,
+    source: ClickHouseParameterizedJsonSource,
     *,
     market: str,
     venue: ArchiveVenue,
@@ -320,14 +350,21 @@ def load_binance_trade_window(
     query = (
         "SELECT symbol,event_timestamp_ms,trade_timestamp_ms,price_e8,quantity_e8,"
         "aggressive_side,aggregate_trade_id FROM binance_agg_trades FINAL WHERE "
-        f"venue={_quoted(venue)} AND symbol={_quoted(symbol)} AND "
-        f"availability_lag_ms={availability_lag_ms} AND "
-        f"trade_timestamp_ms>={start_timestamp_ms} AND "
-        f"trade_timestamp_ms<{end_timestamp_ms} ORDER BY "
+        "venue={venue:String} AND symbol={symbol:String} AND "
+        "availability_lag_ms={availability_lag_ms:UInt32} AND "
+        "trade_timestamp_ms>={start_timestamp_ms:UInt64} AND "
+        "trade_timestamp_ms<{end_timestamp_ms:UInt64} ORDER BY "
         "trade_timestamp_ms,aggregate_trade_id"
     )
+    parameters: dict[str, QueryParameter] = {
+        "venue": venue,
+        "symbol": symbol,
+        "availability_lag_ms": availability_lag_ms,
+        "start_timestamp_ms": start_timestamp_ms,
+        "end_timestamp_ms": end_timestamp_ms,
+    }
     trades: list[AggTrade] = []
-    for row in source.query_json_rows(query):
+    for row in source.query_json_rows(query, parameters=parameters):
         trades.append(
             AggTrade(
                 symbol=str(row["symbol"]),
