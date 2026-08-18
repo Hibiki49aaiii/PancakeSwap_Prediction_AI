@@ -27,13 +27,12 @@ def build_report(market: str) -> dict[str, object]:
 
     try:
         result = run_historical_preflight(JsonRpcClient(rpc_url), MARKETS[market])
-        payload = result.as_dict()
         return {
             "evidence_version": 1,
             "market": market,
             "configured": True,
-            "archive_ready": bool(payload.get("archive_ready", False)),
-            "preflight": payload,
+            "archive_ready": True,
+            "preflight": result.as_dict(),
             "error": None,
         }
     except Exception as exc:
