@@ -12,10 +12,28 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: public-research-input-probe-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,30 +41,160 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Probe official/public research inputs
+      - name: Install project
+        run: pip install -e .
+      - name: Apply ClickHouse schema
         run: |
-          mkdir -p artifacts evidence
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+      - name: Probe public research inputs
+        run: |
+          mkdir -p artifacts evidence /tmp/binance-real
           python scripts/probe_public_research_inputs.py \
             --output artifacts/public-research-input-probe.json \
             --timeout 12
           cp artifacts/public-research-input-probe.json \
             evidence/public-research-input-probe.json
-      - name: Print report
-        run: cat artifacts/public-research-input-probe.json
-      - uses: actions/upload-artifact@v4
+      - name: Download real Binance archives and checksums
+        run: |
+          curl -fsSL \
+            https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip \
+            -o /tmp/binance-real/spot.zip
+          curl -fsSL \
+            https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
+            -o /tmp/binance-real/spot.zip.CHECKSUM
+          curl -fsSL \
+            https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip \
+            -o /tmp/binance-real/perp.zip
+          curl -fsSL \
+            https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
+            -o /tmp/binance-real/perp.zip.CHECKSUM
+      - name: Verify and inspect real Binance archives
+        run: |
+          pcs-prediction binance-archive-inspect \
+            --market BNBUSD \
+            --archive /tmp/binance-real/spot.zip \
+            --checksum /tmp/binance-real/spot.zip.CHECKSUM \
+            --venue spot \
+            --timestamp-unit auto \
+            --availability-lag-ms 0 \
+            > artifacts/binance-spot-inspect.json
+          pcs-prediction binance-archive-inspect \
+            --market BNBUSD \
+            --archive /tmp/binance-real/perp.zip \
+            --checksum /tmp/binance-real/perp.zip.CHECKSUM \
+            --venue um_futures \
+            --timestamp-unit milliseconds \
+            --availability-lag-ms 0 \
+            > artifacts/binance-perp-inspect.json
+      - name: Ingest real Binance archives into ClickHouse
+        run: |
+          pcs-clickhouse schema-check
+          pcs-clickhouse binance-ingest \
+            --market BNBUSD \
+            --archive /tmp/binance-real/spot.zip \
+            --checksum /tmp/binance-real/spot.zip.CHECKSUM \
+            --venue spot \
+            --timestamp-unit auto \
+            --availability-lag-ms 0 \
+            > artifacts/binance-spot-ingest.json
+          pcs-clickhouse binance-ingest \
+            --market BNBUSD \
+            --archive /tmp/binance-real/perp.zip \
+            --checksum /tmp/binance-real/perp.zip.CHECKSUM \
+            --venue um_futures \
+            --timestamp-unit milliseconds \
+            --availability-lag-ms 0 \
+            > artifacts/binance-perp-ingest.json
+      - name: Build real Binance evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          root = Path("artifacts")
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          rows = list(
+              client.query_json_rows(
+                  """
+                  SELECT
+                      venue,
+                      timestamp_unit,
+                      availability_lag_ms,
+                      count() AS rows,
+                      min(aggregate_trade_id) AS first_aggregate_trade_id,
+                      max(aggregate_trade_id) AS last_aggregate_trade_id,
+                      min(trade_timestamp_ms) AS first_trade_timestamp_ms,
+                      max(trade_timestamp_ms) AS last_trade_timestamp_ms
+                  FROM binance_agg_trades FINAL
+                  GROUP BY venue, timestamp_unit, availability_lag_ms
+                  ORDER BY venue
+                  """
+              )
+          )
+          payload = {
+              "evidence_version": 1,
+              "market": "BNBUSD",
+              "archive_date": "2026-08-01",
+              "availability_lag_ms": 0,
+              "availability_lag_note": (
+                  "zero is used only for parser/ingest validation; "
+                  "it is not profitability evidence"
+              ),
+              "spot_inspect": json.loads(
+                  (root / "binance-spot-inspect.json").read_text()
+              ),
+              "perp_inspect": json.loads(
+                  (root / "binance-perp-inspect.json").read_text()
+              ),
+              "spot_ingest": json.loads(
+                  (root / "binance-spot-ingest.json").read_text()
+              ),
+              "perp_ingest": json.loads(
+                  (root / "binance-perp-ingest.json").read_text()
+              ),
+              "clickhouse_final_groups": rows,
+          }
+          output = root / "binance-real-sample-2026-08-01.json"
+          output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          Path("evidence/binance-real-sample-2026-08-01.json").write_text(
+              output.read_text()
+          )
+          print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Upload evidence artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: public-research-input-probe
-          path: artifacts/public-research-input-probe.json
+          name: public-research-input-evidence
+          path: |
+            artifacts/public-research-input-probe.json
+            artifacts/binance-real-sample-2026-08-01.json
           if-no-files-found: error
           retention-days: 14
       - name: Persist evidence on branch
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/public-research-input-probe.json
+          git add \
+            evidence/public-research-input-probe.json \
+            evidence/binance-real-sample-2026-08-01.json
           if git diff --cached --quiet; then
             echo 'Probe evidence unchanged.'
             exit 0
           fi
-          git commit -m 'chore: record public research input probe'
+          git commit -m 'chore: record public research input evidence'
+          git pull --rebase origin agent/v0.7-alpha-research
           git push origin HEAD:agent/v0.7-alpha-research
