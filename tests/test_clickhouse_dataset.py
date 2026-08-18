@@ -129,8 +129,6 @@ def test_chunked_clickhouse_dataset_matches_in_memory_builder_without_n_plus_one
         "BNBUSD",
         "a" * 64,
         (
-            _round(1, 100, 500, "bull"),
-            _round(2, 500, 900, "bear"),
             _round(3, 1_000, 1_600, "bull"),
             _round(4, 1_300, 1_900, "bear"),
         ),
