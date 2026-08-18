@@ -14,7 +14,7 @@ from .legacy_benchmark import (
     run_legacy_economic_benchmark,
 )
 from .legacy_features import LegacyFeatureBuildResult, build_legacy_clickhouse_feature_rows
-from .legacy_model import run_legacy_walkforward_model
+from .legacy_model import legacy_oos_to_backtest_signals, run_legacy_walkforward_model
 from .legacy_pool_projection import build_legacy_absolute_pool_projections
 from .legacy_rounds import (
     LEGACY_ROUNDS_SOURCE_CLASS,
@@ -293,9 +293,10 @@ def run_legacy_supporting_campaign(
         decision_lead_seconds=config.features.feature_lead_seconds,
         config=config.pool,
     )
+    economic_signals = legacy_oos_to_backtest_signals(model.signals)
     economics: LegacyEconomicBenchmarkReport = run_legacy_economic_benchmark(
         ordered,
-        dict(model.signals),
+        economic_signals,
         projections,
         config.economics,
     )
