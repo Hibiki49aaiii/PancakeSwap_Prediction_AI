@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -116,6 +115,8 @@ class ClickHouseHttpClient:
             raise ValueError("ClickHouse endpoint must be an http(s) URL")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("ClickHouse credentials must not be embedded in the endpoint URL")
+        if parsed.query or parsed.fragment:
+            raise ValueError("ClickHouse endpoint must not contain a query string or fragment")
         _validated_identifier(self.database, field="database")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -132,22 +133,35 @@ class ClickHouseHttpClient:
         return headers
 
     def _post(self, query: str, data: bytes = b"") -> bytes:
-        payload = query.encode() + b"\n" + data
-        request = urllib.request.Request(
-            self.endpoint,
-            data=payload,
-            headers=self._headers(),
-            method="POST",
+        parsed = urlsplit(self.endpoint)
+        if parsed.hostname is None:
+            raise ClickHouseError("ClickHouse endpoint hostname is unavailable")
+        connection_type = (
+            http.client.HTTPSConnection
+            if parsed.scheme == "https"
+            else http.client.HTTPConnection
         )
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        connection = connection_type(
+            parsed.hostname,
+            port,
+            timeout=self.timeout_seconds,
+        )
+        target = parsed.path or "/"
+        payload = query.encode() + b"\n" + data
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            body = exc.read(1_000).decode(errors="replace").strip()
-            detail = f": {body}" if body else ""
-            raise ClickHouseError(f"ClickHouse HTTP {exc.code}{detail}") from exc
-        except urllib.error.URLError as exc:
-            raise ClickHouseError(f"ClickHouse request failed: {exc.reason}") from exc
+            connection.request("POST", target, body=payload, headers=self._headers())
+            response = connection.getresponse()
+            body = response.read()
+            if response.status >= 400:
+                detail = body[:1_000].decode(errors="replace").strip()
+                suffix = f": {detail}" if detail else ""
+                raise ClickHouseError(f"ClickHouse HTTP {response.status}{suffix}")
+            return body
+        except (OSError, http.client.HTTPException) as exc:
+            raise ClickHouseError(f"ClickHouse request failed: {exc}") from exc
+        finally:
+            connection.close()
 
     def execute(self, query: str) -> str:
         return self._post(query).decode(errors="replace")
@@ -317,12 +331,12 @@ def load_binance_trade_window(
         trades.append(
             AggTrade(
                 symbol=str(row["symbol"]),
-                event_timestamp_ms=int(row["event_timestamp_ms"]),
-                trade_timestamp_ms=int(row["trade_timestamp_ms"]),
-                price_e8=int(row["price_e8"]),
-                quantity_e8=int(row["quantity_e8"]),
+                event_timestamp_ms=int(str(row["event_timestamp_ms"])),
+                trade_timestamp_ms=int(str(row["trade_timestamp_ms"])),
+                price_e8=int(str(row["price_e8"])),
+                quantity_e8=int(str(row["quantity_e8"])),
                 aggressive_side=str(row["aggressive_side"]),
-                aggregate_trade_id=int(row["aggregate_trade_id"]),
+                aggregate_trade_id=int(str(row["aggregate_trade_id"])),
             )
         )
     return tuple(trades)
