@@ -1,0 +1,232 @@
+name: legacy-microstructure-confirmation
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/legacy-microstructure-confirmation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: legacy-microstructure-confirmation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  confirmation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+      SPOT_LAG_MS: '250'
+      PERP_LAG_MS: '250'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Create directories
+        run: mkdir -p artifacts evidence /tmp/legacy /tmp/binance/spot /tmp/binance/perp
+      - name: Apply ClickHouse schema
+        id: schema
+        continue-on-error: true
+        run: |
+          python - <<'PY' > artifacts/schema.log 2>&1
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+      - name: Download independent-period source archives
+        id: download
+        continue-on-error: true
+        run: |
+          exec > >(tee artifacts/download.log) 2>&1
+          curl -fsSL \
+            https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
+            -o /tmp/legacy/rounds.csv.gz
+          for day in 08 09 10 11 12 13 14 15; do
+            base="BNBUSDT-aggTrades-2022-08-${day}.zip"
+            curl -fsSL \
+              "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/${base}" \
+              -o "/tmp/binance/spot/${base}"
+            curl -fsSL \
+              "https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/${base}.CHECKSUM" \
+              -o "/tmp/binance/spot/${base}.CHECKSUM"
+            curl -fsSL \
+              "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/${base}" \
+              -o "/tmp/binance/perp/${base}"
+            curl -fsSL \
+              "https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/${base}.CHECKSUM" \
+              -o "/tmp/binance/perp/${base}.CHECKSUM"
+          done
+      - name: Ingest checksum-verified independent-period archives
+        id: ingest
+        continue-on-error: true
+        run: |
+          exec > >(tee artifacts/ingest.log) 2>&1
+          pcs-clickhouse schema-check
+          for day in 08 09 10 11 12 13 14 15; do
+            base="BNBUSDT-aggTrades-2022-08-${day}.zip"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/spot/${base}" \
+              --checksum "/tmp/binance/spot/${base}.CHECKSUM" \
+              --venue spot \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms "$SPOT_LAG_MS" \
+              > "/tmp/binance/spot-${day}-ingest.json"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/perp/${base}" \
+              --checksum "/tmp/binance/perp/${base}.CHECKSUM" \
+              --venue um_futures \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms "$PERP_LAG_MS" \
+              > "/tmp/binance/perp-${day}-ingest.json"
+          done
+      - name: Run pre-specified variant set on independent period
+        id: confirmation
+        continue-on-error: true
+        run: |
+          exec > >(tee artifacts/confirmation.log) 2>&1
+          python scripts/run_legacy_microstructure_ablation.py \
+            --legacy-archive /tmp/legacy/rounds.csv.gz \
+            --output artifacts/legacy-microstructure-confirmation-2022-08-09-to-15.json \
+            --start-timestamp 1660003200 \
+            --end-timestamp 1660608000 \
+            --spot-availability-lag-ms "$SPOT_LAG_MS" \
+            --perp-availability-lag-ms "$PERP_LAG_MS" \
+            --feature-lead-seconds 20 \
+            --stake-wei 10000000000000000 \
+            --bet-gas-wei 500000000000000 \
+            --claim-gas-wei 500000000000000 \
+            --inclusion-latency-seconds 3 \
+            --min-train-rounds 500 \
+            --test-rounds 250 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 100 \
+            --pool-min-train-rounds 100 \
+            --pool-window-rounds 1000
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/legacy-microstructure-confirmation-2022-08-09-to-15.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          payload["evidence_role"] = "independent_confirmation"
+          payload["variant_set_precommitted_before_exploratory_result_review"] = True
+          payload["profitability_gate_eligible"] = False
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - name: Persist confirmation evidence
+        if: always()
+        env:
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+          CONFIRMATION_OUTCOME: ${{ steps.confirmation.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          artifacts = Path("artifacts")
+          result = artifacts / "legacy-microstructure-confirmation-2022-08-09-to-15.json"
+
+          def tail(name: str) -> str | None:
+              path = artifacts / name
+              if not path.exists():
+                  return None
+              return path.read_text(encoding="utf-8", errors="replace")[-4000:]
+
+          status = {
+              "diagnostic_version": 1,
+              "schema_outcome": os.environ["SCHEMA_OUTCOME"],
+              "download_outcome": os.environ["DOWNLOAD_OUTCOME"],
+              "ingest_outcome": os.environ["INGEST_OUTCOME"],
+              "confirmation_outcome": os.environ["CONFIRMATION_OUTCOME"],
+              "confirmation_evidence_exists": result.exists(),
+              "schema_log_tail": tail("schema.log"),
+              "download_log_tail": tail("download.log"),
+              "ingest_log_tail": tail("ingest.log"),
+              "confirmation_log_tail": tail("confirmation.log"),
+          }
+          Path("evidence/legacy-microstructure-confirmation-status.json").write_text(
+              json.dumps(status, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if result.exists():
+              Path("evidence/legacy-microstructure-confirmation-2022-08-09-to-15.json").write_text(
+                  result.read_text(encoding="utf-8"),
+                  encoding="utf-8",
+              )
+          print(json.dumps(status, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Upload confirmation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-microstructure-confirmation-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Commit deterministic confirmation evidence
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/legacy-microstructure-confirmation-status.json
+          if [ -f evidence/legacy-microstructure-confirmation-2022-08-09-to-15.json ]; then
+            git add evidence/legacy-microstructure-confirmation-2022-08-09-to-15.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'Independent confirmation evidence unchanged.'
+          else
+            git commit -m 'chore: record independent microstructure confirmation evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Enforce confirmation execution gate
+        if: always()
+        env:
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+          CONFIRMATION_OUTCOME: ${{ steps.confirmation.outcome }}
+        run: |
+          if [ "$SCHEMA_OUTCOME" != success ] || \
+             [ "$DOWNLOAD_OUTCOME" != success ] || \
+             [ "$INGEST_OUTCOME" != success ] || \
+             [ "$CONFIRMATION_OUTCOME" != success ]; then
+            echo 'Independent microstructure confirmation failed; inspect diagnostics.' >&2
+            exit 2
+          fi
