@@ -60,7 +60,7 @@ jobs:
           PY
       - name: Probe public research inputs
         run: |
-          mkdir -p artifacts evidence /tmp/binance-real
+          mkdir -p artifacts evidence /tmp/binance-real/spot /tmp/binance-real/perp
           python scripts/probe_public_research_inputs.py \
             --output artifacts/public-research-input-probe.json \
             --timeout 12
@@ -70,30 +70,30 @@ jobs:
         run: |
           curl -fsSL \
             https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip \
-            -o /tmp/binance-real/spot.zip
+            -o /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip
           curl -fsSL \
             https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
-            -o /tmp/binance-real/spot.zip.CHECKSUM
+            -o /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM
           curl -fsSL \
             https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip \
-            -o /tmp/binance-real/perp.zip
+            -o /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip
           curl -fsSL \
             https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
-            -o /tmp/binance-real/perp.zip.CHECKSUM
+            -o /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM
       - name: Verify and inspect real Binance archives
         run: |
           pcs-prediction binance-archive-inspect \
             --market BNBUSD \
-            --archive /tmp/binance-real/spot.zip \
-            --checksum /tmp/binance-real/spot.zip.CHECKSUM \
+            --archive /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip \
+            --checksum /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
             --venue spot \
             --timestamp-unit auto \
             --availability-lag-ms 0 \
             > artifacts/binance-spot-inspect.json
           pcs-prediction binance-archive-inspect \
             --market BNBUSD \
-            --archive /tmp/binance-real/perp.zip \
-            --checksum /tmp/binance-real/perp.zip.CHECKSUM \
+            --archive /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip \
+            --checksum /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
             --venue um_futures \
             --timestamp-unit milliseconds \
             --availability-lag-ms 0 \
@@ -103,16 +103,16 @@ jobs:
           pcs-clickhouse schema-check
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
-            --archive /tmp/binance-real/spot.zip \
-            --checksum /tmp/binance-real/spot.zip.CHECKSUM \
+            --archive /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip \
+            --checksum /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
             --venue spot \
             --timestamp-unit auto \
             --availability-lag-ms 0 \
             > artifacts/binance-spot-ingest.json
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
-            --archive /tmp/binance-real/perp.zip \
-            --checksum /tmp/binance-real/perp.zip.CHECKSUM \
+            --archive /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip \
+            --checksum /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
             --venue um_futures \
             --timestamp-unit milliseconds \
             --availability-lag-ms 0 \
