@@ -52,7 +52,12 @@ class JsonRpcClient:
         for attempt in range(self.retries):
             self._request_id += 1
             payload = json.dumps(
-                {"jsonrpc": "2.0", "id": self._request_id, "method": method, "params": params}
+                {
+                    "jsonrpc": "2.0",
+                    "id": self._request_id,
+                    "method": method,
+                    "params": params,
+                }
             ).encode()
             request = urllib.request.Request(  # noqa: S310  # nosec B310
                 self.url,
@@ -79,7 +84,9 @@ class JsonRpcClient:
                 last_error = exc
                 if attempt + 1 < self.retries:
                     time.sleep(self.backoff_s * (2**attempt))
-        raise RpcError(f"RPC request failed after {self.retries} attempts: {method}: {last_error}")
+        raise RpcError(
+            f"RPC request failed after {self.retries} attempts: {method}: {last_error}"
+        )
 
     def chain_id(self) -> int:
         return int(cast(str, self.call("eth_chainId", [])), 16)
@@ -92,6 +99,10 @@ class JsonRpcClient:
         if result is None:
             raise RpcError(f"block not found: {number}")
         return cast(dict[str, Any], result)
+
+    def transaction_by_hash(self, tx_hash: str) -> dict[str, Any] | None:
+        result = self.call("eth_getTransactionByHash", [tx_hash])
+        return None if result is None else cast(dict[str, Any], result)
 
     def get_logs(
         self,
@@ -156,10 +167,6 @@ class LocalForkRpcClient(JsonRpcClient):
 
     def transaction_receipt(self, tx_hash: str) -> dict[str, Any] | None:
         result = self.call("eth_getTransactionReceipt", [tx_hash])
-        return None if result is None else cast(dict[str, Any], result)
-
-    def transaction_by_hash(self, tx_hash: str) -> dict[str, Any] | None:
-        result = self.call("eth_getTransactionByHash", [tx_hash])
         return None if result is None else cast(dict[str, Any], result)
 
     def impersonate_account(self, address: str) -> None:
