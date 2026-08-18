@@ -77,7 +77,7 @@ Pool-history feature construction uses an incremental settlement cursor for norm
 
 The ClickHouse-backed builder groups decision rows by time chunk. The default chunk span is one hour. Each chunk loads Spot once and Perpetual once, then reuses those indexed trades for all decision rounds inside the chunk. This avoids a one-round/two-query N+1 pattern while keeping Python memory bounded to one chunk of exchange data plus replay/feature state.
 
-`pcs-clickhouse dataset-summary` is the standard command-line bridge from canonical SQLite history to chunked ClickHouse data. It prints input/replay/oracle digests, all timing assumptions, feature-row counts, chunk count, and maximum Spot/Perp rows held for one chunk. It intentionally does not dump the feature matrix.
+`pcs-clickhouse dataset-summary` is the standard command-line bridge from canonical SQLite history to chunked ClickHouse data. It prints input/replay/oracle digests, all timing and timestamp-unit assumptions, feature-row counts, chunk count, maximum Spot/Perp rows held for one chunk, and the exact ClickHouse query envelope. It intentionally does not dump the feature matrix.
 
 ## Calibration
 
@@ -89,7 +89,19 @@ Every candidate decision can be serialized canonically and SHA-256 hashed with m
 
 The ledger is research evidence. It contains no key material and has no signing authority.
 
-`research_manifest.py` additionally binds each campaign to replay input/output digests, the oracle anchor/timeline, verified Binance archive hashes, and all timing assumptions including Chainlink availability lag. Changing a source or latency assumption changes the deterministic manifest digest.
+`research_manifest.py` binds file-backed campaigns to replay input/output digests, oracle state, verified Binance archive hashes, and timing assumptions.
+
+For the scalable ClickHouse path, `clickhouse_manifest.py` additionally queries the actual `FINAL` rows inside the dataset's query envelope and groups them by `source_sha256` and `source_name`. `dataset-summary` emits a deterministic campaign manifest containing:
+
+- replay input/output digests,
+- canonical Prediction event count,
+- active-oracle anchor/timeline summary,
+- every timing, age, timestamp-unit, and latency assumption,
+- dataset/chunk/query-bound summary,
+- Spot and Perpetual source SHA/name slices with logical row counts and ID/timestamp ranges,
+- a final SHA-256 `campaign_digest`.
+
+Changing a source archive, timestamp-unit assumption, latency assumption, or source slice changes the campaign digest. Source provenance is scoped to the time range the dataset can actually query rather than hashing unrelated future archives in the same ClickHouse database.
 
 ## ClickHouse
 
@@ -97,11 +109,11 @@ The ledger is research evidence. It contains no key material and has no signing 
 
 Binance archive ingestion is bounded-memory. `clickhouse.py` verifies the official checksum before any insert, streams the ZIP/CSV row by row, and sends bounded JSONEachRow batches instead of materializing the archive. The default batch size is 50,000 rows.
 
-The Binance table uses `ReplacingMergeTree(ingest_version)` keyed by venue, symbol, latency assumption, and aggregate-trade ID. This makes interrupted/repeated archive loads convergent after merges. Research reads use `FINAL` so retry duplicates cannot temporarily inflate order flow before background merging finishes.
+The Binance table uses `ReplacingMergeTree(ingest_version)` with sorting key `(venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id)`. Timestamp-unit is a first-class provenance/key dimension: the same archive parsed with `auto`, `milliseconds`, or `microseconds` cannot silently collide. Distinct latency-assumption campaigns also remain separate. Research reads use `FINAL` so retry duplicates cannot temporarily inflate order flow before background merging finishes.
 
-The previous v0.7 `MergeTree` shape is not silently accepted. `pcs-clickhouse schema-check` verifies the engine and required provenance/latency/version columns before either ingest or research reads. Existing old tables must be migrated or recreated explicitly.
+The previous v0.7 table shapes are not silently accepted. `pcs-clickhouse schema-check` verifies the engine, `ingest_version`, exact sorting-key dimensions, and required provenance/timestamp-unit/latency column types before either ingest or research reads. Existing old tables must be migrated or recreated explicitly.
 
-Trade-window values are sent through ClickHouse typed query parameters rather than interpolated into SQL strings.
+Trade-window and source-provenance values are sent through ClickHouse typed query parameters rather than interpolated into SQL strings.
 
 Connection secrets are supplied through environment variables and are not printed:
 
@@ -125,6 +137,7 @@ pcs-clickhouse binance-ingest \
 pcs-clickhouse binance-window \
   --market BNBUSD \
   --venue spot \
+  --timestamp-unit auto \
   --availability-lag-ms 25 \
   --start-ms 1785542400000 \
   --end-ms 1785542460000
@@ -132,12 +145,14 @@ pcs-clickhouse binance-window \
 pcs-clickhouse dataset-summary \
   --market BNBUSD \
   --db artifacts/bnbusd-history.sqlite \
+  --spot-timestamp-unit auto \
   --spot-availability-lag-ms 25 \
+  --perp-timestamp-unit milliseconds \
   --perp-availability-lag-ms 40 \
   --chainlink-availability-lag-ms 500
 ```
 
-A latency assumption is part of the stored logical key. Separate zero-lag and positive-lag campaigns therefore remain distinct and can be compared without rewriting the same rows in place.
+The example latency values are scenario assumptions, not measured production latency. A profitability claim requires sensitivity across positive-lag distributions and preferably measured live/shadow latency evidence.
 
 ## Acceptance criteria before richer models
 
