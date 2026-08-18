@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .alignment import build_aligned_alpha_feature_row, build_aligned_alpha_inputs
 from .backtest import BacktestConfig
 from .baseline import ResearchFeatureRow, build_research_feature_row
+from .binance import AggTrade
 from .clickhouse import ClickHouseParameterizedJsonSource, load_binance_trade_window
 from .features import PoolFeatureRow, build_pool_feature_rows
 from .replay import ChainEvent, ReplaySnapshot
@@ -139,7 +140,7 @@ def build_chunked_clickhouse_research_dataset(
             start_timestamp_ms=spot_query_start,
             end_timestamp_ms=chunk_end,
         )
-        perp_trades = ()
+        perp_trades: tuple[AggTrade, ...] = ()
         if include_perp:
             perp_trades = load_binance_trade_window(
                 source,
