@@ -191,8 +191,11 @@ class LocalForkRpcClient(JsonRpcClient):
 
     def drop_transaction(self, tx_hash: str) -> None:
         result = self.call("anvil_dropTransaction", [tx_hash])
-        if result is not True:
-            raise RpcError("local fork did not drop the requested transaction")
+        if result is None:
+            raise RpcError("local fork did not find the requested transaction to drop")
+        dropped_hash = str(result).lower()
+        if dropped_hash != tx_hash.lower():
+            raise RpcError("local fork returned an unexpected dropped transaction hash")
 
     def snapshot(self) -> str:
         return str(self.call("anvil_snapshot", []))
