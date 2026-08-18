@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Mapping, Protocol, cast
 
 from .rpc import RpcError, RpcResponseError
 
@@ -111,6 +112,26 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
   UNIQUE(intent_id, attempt_number),
   FOREIGN KEY(intent_id) REFERENCES execution_intents(id)
 );
+
+CREATE TABLE IF NOT EXISTS execution_transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  intent_id INTEGER NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(intent_id) REFERENCES execution_intents(id)
+);
+CREATE INDEX IF NOT EXISTS ix_execution_transitions_intent
+  ON execution_transitions(intent_id, id);
+
+CREATE TABLE IF NOT EXISTS execution_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario TEXT NOT NULL UNIQUE,
+  observed INTEGER NOT NULL CHECK (observed IN (0, 1)),
+  detail_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -135,6 +156,30 @@ def _hex_int(value: object) -> int:
 def _is_ambiguous_submission_error(exc: RpcResponseError) -> bool:
     text = str(exc).lower()
     return any(marker in text for marker in AMBIGUOUS_SUBMISSION_MARKERS)
+
+
+def _record_transition(
+    conn: sqlite3.Connection,
+    *,
+    intent_id: int,
+    from_state: IntentState | None,
+    to_state: IntentState,
+    reason: str | None,
+) -> None:
+    if from_state == to_state:
+        return
+    conn.execute(
+        """
+        INSERT INTO execution_transitions(intent_id,from_state,to_state,reason)
+        VALUES(?,?,?,?)
+        """,
+        (
+            intent_id,
+            None if from_state is None else from_state.value,
+            to_state.value,
+            reason,
+        ),
+    )
 
 
 @dataclass(slots=True)
@@ -201,6 +246,7 @@ class ExecutionIntentStore:
             raise ValueError("value_wei must be non-negative")
         sender_normalized = _normalize_address(sender)
         target_normalized = _normalize_address(target)
+        created_intent_id: int | None = None
         with closing(self.connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -226,6 +272,14 @@ class ExecutionIntentStore:
                 intent_id = cursor.lastrowid
                 if intent_id is None:
                     raise RuntimeError("SQLite did not return an execution intent id")
+                created_intent_id = int(intent_id)
+                _record_transition(
+                    conn,
+                    intent_id=created_intent_id,
+                    from_state=None,
+                    to_state=IntentState.CREATED,
+                    reason="intent_created",
+                )
                 row = conn.execute(
                     "SELECT * FROM execution_intents WHERE id=?", (intent_id,)
                 ).fetchone()
@@ -271,6 +325,13 @@ class ExecutionIntentStore:
                 """,
                 (nonce, IntentState.RESERVED.value, intent_id),
             )
+            _record_transition(
+                conn,
+                intent_id=intent_id,
+                from_state=intent.state,
+                to_state=IntentState.RESERVED,
+                reason=f"nonce_reserved:{nonce}",
+            )
             conn.commit()
         return self.get(intent_id)
 
@@ -300,6 +361,13 @@ class ExecutionIntentStore:
                 VALUES(?,?,?)
                 """,
                 (intent_id, attempt_number, "started"),
+            )
+            _record_transition(
+                conn,
+                intent_id=intent_id,
+                from_state=IntentState.RESERVED,
+                to_state=IntentState.SUBMITTING,
+                reason=f"submission_attempt:{attempt_number}",
             )
             conn.commit()
         return self.get(intent_id)
@@ -347,7 +415,8 @@ class ExecutionIntentStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"execution intent not found: {intent_id}")
-            if IntentState(str(row["state"])) != IntentState.SUBMITTING:
+            old_state = IntentState(str(row["state"]))
+            if old_state != IntentState.SUBMITTING:
                 raise ValueError("intent is not awaiting a submission outcome")
             attempt_number = int(row["attempts"])
             conn.execute(
@@ -369,6 +438,13 @@ class ExecutionIntentStore:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("submission attempt journal is inconsistent")
+            _record_transition(
+                conn,
+                intent_id=intent_id,
+                from_state=old_state,
+                to_state=state,
+                reason=error or outcome,
+            )
             conn.commit()
         return self.get(intent_id)
 
@@ -391,7 +467,8 @@ class ExecutionIntentStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"execution intent not found: {intent_id}")
-            if IntentState(str(row["state"])) != IntentState.SUBMITTING:
+            old_state = IntentState(str(row["state"]))
+            if old_state != IntentState.SUBMITTING:
                 raise ValueError("intent is not an interrupted submission")
             attempt_number = int(row["attempts"])
             conn.execute(
@@ -412,6 +489,13 @@ class ExecutionIntentStore:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("interrupted submission journal is inconsistent")
+            _record_transition(
+                conn,
+                intent_id=intent_id,
+                from_state=old_state,
+                to_state=state,
+                reason=error,
+            )
             conn.commit()
         return self.get(intent_id)
 
@@ -427,6 +511,13 @@ class ExecutionIntentStore:
         if state in {IntentState.CREATED, IntentState.RESERVED, IntentState.SUBMITTING}:
             raise ValueError("invalid reconciliation state")
         with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT state FROM execution_intents WHERE id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"execution intent not found: {intent_id}")
+            old_state = IntentState(str(row["state"]))
             cursor = conn.execute(
                 """
                 UPDATE execution_intents
@@ -444,6 +535,13 @@ class ExecutionIntentStore:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"execution intent not found: {intent_id}")
+            _record_transition(
+                conn,
+                intent_id=intent_id,
+                from_state=old_state,
+                to_state=state,
+                reason=error,
+            )
             conn.commit()
         return self.get(intent_id)
 
@@ -455,6 +553,59 @@ class ExecutionIntentStore:
                 WHERE intent_id=? ORDER BY attempt_number
                 """,
                 (intent_id,),
+            ).fetchall()
+
+    def transitions(self, intent_id: int | None = None) -> list[sqlite3.Row]:
+        with closing(self.connect()) as conn:
+            if intent_id is None:
+                return conn.execute(
+                    "SELECT * FROM execution_transitions ORDER BY id"
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT * FROM execution_transitions
+                WHERE intent_id=? ORDER BY id
+                """,
+                (intent_id,),
+            ).fetchall()
+
+    def record_observation(
+        self,
+        *,
+        scenario: str,
+        observed: bool,
+        detail: Mapping[str, object],
+    ) -> None:
+        if not scenario:
+            raise ValueError("scenario is required")
+        detail_json = json.dumps(detail, sort_keys=True, separators=(",", ":"))
+        expected = (1 if observed else 0, detail_json)
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT observed,detail_json FROM execution_observations WHERE scenario=?",
+                (scenario,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO execution_observations(scenario,observed,detail_json)
+                    VALUES(?,?,?)
+                    """,
+                    (scenario, expected[0], expected[1]),
+                )
+            else:
+                actual = (int(row["observed"]), str(row["detail_json"]))
+                if actual != expected:
+                    raise ValueError(
+                        f"observation {scenario!r} already exists with different evidence"
+                    )
+            conn.commit()
+
+    def observations(self) -> list[sqlite3.Row]:
+        with closing(self.connect()) as conn:
+            return conn.execute(
+                "SELECT * FROM execution_observations ORDER BY id"
             ).fetchall()
 
 
