@@ -100,7 +100,10 @@ def test_legacy_model_uses_only_explicit_cex_history_feature_set() -> None:
     assert report.fold_count > 0
     assert report.metrics.n_scored > 0
     validate_oos_provenance(report.signals.values(), purge_rounds=2)
-    assert all(signal.fold and signal.fold.startswith("legacy-wf-") for signal in report.signals.values())
+    assert all(
+        signal.fold and signal.fold.startswith("legacy-wf-")
+        for signal in report.signals.values()
+    )
 
 
 def test_unavailable_oracle_and_pool_values_cannot_change_legacy_predictions() -> None:
