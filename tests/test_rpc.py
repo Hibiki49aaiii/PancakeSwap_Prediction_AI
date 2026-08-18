@@ -111,3 +111,40 @@ def test_local_fork_transaction_lookup_uses_eth_get_transaction_by_hash(
     assert result is not None and result["hash"] == tx_hash
     assert seen_payload["method"] == "eth_getTransactionByHash"
     assert seen_payload["params"] == [tx_hash]
+
+
+def test_local_fork_fault_controls_use_anvil_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[object]]] = []
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        method = str(payload["method"])
+        params = list(payload["params"])
+        calls.append((method, params))
+        result: object = "0xabc" if method == "anvil_snapshot" else True
+        return _Response({"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    tx_hash = "0x" + "aa" * 32
+
+    client.set_automine(False)
+    client.drop_transaction(tx_hash)
+    snapshot_id = client.snapshot()
+    client.revert(snapshot_id)
+    client.stop_impersonating_account("0x" + "11" * 20)
+
+    assert snapshot_id == "0xabc"
+    assert calls == [
+        ("anvil_setAutomine", [False]),
+        ("anvil_dropTransaction", [tx_hash]),
+        ("anvil_snapshot", []),
+        ("anvil_revert", ["0xabc"]),
+        ("anvil_stopImpersonatingAccount", ["0x" + "11" * 20]),
+    ]
