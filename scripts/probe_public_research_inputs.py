@@ -6,8 +6,13 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
+
+from pancake_prediction.contracts import MARKETS
+from pancake_prediction.deployment_provenance import (
+    decode_prediction_v2_creation_transaction,
+)
 
 PREDICTION_BNBUSD = "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA"
 PREDICTION_CREATION_BLOCK = 10_333_825
@@ -121,15 +126,97 @@ def _json_rpc(endpoint: str, method: str, params: list[object], timeout: float) 
     return body["result"]
 
 
+def _probe_creation_transaction(
+    endpoint: str,
+    timeout: float,
+) -> tuple[bool, dict[str, object] | None, str | None]:
+    market = MARKETS["BNBUSD"]
+    if market.creation_tx_hash is None:
+        return False, None, "verified creation transaction metadata is missing"
+    try:
+        raw = _json_rpc(
+            endpoint,
+            "eth_getTransactionByHash",
+            [market.creation_tx_hash],
+            timeout,
+        )
+        if not isinstance(raw, dict):
+            raise RuntimeError("creation transaction lookup did not return an object")
+        provenance = decode_prediction_v2_creation_transaction(
+            cast(dict[str, object], raw),
+            market,
+        )
+        return True, provenance.as_dict(), None
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return False, None, f"{type(exc).__name__}: {exc}"
+
+
+def _probe_historical_logs(
+    endpoint: str,
+    timeout: float,
+) -> tuple[bool, int | None, str | None]:
+    try:
+        raw = _json_rpc(
+            endpoint,
+            "eth_getLogs",
+            [
+                {
+                    "address": PREDICTION_BNBUSD,
+                    "fromBlock": hex(PREDICTION_CREATION_BLOCK),
+                    "toBlock": hex(PREDICTION_CREATION_BLOCK),
+                }
+            ],
+            timeout,
+        )
+        if not isinstance(raw, list):
+            raise RuntimeError("historical log lookup did not return an array")
+        return len(raw) > 0, len(raw), None
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return False, None, f"{type(exc).__name__}: {exc}"
+
+
+def _probe_archive_state(
+    endpoint: str,
+    timeout: float,
+) -> tuple[bool, bool, str | None]:
+    historical_block = hex(PREDICTION_CREATION_BLOCK + 1)
+    try:
+        code = _json_rpc(
+            endpoint,
+            "eth_getCode",
+            [PREDICTION_BNBUSD, historical_block],
+            timeout,
+        )
+        historical_code = isinstance(code, str) and code not in {"0x", "0x0", ""}
+        paused = _json_rpc(
+            endpoint,
+            "eth_call",
+            [{"to": PREDICTION_BNBUSD, "data": PAUSED_SELECTOR}, historical_block],
+            timeout,
+        )
+        historical_call = (
+            isinstance(paused, str) and paused.startswith("0x") and len(paused) >= 66
+        )
+        return historical_code, historical_call, None
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return False, False, f"{type(exc).__name__}: {exc}"
+
+
 def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
     started = time.monotonic()
     result: dict[str, object] = {
         "endpoint": endpoint,
         "chain_id": None,
         "latest_block": None,
+        "creation_transaction_ready": False,
+        "creation_provenance": None,
+        "historical_logs_ready": False,
+        "historical_log_count": None,
+        "log_replay_ready": False,
         "historical_code": False,
         "historical_paused_call": False,
         "archive_ready": False,
+        "errors": {},
         "error": None,
     }
     try:
@@ -143,34 +230,44 @@ def _probe_rpc(endpoint: str, timeout: float) -> dict[str, object]:
         if not isinstance(latest_raw, str):
             raise RuntimeError("eth_blockNumber did not return a hex string")
         result["latest_block"] = int(latest_raw, 16)
-
-        historical_block = hex(PREDICTION_CREATION_BLOCK + 1)
-        code = _json_rpc(
-            endpoint,
-            "eth_getCode",
-            [PREDICTION_BNBUSD, historical_block],
-            timeout,
-        )
-        result["historical_code"] = (
-            isinstance(code, str) and code not in {"0x", "0x0", ""}
-        )
-
-        paused = _json_rpc(
-            endpoint,
-            "eth_call",
-            [{"to": PREDICTION_BNBUSD, "data": PAUSED_SELECTOR}, historical_block],
-            timeout,
-        )
-        result["historical_paused_call"] = (
-            isinstance(paused, str) and paused.startswith("0x") and len(paused) >= 66
-        )
-        result["archive_ready"] = bool(
-            chain_id == 56
-            and result["historical_code"]
-            and result["historical_paused_call"]
-        )
-    except (OSError, ValueError, RuntimeError, http.client.HTTPException) as exc:
+    except (TypeError, ValueError, RuntimeError) as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        return result
+
+    errors: dict[str, str] = {}
+    creation_ready, provenance, creation_error = _probe_creation_transaction(
+        endpoint,
+        timeout,
+    )
+    result["creation_transaction_ready"] = creation_ready
+    result["creation_provenance"] = provenance
+    if creation_error is not None:
+        errors["creation_transaction"] = creation_error
+
+    logs_ready, log_count, logs_error = _probe_historical_logs(endpoint, timeout)
+    result["historical_logs_ready"] = logs_ready
+    result["historical_log_count"] = log_count
+    if logs_error is not None:
+        errors["historical_logs"] = logs_error
+
+    historical_code, historical_call, archive_error = _probe_archive_state(
+        endpoint,
+        timeout,
+    )
+    result["historical_code"] = historical_code
+    result["historical_paused_call"] = historical_call
+    if archive_error is not None:
+        errors["archive_state"] = archive_error
+
+    chain_id = int(result["chain_id"])
+    result["log_replay_ready"] = bool(
+        chain_id == 56 and creation_ready and logs_ready
+    )
+    result["archive_ready"] = bool(
+        chain_id == 56 and historical_code and historical_call
+    )
+    result["errors"] = errors
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return result
 
@@ -223,12 +320,15 @@ def build_report(timeout: float) -> dict[str, Any]:
     rpc_results = [_probe_rpc(endpoint, timeout) for endpoint in PUBLIC_BSC_ENDPOINTS]
     binance_results = [_probe_binance_archive(item, timeout) for item in BINANCE_ARCHIVES]
     return {
-        "probe_version": 2,
+        "probe_version": 3,
         "prediction_contract": PREDICTION_BNBUSD.lower(),
         "historical_probe_block": PREDICTION_CREATION_BLOCK + 1,
         "rpc_results": rpc_results,
         "archive_ready_endpoints": [
             item["endpoint"] for item in rpc_results if item["archive_ready"]
+        ],
+        "log_replay_ready_endpoints": [
+            item["endpoint"] for item in rpc_results if item["log_replay_ready"]
         ],
         "binance_results": binance_results,
         "binance_ready": all(
