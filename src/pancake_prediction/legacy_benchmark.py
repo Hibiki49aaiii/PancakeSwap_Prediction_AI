@@ -200,13 +200,18 @@ def run_legacy_economic_benchmark(
         if signal.generated_at > decision_timestamp or projection.generated_at > decision_timestamp:
             skipped_oos_provenance += 1
             continue
+        signal_train_max = signal.train_max_epoch
+        projection_train_max = projection.train_max_epoch
+        if signal_train_max is None or projection_train_max is None:
+            skipped_oos_provenance += 1
+            continue
         if not _purged_train_max_ok(
             record.epoch,
-            signal.train_max_epoch,
+            signal_train_max,
             config.purge_rounds,
         ) or not _purged_train_max_ok(
             record.epoch,
-            projection.train_max_epoch,
+            projection_train_max,
             config.purge_rounds,
         ):
             skipped_oos_provenance += 1
@@ -241,8 +246,6 @@ def run_legacy_economic_benchmark(
         if estimated_ev <= config.min_expected_value_wei:
             skipped_no_positive_ev += 1
             continue
-        assert signal.train_max_epoch is not None
-        assert projection.train_max_epoch is not None
         trades.append(
             LegacyBenchmarkTrade(
                 epoch=record.epoch,
@@ -260,8 +263,8 @@ def run_legacy_economic_benchmark(
                 pnl_wei=_realized_pnl(record, side, config),
                 signal_model_id=signal.model_id,
                 projection_model_id=projection.model_id,
-                signal_train_max_epoch=signal.train_max_epoch,
-                projection_train_max_epoch=projection.train_max_epoch,
+                signal_train_max_epoch=signal_train_max,
+                projection_train_max_epoch=projection_train_max,
             )
         )
 
