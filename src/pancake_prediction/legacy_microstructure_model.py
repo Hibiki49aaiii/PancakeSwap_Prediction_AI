@@ -49,10 +49,13 @@ def _outcomes(
     return outcomes, generated_at_floors, ties
 
 
-def run_legacy_microstructure_v2_model(
+def run_legacy_microstructure_model(
     rounds: tuple[LegacyRoundRecord, ...],
     rows: Iterable[ResearchFeatureRow],
     *,
+    feature_names: tuple[str, ...],
+    feature_set_id: str,
+    fold_prefix: str,
     min_train_rounds: int = 200,
     test_rounds: int = 100,
     purge_rounds: int = 2,
@@ -61,13 +64,12 @@ def run_legacy_microstructure_v2_model(
     calibration_bins: int = 10,
     calibration_shrinkage: int = 20,
 ) -> WalkForwardBaselineResult:
-    """Evaluate v2 only on purged/embargoed held-out rounds.
+    """Evaluate an explicit microstructure feature set under one OOS discipline."""
 
-    The feature set is a strict extension of the frozen v1 CEX/history feature set.
-    Microstructure inputs must already be availability-filtered before this function
-    receives them; this function never reads raw target-round trades directly.
-    """
-
+    if not feature_names or len(set(feature_names)) != len(feature_names):
+        raise ValueError("feature_names must be non-empty and unique")
+    if not feature_set_id.strip() or not fold_prefix.strip():
+        raise ValueError("feature_set_id and fold_prefix are required")
     if calibration_rounds < 2:
         raise ValueError("calibration_rounds must be at least 2")
     outcomes, generated_at_floors, ties = _outcomes(rounds)
@@ -103,7 +105,7 @@ def run_legacy_microstructure_v2_model(
         model = fit_logistic_baseline(
             fit_rows,
             outcomes,
-            feature_names=LEGACY_MICROSTRUCTURE_V2_FEATURE_NAMES,
+            feature_names=feature_names,
         )
         calibrator = fit_histogram_calibrator(
             [
@@ -113,7 +115,7 @@ def run_legacy_microstructure_v2_model(
             bins=calibration_bins,
             shrinkage=calibration_shrinkage,
             train_max_epoch=calibration_rows[-1].epoch,
-            model_id=f"{model.model_id}-legacy-micro-v2-cal",
+            model_id=f"{model.model_id}-{feature_set_id}-cal",
         )
         for epoch in epochs:
             if not fold.test_start_epoch <= epoch <= fold.test_end_epoch:
@@ -124,7 +126,7 @@ def run_legacy_microstructure_v2_model(
                 p_bull_ppm=calibrator.predict_ppm(model.predict_ppm(row)),
                 generated_at=row.decision_timestamp_ms // 1_000,
                 train_max_epoch=fold.train_end_epoch,
-                fold=f"legacy-micro-v2-wf-{fold.fold}",
+                fold=f"{fold_prefix}-{fold.fold}",
             )
 
     metrics = evaluate_binary_oos(
@@ -136,10 +138,40 @@ def run_legacy_microstructure_v2_model(
         n_ties_excluded=ties,
     )
     return WalkForwardBaselineResult(
-        feature_set_id="legacy-cex-microstructure-v2",
-        feature_names=LEGACY_MICROSTRUCTURE_V2_FEATURE_NAMES,
+        feature_set_id=feature_set_id,
+        feature_names=feature_names,
         signals=signals,
         metrics=metrics,
         fold_count=len(folds),
         calibration_failures=calibration_failures,
+    )
+
+
+def run_legacy_microstructure_v2_model(
+    rounds: tuple[LegacyRoundRecord, ...],
+    rows: Iterable[ResearchFeatureRow],
+    *,
+    min_train_rounds: int = 200,
+    test_rounds: int = 100,
+    purge_rounds: int = 2,
+    embargo_rounds: int = 2,
+    calibration_rounds: int = 50,
+    calibration_bins: int = 10,
+    calibration_shrinkage: int = 20,
+) -> WalkForwardBaselineResult:
+    """Evaluate the frozen 23-feature v2 under purged/embargoed OOS folds."""
+
+    return run_legacy_microstructure_model(
+        rounds,
+        rows,
+        feature_names=LEGACY_MICROSTRUCTURE_V2_FEATURE_NAMES,
+        feature_set_id="legacy-cex-microstructure-v2",
+        fold_prefix="legacy-micro-v2-wf",
+        min_train_rounds=min_train_rounds,
+        test_rounds=test_rounds,
+        purge_rounds=purge_rounds,
+        embargo_rounds=embargo_rounds,
+        calibration_rounds=calibration_rounds,
+        calibration_bins=calibration_bins,
+        calibration_shrinkage=calibration_shrinkage,
     )
