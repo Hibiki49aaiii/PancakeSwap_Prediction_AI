@@ -141,6 +141,16 @@ def _observe_restart_recovery(
         and len(attempts) == 1
         and str(attempts[0]["outcome"]) == "interrupted"
     )
+    if observed:
+        restarted_store.record_observation(
+            scenario="restart_recovery",
+            observed=True,
+            detail={
+                "intent_id": intent.id,
+                "nonce": recovered.nonce,
+                "attempt_outcome": "interrupted",
+            },
+        )
     restarted_store.set_reconciliation_state(
         intent.id,
         IntentState.FAILED,
@@ -190,6 +200,16 @@ def _observe_drop_recovery(
     if resubmitted.state != IntentState.SUBMITTED:
         raise RuntimeError("drop-recovered intent did not resubmit")
     _finalize(coordinator, intent.id)
+    store.record_observation(
+        scenario="dropped_or_replaced_recovery",
+        observed=True,
+        detail={
+            "intent_id": intent.id,
+            "dropped_tx_hash": tx_hash,
+            "reserved_nonce": submitted.nonce,
+            "replacement_tx_hash": resubmitted.current_tx_hash,
+        },
+    )
     return True
 
 
@@ -232,6 +252,17 @@ def _observe_reorg_recovery(
     if resubmitted.state != IntentState.SUBMITTED:
         raise RuntimeError("reorg-recovered intent did not resubmit")
     _finalize(coordinator, intent.id)
+    store.record_observation(
+        scenario="reorg_reconciliation",
+        observed=True,
+        detail={
+            "intent_id": intent.id,
+            "snapshot_id": snapshot_id,
+            "reorged_tx_hash": tx_hash,
+            "reserved_nonce": mined.nonce,
+            "replacement_tx_hash": resubmitted.current_tx_hash,
+        },
+    )
     return True
 
 
@@ -292,29 +323,38 @@ def run_campaign(
     _submit_and_finalize(store, rpc, bull)
     _submit_and_finalize(store, rpc, bear)
 
+    restart_recovery = _observe_restart_recovery(
+        db_path,
+        store,
+        rpc,
+        epoch=epoch,
+        stake_wei=stake_wei,
+    )
+    dropped_recovery = _observe_drop_recovery(
+        store,
+        rpc,
+        epoch=epoch,
+        stake_wei=stake_wei,
+    )
+    reorg_recovery = _observe_reorg_recovery(
+        store,
+        rpc,
+        epoch=epoch,
+        stake_wei=stake_wei,
+    )
+    non_loopback_rejection = _observe_non_loopback_rejection(non_loopback_probe_url)
+    if non_loopback_rejection:
+        store.record_observation(
+            scenario="non_loopback_rejection",
+            observed=True,
+            detail={"probe_url": non_loopback_probe_url},
+        )
+
     scenarios = {
-        "restart_recovery": _observe_restart_recovery(
-            db_path,
-            store,
-            rpc,
-            epoch=epoch,
-            stake_wei=stake_wei,
-        ),
-        "dropped_or_replaced_recovery": _observe_drop_recovery(
-            store,
-            rpc,
-            epoch=epoch,
-            stake_wei=stake_wei,
-        ),
-        "reorg_reconciliation": _observe_reorg_recovery(
-            store,
-            rpc,
-            epoch=epoch,
-            stake_wei=stake_wei,
-        ),
-        "non_loopback_rejection": _observe_non_loopback_rejection(
-            non_loopback_probe_url
-        ),
+        "restart_recovery": restart_recovery,
+        "dropped_or_replaced_recovery": dropped_recovery,
+        "reorg_reconciliation": reorg_recovery,
+        "non_loopback_rejection": non_loopback_rejection,
     }
     if not all(scenarios.values()):
         raise RuntimeError(f"one or more Stage 5B scenarios were not observed: {scenarios}")
