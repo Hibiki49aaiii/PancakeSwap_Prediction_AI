@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 
 from .economics import PPM
@@ -131,36 +131,45 @@ def _ece_10(points: list[tuple[float, int]]) -> float:
     return error
 
 
-def evaluate_oos(
-    replay: ReplaySnapshot,
-    signals: dict[int, OosSignal],
+def evaluate_binary_oos(
     *,
+    market: str,
+    outcomes: Mapping[int, int],
+    signals: Mapping[int, OosSignal],
     purge_rounds: int = 2,
+    generated_at_floor: Mapping[int, int] | None = None,
+    n_ties_excluded: int = 0,
 ) -> OosMetrics:
+    """Score purged binary OOS predictions from an explicit epoch/outcome mapping."""
+
+    if n_ties_excluded < 0:
+        raise ValueError("n_ties_excluded must be non-negative")
     validate_oos_provenance(signals.values(), purge_rounds=purge_rounds)
     points: list[tuple[float, int]] = []
-    ties = 0
     missing = 0
-    for record in replay.rounds:
-        if record.label == "unresolved":
-            continue
-        if record.label == "tie":
-            ties += 1
-            continue
-        signal = signals.get(record.epoch)
+    for epoch in sorted(outcomes):
+        outcome = outcomes[epoch]
+        if outcome not in (0, 1):
+            raise ValueError(f"outcome for epoch {epoch} must be binary 0/1")
+        signal = signals.get(epoch)
         if signal is None:
             missing += 1
             continue
-        if record.start_timestamp is not None and signal.generated_at < record.start_timestamp:
-            raise ValueError(f"signal for epoch {record.epoch} predates round start")
-        probability = signal.p_bull_ppm / PPM
-        points.append((probability, 1 if record.label == "bull" else 0))
+        if signal.epoch != epoch:
+            raise ValueError(f"signal map key/epoch mismatch at epoch {epoch}")
+        if generated_at_floor is not None:
+            floor = generated_at_floor.get(epoch)
+            if floor is None:
+                raise ValueError(f"missing generated_at floor for epoch {epoch}")
+            if signal.generated_at < floor:
+                raise ValueError(f"signal for epoch {epoch} predates allowed observation window")
+        points.append((signal.p_bull_ppm / PPM, outcome))
 
     if not points:
         return OosMetrics(
-            market=replay.market,
+            market=market,
             n_scored=0,
-            n_ties_excluded=ties,
+            n_ties_excluded=n_ties_excluded,
             n_missing_signal=missing,
             bull_base_rate=None,
             brier_score=None,
@@ -184,9 +193,9 @@ def evaluate_oos(
         log_loss -= outcome * math.log(p) + (1 - outcome) * math.log(1.0 - p)
         successes += int((probability >= 0.5) == bool(outcome))
     return OosMetrics(
-        market=replay.market,
+        market=market,
         n_scored=n,
-        n_ties_excluded=ties,
+        n_ties_excluded=n_ties_excluded,
         n_missing_signal=missing,
         bull_base_rate=base_rate,
         brier_score=brier,
@@ -195,4 +204,33 @@ def evaluate_oos(
         ece_10=_ece_10(points),
         accuracy=successes / n,
         accuracy_ci95=_wilson_interval(successes, n),
+    )
+
+
+def evaluate_oos(
+    replay: ReplaySnapshot,
+    signals: dict[int, OosSignal],
+    *,
+    purge_rounds: int = 2,
+) -> OosMetrics:
+    outcomes: dict[int, int] = {}
+    floors: dict[int, int] = {}
+    ties = 0
+    for record in replay.rounds:
+        if record.label == "unresolved":
+            continue
+        if record.label == "tie":
+            ties += 1
+            continue
+        outcomes[record.epoch] = 1 if record.label == "bull" else 0
+        if record.start_timestamp is not None:
+            floors[record.epoch] = record.start_timestamp
+    floor_map: Mapping[int, int] | None = floors if len(floors) == len(outcomes) else None
+    return evaluate_binary_oos(
+        market=replay.market,
+        outcomes=outcomes,
+        signals=signals,
+        purge_rounds=purge_rounds,
+        generated_at_floor=floor_map,
+        n_ties_excluded=ties,
     )
