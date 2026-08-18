@@ -1,0 +1,64 @@
+name: legacy-rounds-audit
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - src/pancake_prediction/legacy_rounds.py
+      - tests/test_legacy_rounds.py
+      - scripts/audit_legacy_rounds.py
+      - .github/workflows/legacy-rounds-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: legacy-rounds-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Download pinned third-party benchmark dataset
+        run: |
+          mkdir -p /tmp/legacy-rounds artifacts evidence
+          curl -fsSL \
+            https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
+            -o /tmp/legacy-rounds/rounds.csv.gz
+      - name: Audit every legacy round
+        run: |
+          python scripts/audit_legacy_rounds.py \
+            --archive /tmp/legacy-rounds/rounds.csv.gz \
+            --output artifacts/legacy-rounds-audit.json
+          cp artifacts/legacy-rounds-audit.json evidence/legacy-rounds-audit.json
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-rounds-audit
+          path: artifacts/legacy-rounds-audit.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Persist audit evidence on branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/legacy-rounds-audit.json
+          if git diff --cached --quiet; then
+            echo 'Legacy round audit evidence unchanged.'
+            exit 0
+          fi
+          git commit -m 'chore: record legacy round audit evidence'
+          git pull --rebase origin agent/v0.7-alpha-research
+          git push origin HEAD:agent/v0.7-alpha-research
