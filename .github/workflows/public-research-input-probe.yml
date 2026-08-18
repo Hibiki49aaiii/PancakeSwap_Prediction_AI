@@ -67,6 +67,8 @@ jobs:
           cp artifacts/public-research-input-probe.json \
             evidence/public-research-input-probe.json
       - name: Download real Binance archives and checksums
+        id: download
+        continue-on-error: true
         run: |
           curl -fsSL \
             https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip \
@@ -81,7 +83,10 @@ jobs:
             https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM \
             -o /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip.CHECKSUM
       - name: Verify and inspect real Binance archives
+        id: inspect
+        continue-on-error: true
         run: |
+          set +e
           pcs-prediction binance-archive-inspect \
             --market BNBUSD \
             --archive /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip \
@@ -89,7 +94,9 @@ jobs:
             --venue spot \
             --timestamp-unit auto \
             --availability-lag-ms 0 \
-            > artifacts/binance-spot-inspect.json
+            > artifacts/binance-spot-inspect.json \
+            2> artifacts/binance-spot-inspect.err
+          spot_status=$?
           pcs-prediction binance-archive-inspect \
             --market BNBUSD \
             --archive /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip \
@@ -97,10 +104,21 @@ jobs:
             --venue um_futures \
             --timestamp-unit milliseconds \
             --availability-lag-ms 0 \
-            > artifacts/binance-perp-inspect.json
+            > artifacts/binance-perp-inspect.json \
+            2> artifacts/binance-perp-inspect.err
+          perp_status=$?
+          if [ "$spot_status" -ne 0 ] || [ "$perp_status" -ne 0 ]; then
+            exit 1
+          fi
       - name: Ingest real Binance archives into ClickHouse
+        id: ingest
+        continue-on-error: true
         run: |
-          pcs-clickhouse schema-check
+          set +e
+          pcs-clickhouse schema-check \
+            > artifacts/binance-schema-check.json \
+            2> artifacts/binance-schema-check.err
+          schema_status=$?
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
             --archive /tmp/binance-real/spot/BNBUSDT-aggTrades-2026-08-01.zip \
@@ -108,7 +126,9 @@ jobs:
             --venue spot \
             --timestamp-unit auto \
             --availability-lag-ms 0 \
-            > artifacts/binance-spot-ingest.json
+            > artifacts/binance-spot-ingest.json \
+            2> artifacts/binance-spot-ingest.err
+          spot_status=$?
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
             --archive /tmp/binance-real/perp/BNBUSDT-aggTrades-2026-08-01.zip \
@@ -116,37 +136,82 @@ jobs:
             --venue um_futures \
             --timestamp-unit milliseconds \
             --availability-lag-ms 0 \
-            > artifacts/binance-perp-ingest.json
+            > artifacts/binance-perp-ingest.json \
+            2> artifacts/binance-perp-ingest.err
+          perp_status=$?
+          if [ "$schema_status" -ne 0 ] || [ "$spot_status" -ne 0 ] || [ "$perp_status" -ne 0 ]; then
+            exit 1
+          fi
       - name: Build real Binance evidence
+        id: evidence
+        if: always()
+        env:
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INSPECT_OUTCOME: ${{ steps.inspect.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           from pancake_prediction.clickhouse import ClickHouseHttpClient
 
           root = Path("artifacts")
-          client = ClickHouseHttpClient("http://127.0.0.1:8123")
-          rows = list(
-              client.query_json_rows(
-                  """
-                  SELECT
-                      venue,
-                      timestamp_unit,
-                      availability_lag_ms,
-                      count() AS rows,
-                      min(aggregate_trade_id) AS first_aggregate_trade_id,
-                      max(aggregate_trade_id) AS last_aggregate_trade_id,
-                      min(trade_timestamp_ms) AS first_trade_timestamp_ms,
-                      max(trade_timestamp_ms) AS last_trade_timestamp_ms
-                  FROM binance_agg_trades FINAL
-                  GROUP BY venue, timestamp_unit, availability_lag_ms
-                  ORDER BY venue
-                  """
+
+          def load_json(name: str):
+              path = root / name
+              if not path.exists() or not path.read_text().strip():
+                  return None
+              try:
+                  return json.loads(path.read_text())
+              except json.JSONDecodeError as exc:
+                  return {"json_error": str(exc)}
+
+          def load_error(name: str):
+              path = root / name
+              if not path.exists():
+                  return None
+              text = path.read_text(errors="replace").strip()
+              return text[-4000:] if text else None
+
+          query_error = None
+          groups = []
+          try:
+              client = ClickHouseHttpClient("http://127.0.0.1:8123")
+              groups = list(
+                  client.query_json_rows(
+                      """
+                      SELECT
+                          venue,
+                          timestamp_unit,
+                          availability_lag_ms,
+                          count() AS rows,
+                          min(aggregate_trade_id) AS first_aggregate_trade_id,
+                          max(aggregate_trade_id) AS last_aggregate_trade_id,
+                          min(trade_timestamp_ms) AS first_trade_timestamp_ms,
+                          max(trade_timestamp_ms) AS last_trade_timestamp_ms
+                      FROM binance_agg_trades FINAL
+                      GROUP BY venue, timestamp_unit, availability_lag_ms
+                      ORDER BY venue
+                      """
+                  )
               )
+          except Exception as exc:
+              query_error = f"{type(exc).__name__}: {exc}"
+
+          outcomes = {
+              "download": os.environ.get("DOWNLOAD_OUTCOME"),
+              "inspect": os.environ.get("INSPECT_OUTCOME"),
+              "ingest": os.environ.get("INGEST_OUTCOME"),
+          }
+          validation_ready = (
+              all(value == "success" for value in outcomes.values())
+              and query_error is None
+              and len(groups) == 2
           )
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "market": "BNBUSD",
               "archive_date": "2026-08-01",
               "availability_lag_ms": 0,
@@ -154,19 +219,22 @@ jobs:
                   "zero is used only for parser/ingest validation; "
                   "it is not profitability evidence"
               ),
-              "spot_inspect": json.loads(
-                  (root / "binance-spot-inspect.json").read_text()
-              ),
-              "perp_inspect": json.loads(
-                  (root / "binance-perp-inspect.json").read_text()
-              ),
-              "spot_ingest": json.loads(
-                  (root / "binance-spot-ingest.json").read_text()
-              ),
-              "perp_ingest": json.loads(
-                  (root / "binance-perp-ingest.json").read_text()
-              ),
-              "clickhouse_final_groups": rows,
+              "validation_ready": validation_ready,
+              "step_outcomes": outcomes,
+              "spot_inspect": load_json("binance-spot-inspect.json"),
+              "perp_inspect": load_json("binance-perp-inspect.json"),
+              "schema_check": load_json("binance-schema-check.json"),
+              "spot_ingest": load_json("binance-spot-ingest.json"),
+              "perp_ingest": load_json("binance-perp-ingest.json"),
+              "clickhouse_final_groups": groups,
+              "clickhouse_query_error": query_error,
+              "errors": {
+                  "spot_inspect": load_error("binance-spot-inspect.err"),
+                  "perp_inspect": load_error("binance-perp-inspect.err"),
+                  "schema_check": load_error("binance-schema-check.err"),
+                  "spot_ingest": load_error("binance-spot-ingest.err"),
+                  "perp_ingest": load_error("binance-perp-ingest.err"),
+              },
           }
           output = root / "binance-real-sample-2026-08-01.json"
           output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -176,6 +244,7 @@ jobs:
           print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
           PY
       - name: Upload evidence artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: public-research-input-evidence
@@ -185,6 +254,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Persist evidence on branch
+        if: always()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -198,3 +268,16 @@ jobs:
           git commit -m 'chore: record public research input evidence'
           git pull --rebase origin agent/v0.7-alpha-research
           git push origin HEAD:agent/v0.7-alpha-research
+      - name: Enforce real Binance validation result
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("evidence/binance-real-sample-2026-08-01.json").read_text()
+          )
+          if not payload["validation_ready"]:
+              raise SystemExit(1)
+          PY
