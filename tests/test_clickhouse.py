@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
 
 from pancake_prediction.clickhouse import (
     ClickHouseHttpClient,
+    QueryParameter,
     ingest_binance_archive,
     load_binance_trade_window,
 )
@@ -18,11 +19,19 @@ from pancake_prediction.clickhouse import (
 class RecordingClient(ClickHouseHttpClient):
     def __init__(self, response: bytes = b"") -> None:
         super().__init__("http://127.0.0.1:8123")
-        self.calls: list[tuple[str, bytes]] = []
+        self.calls: list[
+            tuple[str, bytes, Mapping[str, QueryParameter] | None]
+        ] = []
         self.response = response
 
-    def _post(self, query: str, data: bytes = b"") -> bytes:
-        self.calls.append((query, data))
+    def _post(
+        self,
+        query: str,
+        data: bytes = b"",
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> bytes:
+        self.calls.append((query, data, parameters))
         return self.response
 
 
@@ -30,9 +39,16 @@ class RecordingSource:
     def __init__(self, rows: tuple[dict[str, object], ...]) -> None:
         self.rows = rows
         self.query = ""
+        self.parameters: Mapping[str, QueryParameter] | None = None
 
-    def query_json_rows(self, query: str) -> Iterator[dict[str, object]]:
+    def query_json_rows(
+        self,
+        query: str,
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> Iterator[dict[str, object]]:
         self.query = query
+        self.parameters = parameters
         yield from self.rows
 
 
@@ -62,8 +78,8 @@ def test_clickhouse_insert_batches_json_each_row_without_full_archive_materializ
     report = client.insert_json_rows("binance_agg_trades", rows, batch_size=2)
     assert report.rows == 5
     assert report.batches == 3
-    assert [len(data.splitlines()) for _, data in client.calls] == [2, 2, 1]
-    assert all(query.endswith("FORMAT JSONEachRow") for query, _ in client.calls)
+    assert [len(data.splitlines()) for _, data, _ in client.calls] == [2, 2, 1]
+    assert all(query.endswith("FORMAT JSONEachRow") for query, _, _ in client.calls)
 
 
 def test_ingest_binance_archive_verifies_checksum_and_persists_provenance(
@@ -92,7 +108,7 @@ def test_ingest_binance_archive_verifies_checksum_and_persists_provenance(
 
     rows = [
         json.loads(line)
-        for _, payload in client.calls
+        for _, payload, _ in client.calls
         for line in payload.splitlines()
     ]
     assert len(rows) == 3
@@ -119,7 +135,7 @@ def test_ingest_rejects_bad_checksum_before_any_clickhouse_insert(tmp_path: Path
     assert client.calls == []
 
 
-def test_trade_window_query_uses_final_and_exact_latency_assumption() -> None:
+def test_trade_window_query_uses_final_and_typed_parameters() -> None:
     source = RecordingSource(
         (
             {
@@ -144,6 +160,11 @@ def test_trade_window_query_uses_final_and_exact_latency_assumption() -> None:
     assert len(trades) == 1
     assert trades[0].aggregate_trade_id == 42
     assert "FROM binance_agg_trades FINAL" in source.query
-    assert "availability_lag_ms=25" in source.query
-    assert "trade_timestamp_ms>=9000" in source.query
-    assert "trade_timestamp_ms<11000" in source.query
+    assert "availability_lag_ms={availability_lag_ms:UInt32}" in source.query
+    assert source.parameters == {
+        "venue": "spot",
+        "symbol": "BNBUSDT",
+        "availability_lag_ms": 25,
+        "start_timestamp_ms": 9_000,
+        "end_timestamp_ms": 11_000,
+    }
