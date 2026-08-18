@@ -1,0 +1,146 @@
+name: stage5-fork-campaign
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/stage5-fork-campaign.yml
+      - scripts/discover_stage5_fork_block.py
+      - scripts/run_stage5_fork_campaign.py
+      - scripts/verify_stage5_fork_evidence.py
+      - src/pancake_prediction/execution_intent.py
+      - src/pancake_prediction/execution_report.py
+      - src/pancake_prediction/prediction_preflight.py
+      - src/pancake_prediction/prediction_tx.py
+      - src/pancake_prediction/rpc.py
+      - src/pancake_prediction/stage5_evidence.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage5-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BSC_FORK_SOURCE_RPC_URL: https://bsc-dataseed.bnbchain.org
+  LOCAL_FORK_RPC_URL: http://127.0.0.1:8545
+
+jobs:
+  observed-fork-campaign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+
+      - name: Install pinned Foundry nightly
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly-4aec465267fd92b44b54fafc7fbe8ebbe7f96eca
+          cache: false
+
+      - name: Record toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          anvil --version
+          echo "anvil_version=$(anvil --version | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Discover deterministic Prediction fork block
+        id: fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          FORK_BLOCK="$({
+            python scripts/discover_stage5_fork_block.py \
+              --rpc-url "$BSC_FORK_SOURCE_RPC_URL" \
+              --market BNBUSD \
+              --lookback-blocks 4000 \
+              --confirmation-lag 4 \
+              --chunk-size 500
+          })"
+          test -n "$FORK_BLOCK"
+          echo "fork_block=$FORK_BLOCK" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$FORK_BLOCK" > artifacts/fork-block.txt
+
+      - name: Start loopback-only BSC fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          anvil \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --fork-url "$BSC_FORK_SOURCE_RPC_URL" \
+            --fork-block-number "${{ steps.fork.outputs.fork_block }}" \
+            > /tmp/stage5-anvil.log 2>&1 &
+          echo $! > /tmp/stage5-anvil.pid
+
+          READY=0
+          for _ in $(seq 1 60); do
+            if python - <<'PY'
+          from pancake_prediction.rpc import JsonRpcClient
+
+          rpc = JsonRpcClient("http://127.0.0.1:8545", retries=1)
+          raise SystemExit(0 if rpc.chain_id() == 56 else 1)
+          PY
+            then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$READY" -ne 1 ]; then
+            echo "Anvil fork did not become BSC-ready" >&2
+            exit 1
+          fi
+
+      - name: Execute observed Stage 5B campaign
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_stage5_fork_campaign.py \
+            --fork-rpc-url "$LOCAL_FORK_RPC_URL" \
+            --db artifacts/stage5b-execution.sqlite3 \
+            --evidence artifacts/stage5b-evidence.json \
+            --source-sha "$GITHUB_SHA" \
+            --fork-block-number "${{ steps.fork.outputs.fork_block }}" \
+            --anvil-version "${{ steps.toolchain.outputs.anvil_version }}" \
+            > artifacts/stage5b-campaign-summary.json
+
+      - name: Independently verify generated evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_stage5_fork_evidence.py \
+            --db artifacts/stage5b-execution.sqlite3 \
+            --evidence artifacts/stage5b-evidence.json \
+            --source-sha "$GITHUB_SHA" \
+            > artifacts/stage5b-verification.json
+
+      - name: Upload observed campaign evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5b-fork-evidence-${{ github.run_id }}
+          path: |
+            artifacts/fork-block.txt
+            artifacts/stage5b-execution.sqlite3
+            artifacts/stage5b-evidence.json
+            artifacts/stage5b-campaign-summary.json
+            artifacts/stage5b-verification.json
+          if-no-files-found: warn
+          retention-days: 30
