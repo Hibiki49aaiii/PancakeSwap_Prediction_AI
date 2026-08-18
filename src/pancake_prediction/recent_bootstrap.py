@@ -4,8 +4,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from .collector import HistoricalCollector, ReadOnlyRpc
+from .collector import ReadOnlyRpc
 from .contracts import Market
+from .public_collector import PublicHistoricalCollector
 from .quality import QualityReport, build_quality_report
 from .replay import ReplaySnapshot, build_replay_snapshot
 from .store import EventStore
@@ -152,7 +153,7 @@ def run_recent_prediction_bootstrap(
     )
     store = EventStore(database)
     store.initialize()
-    collector = HistoricalCollector(
+    collector = PublicHistoricalCollector(
         rpc=rpc,
         store=store,
         chunk_size=chunk_size,
