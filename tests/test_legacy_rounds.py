@@ -9,6 +9,7 @@ import pytest
 from pancake_prediction.legacy_rounds import (
     LegacyRoundDatasetError,
     audit_legacy_rounds,
+    load_legacy_rounds,
     parse_legacy_round_row,
 )
 
@@ -64,6 +65,24 @@ def test_parse_legacy_round_row_supports_scientific_amounts() -> None:
     assert parsed.bear_amount_wei == 4 * 10**17
     assert parsed.oracle_called is True
     assert parsed.label == "bull"
+    assert parsed.oracle_ids_approximate is False
+
+
+def test_scientific_oracle_ids_are_explicitly_marked_approximate(tmp_path: Path) -> None:
+    path = tmp_path / "rounds.csv.gz"
+    row = _row(100)
+    row["lockOracleId"] = "1.84467E+19"
+    row["closeOracleId"] = "1.84468E+19"
+    _write_gzip(path, [row])
+
+    loaded = load_legacy_rounds(path)
+    report = audit_legacy_rounds(path)
+
+    assert loaded[0].lock_oracle_id == 18_446_700_000_000_000_000
+    assert loaded[0].close_oracle_id == 18_446_800_000_000_000_000
+    assert loaded[0].oracle_ids_approximate is True
+    assert report.approximate_oracle_id_rows == 1
+    assert "never model inputs" in report.oracle_id_precision_note
 
 
 def test_audit_legacy_rounds_tracks_gaps_refunds_and_integrity(tmp_path: Path) -> None:
