@@ -38,11 +38,16 @@ jobs:
             https://raw.githubusercontent.com/xcnecon/PancakeSwap-Arbitrage-Bot/93c7ec384ad9bedcf7824e8db050049ef891e367/data/rounds.csv.gz \
             -o /tmp/legacy-rounds/rounds.csv.gz
       - name: Audit every legacy round
+        id: audit
         run: |
+          set +e
           python scripts/audit_legacy_rounds.py \
             --archive /tmp/legacy-rounds/rounds.csv.gz \
             --output artifacts/legacy-rounds-audit.json
+          status=$?
+          set -e
           cp artifacts/legacy-rounds-audit.json evidence/legacy-rounds-audit.json
+          echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Upload audit evidence
         uses: actions/upload-artifact@v4
         with:
@@ -57,8 +62,16 @@ jobs:
           git add evidence/legacy-rounds-audit.json
           if git diff --cached --quiet; then
             echo 'Legacy round audit evidence unchanged.'
-            exit 0
+          else
+            git commit -m 'chore: record legacy round audit evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
           fi
-          git commit -m 'chore: record legacy round audit evidence'
-          git pull --rebase origin agent/v0.7-alpha-research
-          git push origin HEAD:agent/v0.7-alpha-research
+      - name: Enforce structural audit gate
+        env:
+          AUDIT_STATUS: ${{ steps.audit.outputs.status }}
+        run: |
+          if [ "$AUDIT_STATUS" -ne 0 ]; then
+            echo "Legacy round audit gate failed with status $AUDIT_STATUS" >&2
+            exit "$AUDIT_STATUS"
+          fi
