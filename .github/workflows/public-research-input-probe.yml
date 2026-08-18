@@ -1,0 +1,37 @@
+name: public-research-input-probe
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - scripts/probe_public_research_inputs.py
+      - .github/workflows/public-research-input-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probe official/public research inputs
+        run: |
+          mkdir -p artifacts
+          python scripts/probe_public_research_inputs.py \
+            --output artifacts/public-research-input-probe.json \
+            --timeout 12
+      - name: Print report
+        run: cat artifacts/public-research-input-probe.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-research-input-probe
+          path: artifacts/public-research-input-probe.json
+          if-no-files-found: error
+          retention-days: 14
