@@ -18,7 +18,11 @@ class FakeClient:
 
     def query_json_rows(self, query: str) -> Iterator[dict[str, object]]:
         if "system.tables" in query:
-            yield {"engine": "ReplacingMergeTree"}
+            yield {
+                "engine": "ReplacingMergeTree",
+                "engine_full": "ReplacingMergeTree(ingest_version)",
+                "sorting_key": "venue, symbol, availability_lag_ms, aggregate_trade_id",
+            }
             return
         if "system.columns" in query:
             columns = {
@@ -113,6 +117,8 @@ def test_clickhouse_cli_schema_check_reports_ready(
     payload = json.loads(capsys.readouterr().out)
     assert payload["ready"] is True
     assert payload["engine"] == "ReplacingMergeTree"
+    assert payload["engine_version_ready"] is True
+    assert payload["sorting_key_ready"] is True
 
 
 def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
