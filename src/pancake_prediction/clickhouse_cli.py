@@ -10,6 +10,7 @@ from typing import cast
 from .binance_archive import ArchiveVenue, TimestampUnit
 from .clickhouse import ClickHouseHttpClient, ingest_binance_archive, load_binance_trade_window
 from .clickhouse_dataset import build_chunked_clickhouse_research_dataset
+from .clickhouse_manifest import build_clickhouse_campaign_manifest
 from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
 from .contracts import MARKETS
 from .research_inputs import load_canonical_research_inputs
@@ -207,15 +208,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         market = str(args.market)
         inputs = load_canonical_research_inputs(Path(args.db), market)
         assumptions = _dataset_assumptions(args)
+        spot_timestamp_unit = cast(TimestampUnit, str(args.spot_timestamp_unit))
+        perp_timestamp_unit = cast(TimestampUnit, str(args.perp_timestamp_unit))
+        include_perp = not bool(args.no_perp)
         dataset_result = build_chunked_clickhouse_research_dataset(
             inputs.replay,
             inputs.events,
             client,
-            spot_timestamp_unit=cast(TimestampUnit, str(args.spot_timestamp_unit)),
+            spot_timestamp_unit=spot_timestamp_unit,
             spot_availability_lag_ms=int(args.spot_availability_lag_ms),
-            perp_timestamp_unit=cast(TimestampUnit, str(args.perp_timestamp_unit)),
+            perp_timestamp_unit=perp_timestamp_unit,
             perp_availability_lag_ms=int(args.perp_availability_lag_ms),
-            include_perp=not bool(args.no_perp),
+            include_perp=include_perp,
             chunk_span_ms=int(args.chunk_span_ms),
             feature_lead_seconds=int(args.feature_lead_seconds),
             flow_lookback_ms=int(args.flow_lookback_ms),
@@ -229,11 +233,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             oracle_hazard_horizon_ms=int(args.oracle_hazard_horizon_ms),
             oracle_hazard_min_intervals=int(args.oracle_hazard_min_intervals),
         )
+        campaign_manifest = build_clickhouse_campaign_manifest(
+            client,
+            inputs,
+            dataset_result,
+            assumptions,
+            spot_timestamp_unit=spot_timestamp_unit,
+            spot_availability_lag_ms=int(args.spot_availability_lag_ms),
+            perp_timestamp_unit=perp_timestamp_unit,
+            perp_availability_lag_ms=int(args.perp_availability_lag_ms),
+            include_perp=include_perp,
+        )
         _print_json(
             {
                 "inputs": inputs.as_dict(),
                 "assumptions": assumptions,
                 "dataset": dataset_result.as_dict(),
+                "campaign_manifest": campaign_manifest.as_dict(),
             }
         )
         return 0
