@@ -39,6 +39,7 @@ def _ready_columns() -> dict[str, str]:
     return {
         "venue": "LowCardinality(String)",
         "symbol": "LowCardinality(String)",
+        "timestamp_unit": "LowCardinality(String)",
         "event_timestamp_ms": "UInt64",
         "trade_timestamp_ms": "UInt64",
         "aggregate_trade_id": "UInt64",
@@ -55,7 +56,9 @@ def _ready_source(**overrides: object) -> MetadataSource:
     values: dict[str, object] = {
         "engine": "ReplacingMergeTree",
         "engine_full": "ReplacingMergeTree(ingest_version)",
-        "sorting_key": "venue, symbol, availability_lag_ms, aggregate_trade_id",
+        "sorting_key": (
+            "venue, symbol, timestamp_unit, availability_lag_ms, aggregate_trade_id"
+        ),
         "columns": _ready_columns(),
     }
     values.update(overrides)
@@ -83,7 +86,10 @@ def test_schema_gate_accepts_retry_safe_binance_table() -> None:
 def test_schema_gate_accepts_parenthesized_backticked_sorting_key() -> None:
     report = inspect_binance_trade_schema(
         _ready_source(
-            sorting_key="(`venue`, `symbol`, `availability_lag_ms`, `aggregate_trade_id`)"
+            sorting_key=(
+                "(`venue`, `symbol`, `timestamp_unit`, `availability_lag_ms`, "
+                "`aggregate_trade_id`)"
+            )
         )
     )
     assert report.ready is True
@@ -93,6 +99,7 @@ def test_schema_gate_rejects_old_merge_tree_schema() -> None:
     columns = _ready_columns()
     columns.pop("source_sha256")
     columns.pop("ingest_version")
+    columns.pop("timestamp_unit")
     report = inspect_binance_trade_schema(
         _ready_source(
             engine="MergeTree",
@@ -103,7 +110,11 @@ def test_schema_gate_rejects_old_merge_tree_schema() -> None:
     assert report.ready is False
     assert report.engine == "MergeTree"
     assert report.engine_version_ready is False
-    assert report.missing_columns == ("ingest_version", "source_sha256")
+    assert report.missing_columns == (
+        "ingest_version",
+        "source_sha256",
+        "timestamp_unit",
+    )
 
 
 def test_schema_gate_rejects_replacing_merge_tree_without_version_column() -> None:
@@ -114,9 +125,11 @@ def test_schema_gate_rejects_replacing_merge_tree_without_version_column() -> No
     assert report.engine_version_ready is False
 
 
-def test_schema_gate_rejects_sorting_key_without_latency_dimension() -> None:
+def test_schema_gate_rejects_sorting_key_without_timestamp_unit() -> None:
     report = inspect_binance_trade_schema(
-        _ready_source(sorting_key="venue, symbol, aggregate_trade_id")
+        _ready_source(
+            sorting_key="venue, symbol, availability_lag_ms, aggregate_trade_id"
+        )
     )
     assert report.ready is False
     assert report.sorting_key_ready is False
