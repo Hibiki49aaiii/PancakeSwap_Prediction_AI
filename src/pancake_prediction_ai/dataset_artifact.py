@@ -140,13 +140,14 @@ def build_historical_dataset_artifact(
     assumed_onchain_latency_ns: int,
     feature_policy: PortableFeaturePolicy = PortableFeaturePolicy(),
     prediction_interval_seconds: int | None = None,
+    subgraph_availability_latency_ns: int | None = None,
 ) -> HistoricalDatasetArtifact:
     """Freeze historical examples and source-store identity into one digest.
 
-    This is a Stage-3 input artifact only. It deliberately requires a
-    reconstructed store and records replay assumptions. When a scheduled
-    Prediction interval is known it is digest-bound as well, because that value
-    determines the leakage-safe decision clock used to build each example.
+    Source availability assumptions that affect the replay cutoff are explicit
+    artifact inputs. Subgraph/indexer latency is optional for legacy/RPC-only
+    datasets but mandatory in practice for the Prediction subgraph acquisition
+    path and is digest-bound when supplied.
     """
 
     if store.mode != "reconstructed":
@@ -163,6 +164,8 @@ def build_historical_dataset_artifact(
         raise ValueError("availability latency assumptions must be non-negative")
     if prediction_interval_seconds is not None and prediction_interval_seconds <= 0:
         raise ValueError("prediction_interval_seconds must be positive when supplied")
+    if subgraph_availability_latency_ns is not None and subgraph_availability_latency_ns < 0:
+        raise ValueError("subgraph_availability_latency_ns must be non-negative when supplied")
     if not result.examples:
         raise ValueError("historical dataset artifact requires at least one example")
     if not result.feature_names:
@@ -192,6 +195,8 @@ def build_historical_dataset_artifact(
     }
     if prediction_interval_seconds is not None:
         assumptions["prediction_interval_seconds"] = prediction_interval_seconds
+    if subgraph_availability_latency_ns is not None:
+        assumptions["subgraph_availability_latency_ns"] = subgraph_availability_latency_ns
 
     payload: dict[str, Any] = {
         "schema": DATASET_ARTIFACT_SCHEMA,
@@ -229,6 +234,10 @@ def _validate_payload(payload: Mapping[str, Any]) -> None:
     if interval is not None:
         if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
             raise ValueError("dataset artifact Prediction interval is invalid")
+    subgraph_latency = assumptions.get("subgraph_availability_latency_ns")
+    if subgraph_latency is not None:
+        if isinstance(subgraph_latency, bool) or not isinstance(subgraph_latency, int) or subgraph_latency < 0:
+            raise ValueError("dataset artifact subgraph latency is invalid")
     feature_names = payload.get("feature_names")
     if not isinstance(feature_names, list) or not feature_names:
         raise ValueError("dataset artifact feature_names are invalid")
