@@ -13,6 +13,7 @@ def test_artifact_cli_exposes_reproducible_pipeline_commands() -> None:
     assert "promote-model" in help_text
     assert "build-manifest" in help_text
     assert "build-shadow-evidence" in help_text
+    assert "build-shadow-gate-evidence" in help_text
 
 
 def test_artifact_cli_has_no_wallet_signing_or_broadcast_arguments() -> None:
@@ -53,6 +54,30 @@ def test_build_shadow_evidence_requires_observed_store_and_output_paths() -> Non
     )
     assert str(args.store).endswith("observed.sqlite")
     assert str(args.output).endswith("shadow-evidence.json")
+
+
+def test_build_shadow_gate_evidence_requires_explicit_numeric_policy() -> None:
+    args = build_parser().parse_args(
+        [
+            "build-shadow-gate-evidence",
+            "--shadow-evidence",
+            "shadow.json",
+            "--output",
+            "gate.json",
+            "--min-settled-rounds",
+            "20",
+            "--min-conditional-net-pnl-wei",
+            "-100",
+            "--max-conditional-drawdown-wei",
+            "500",
+            "--min-average-selected-expected-return",
+            "0.01",
+        ]
+    )
+    assert args.min_settled_rounds == 20
+    assert args.min_conditional_net_pnl_wei == -100
+    assert args.max_conditional_drawdown_wei == 500
+    assert args.min_average_selected_expected_return == 0.01
 
 
 @pytest.mark.parametrize("command", ["evaluate-oos", "promote-model"])
