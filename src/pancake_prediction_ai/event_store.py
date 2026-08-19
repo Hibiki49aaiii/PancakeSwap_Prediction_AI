@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
+_AVAILABILITY_KEY = "_availability_provenance"
+_STORE_MODES = frozenset({"observed", "reconstructed"})
+
+
 @dataclass(frozen=True, slots=True)
 class EventRecord:
     event_id: str
@@ -43,15 +47,41 @@ class StoredEvent:
 class EventStore:
     """Append-only SQLite event store with a verifiable hash chain.
 
-    Replay order is observation order (`observed_at_ns`, then `ingest_seq`), not
-    source/event timestamp order. This is essential for leakage-safe simulation.
+    `mode="observed"` is the default live/shadow store. Historical data whose
+    availability time is reconstructed from an assumption must use a separate
+    `mode="reconstructed"` database. The mode is persisted in SQLite metadata
+    and append-time checks prevent both evidence classes from being mixed.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, mode: str = "observed") -> None:
+        if mode not in _STORE_MODES:
+            raise ValueError(f"Event Store mode must be one of {sorted(_STORE_MODES)}")
         self.path = str(path)
+        self.mode = mode
         self._conn = sqlite3.connect(self.path)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS store_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        existing_mode = self._conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'availability_mode'"
+        ).fetchone()
+        if existing_mode is None:
+            self._conn.execute(
+                "INSERT INTO store_metadata(key, value) VALUES ('availability_mode', ?)",
+                (mode,),
+            )
+        elif str(existing_mode[0]) != mode:
+            self._conn.close()
+            raise ValueError(
+                f"Event Store availability mode mismatch: database={existing_mode[0]} requested={mode}"
+            )
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS events (
@@ -80,6 +110,18 @@ class EventStore:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.close()
+
+    @staticmethod
+    def event_mode(event: EventRecord) -> str:
+        metadata = event.payload.get(_AVAILABILITY_KEY)
+        if metadata is None:
+            return "observed"
+        if not isinstance(metadata, Mapping):
+            raise ValueError("availability provenance metadata must be an object")
+        mode = str(metadata.get("mode"))
+        if mode not in _STORE_MODES:
+            raise ValueError(f"unknown event availability mode: {mode}")
+        return mode
 
     @staticmethod
     def _canonical_body(event: EventRecord) -> bytes:
@@ -115,18 +157,18 @@ class EventStore:
         return self.append_many((event,))[0]
 
     def append_many(self, events: Iterable[EventRecord]) -> tuple[StoredEvent, ...]:
-        """Append one logical event batch atomically while extending the hash chain.
-
-        Every event is validated before the transaction starts. If any insert in
-        the batch conflicts or fails, SQLite rolls the entire batch back; a
-        consumer can therefore never observe a partial protocol snapshot.
-        """
+        """Append one logical event batch atomically while extending the hash chain."""
 
         batch = tuple(events)
         if not batch:
             return ()
         for event in batch:
             event.validate()
+            event_mode = self.event_mode(event)
+            if event_mode != self.mode:
+                raise ValueError(
+                    f"cannot append {event_mode} event to {self.mode} Event Store"
+                )
         event_ids = [event.event_id for event in batch]
         if len(set(event_ids)) != len(event_ids):
             raise ValueError("duplicate event_id inside append batch")
