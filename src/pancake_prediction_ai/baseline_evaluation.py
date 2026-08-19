@@ -7,6 +7,7 @@ from .baseline_model import LabeledFeatures, fit_softmax_baseline, fit_temperatu
 from .dataset import TrainingExample
 from .economics import Outcome
 from .metrics import OutcomeMetrics, OutcomeProbability, evaluate_outcome_probabilities
+from .tie_prior import TiePriorPolicy, estimate_tie_prior
 from .walk_forward_dataset import AvailabilitySafeFold
 
 
@@ -29,6 +30,8 @@ class FoldEvaluation:
     model_artifact_sha256: str
     temperature: float
     metrics: OutcomeMetrics
+    training_prior: OutcomeProbability | None
+    training_prior_source: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,14 +62,15 @@ def evaluate_baseline_walk_forward(
     epochs: int = 500,
     l2: float = 1e-4,
     class_prior: OutcomeProbability | None = None,
+    tie_prior_policy: TiePriorPolicy | None = None,
     prior_strength: float = 0.0,
 ) -> BaselineWalkForwardResult:
     """Train/calibrate/test a deterministic baseline without temporal reuse.
 
-    Each fold's availability-safe training indices are split chronologically:
-    the oldest rows fit model weights, the newest rows fit only temperature,
-    and test rows are never used in either step. A fold without observed TIEs
-    is usable only when an explicit three-outcome prior is supplied.
+    A fixed `class_prior` is treated as exogenous configuration. Alternatively,
+    `tie_prior_policy` derives a conservative prior independently inside each
+    fold from model-training outcomes only. They are mutually exclusive so a
+    full-dataset prior cannot be accidentally disguised as fold-local evidence.
     """
 
     if calibration_size <= 0:
@@ -75,12 +79,17 @@ def evaluate_baseline_walk_forward(
         raise ValueError("examples are required")
     if not folds:
         raise ValueError("folds are required")
+    if class_prior is not None and tie_prior_policy is not None:
+        raise ValueError("class_prior and tie_prior_policy are mutually exclusive")
     if class_prior is not None:
         class_prior.validate()
+    if tie_prior_policy is not None:
+        tie_prior_policy.validate()
+    if class_prior is not None or tie_prior_policy is not None:
         if prior_strength <= 0:
-            raise ValueError("class_prior requires positive prior_strength")
+            raise ValueError("configured prior requires positive prior_strength")
     elif prior_strength != 0:
-        raise ValueError("prior_strength requires class_prior")
+        raise ValueError("prior_strength requires a prior configuration")
 
     predictions: list[OOSPrediction] = []
     fold_results: list[FoldEvaluation] = []
@@ -107,7 +116,17 @@ def evaluate_baseline_walk_forward(
         if Outcome.BULL not in present or Outcome.BEAR not in present:
             skipped.append(SkippedFold(fold_index, "model_train_missing_directional_class"))
             continue
-        if Outcome.TIE not in present and class_prior is None:
+
+        fold_prior = class_prior
+        prior_source = "exogenous" if class_prior is not None else None
+        if tie_prior_policy is not None:
+            estimate = estimate_tie_prior(
+                (row.outcome for row in model_train),
+                policy=tie_prior_policy,
+            )
+            fold_prior = estimate.probability
+            prior_source = "fold_train_wilson"
+        elif Outcome.TIE not in present and fold_prior is None:
             skipped.append(SkippedFold(fold_index, "model_train_tie_missing_without_prior"))
             continue
 
@@ -117,8 +136,8 @@ def evaluate_baseline_walk_forward(
             learning_rate=learning_rate,
             epochs=epochs,
             l2=l2,
-            class_prior=class_prior,
-            prior_strength=prior_strength,
+            class_prior=fold_prior,
+            prior_strength=prior_strength if fold_prior is not None else 0.0,
         )
         calibrated = fit_temperature(model, calibration)
 
@@ -150,6 +169,8 @@ def evaluate_baseline_walk_forward(
                 model_artifact_sha256=calibrated.artifact_sha256,
                 temperature=calibrated.temperature,
                 metrics=metrics,
+                training_prior=fold_prior,
+                training_prior_source=prior_source,
             )
         )
         predictions.extend(fold_predictions)
