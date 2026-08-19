@@ -138,7 +138,9 @@ def read_prediction_round_at_anchor(
     )
     state.validate()
     if state.start_timestamp != 0 and state.epoch != epoch:
-        raise ValueError(f"rounds({epoch}) returned epoch {state.epoch}")
+        raise ValueError(
+            f"rounds({epoch}) returned a different epoch: {state.epoch}"
+        )
     return state
 
 
