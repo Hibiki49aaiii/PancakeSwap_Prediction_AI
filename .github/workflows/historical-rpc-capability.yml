@@ -2,11 +2,6 @@ name: historical-rpc-capability
 
 on:
   workflow_dispatch:
-    inputs:
-      rpc_url:
-        description: Read-only BSC RPC URL
-        required: false
-        default: https://bsc-dataseed.bnbchain.org
   pull_request:
     branches:
       - main
@@ -20,9 +15,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    env:
-      RPC_URL: ${{ inputs.rpc_url || 'https://bsc-dataseed.bnbchain.org' }}
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,84 +25,109 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-      - name: Probe historical state and logs
+      - name: Compare BNB Chain documented public RPC endpoints
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
           python - <<'PY' | tee artifacts/historical-rpc-capability.json
           import json
-          import os
           from pancake_prediction_ai.abi_codec import decode_result, encode_call
           from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
 
-          client = ReadOnlyJsonRpcClient(os.environ["RPC_URL"], timeout_seconds=15.0)
-          head = int(client.call("eth_blockNumber", []), 16)
+          endpoints = [
+              "https://bsc-dataseed.bnbchain.org",
+              "https://bsc-dataseed.nariox.org",
+              "https://bsc-dataseed.defibit.io",
+              "https://bsc-dataseed.ninicoin.io",
+              "https://bsc.nodereal.io",
+              "https://bsc-dataseed-public.bnbchain.org",
+              "https://bnb.rpc.subquery.network/public",
+          ]
           current_data = encode_call("currentEpoch()")
 
-          def epoch_at(block):
-              raw = client.call(
-                  "eth_call",
-                  [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, hex(block)],
-              )
-              return int(decode_result(raw, ("uint256",))[0])
-
-          head_epoch = epoch_at(head)
-          offsets = [128, 512, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000]
-          state = []
-          for offset in offsets:
-              block = max(1, head - offset)
-              item = {"offset_blocks": offset, "block": block}
+          def probe(url):
+              result = {"rpc_url": url}
               try:
-                  epoch = epoch_at(block)
-                  item.update({
-                      "historical_eth_call_ok": True,
-                      "epoch": epoch,
-                      "epoch_delta_from_head": head_epoch - epoch,
-                  })
-              except Exception as exc:
-                  item.update({
-                      "historical_eth_call_ok": False,
-                      "error_type": type(exc).__name__,
-                      "error": str(exc)[:500],
-                  })
-              state.append(item)
-
-          log_tests = []
-          for width in [1_000, 5_000, 10_000, 20_000, 50_000]:
-              start = max(1, head - width)
-              item = {"width_blocks": width, "from_block": start, "to_block": head}
-              try:
-                  logs = client.call(
-                      "eth_getLogs",
-                      [{
-                          "address": BNB_PREDICTION_CONTRACT,
-                          "fromBlock": hex(start),
-                          "toBlock": hex(head),
-                      }],
+                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=12.0)
+                  chain_id = int(client.call("eth_chainId", []), 16)
+                  head = int(client.call("eth_blockNumber", []), 16)
+                  raw = client.call(
+                      "eth_call",
+                      [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, hex(head)],
                   )
-                  item.update({
-                      "eth_getLogs_ok": True,
-                      "log_count": len(logs) if isinstance(logs, list) else None,
+                  head_epoch = int(decode_result(raw, ("uint256",))[0])
+                  result.update({
+                      "reachable": True,
+                      "chain_id": chain_id,
+                      "head_block": head,
+                      "head_epoch": head_epoch,
                   })
               except Exception as exc:
-                  item.update({
-                      "eth_getLogs_ok": False,
+                  result.update({
+                      "reachable": False,
                       "error_type": type(exc).__name__,
                       "error": str(exc)[:500],
                   })
-              log_tests.append(item)
+                  return result
 
-          result = {
-              "chain_id": int(client.call("eth_chainId", []), 16),
-              "head_block": head,
-              "head_epoch": head_epoch,
+              state = []
+              for offset in [128, 512, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000]:
+                  block = max(1, result["head_block"] - offset)
+                  item = {"offset_blocks": offset, "block": block}
+                  try:
+                      raw = client.call(
+                          "eth_call",
+                          [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, hex(block)],
+                      )
+                      epoch = int(decode_result(raw, ("uint256",))[0])
+                      item.update({
+                          "historical_eth_call_ok": True,
+                          "epoch": epoch,
+                          "epoch_delta_from_head": result["head_epoch"] - epoch,
+                      })
+                  except Exception as exc:
+                      item.update({
+                          "historical_eth_call_ok": False,
+                          "error_type": type(exc).__name__,
+                          "error": str(exc)[:300],
+                      })
+                  state.append(item)
+              result["historical_state"] = state
+
+              log_tests = []
+              for width in [100, 500, 1_000, 5_000]:
+                  start = max(1, result["head_block"] - width)
+                  item = {"width_blocks": width}
+                  try:
+                      logs = client.call(
+                          "eth_getLogs",
+                          [{
+                              "address": BNB_PREDICTION_CONTRACT,
+                              "fromBlock": hex(start),
+                              "toBlock": hex(result["head_block"]),
+                          }],
+                      )
+                      item.update({
+                          "eth_getLogs_ok": True,
+                          "log_count": len(logs) if isinstance(logs, list) else None,
+                      })
+                  except Exception as exc:
+                      item.update({
+                          "eth_getLogs_ok": False,
+                          "error_type": type(exc).__name__,
+                          "error": str(exc)[:300],
+                      })
+                  log_tests.append(item)
+              result["log_ranges"] = log_tests
+              return result
+
+          report = {
               "prediction_contract": BNB_PREDICTION_CONTRACT,
-              "historical_state": state,
-              "log_ranges": log_tests,
+              "providers": [probe(url) for url in endpoints],
           }
-          print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+          print(json.dumps(report, sort_keys=True, separators=(",", ":")))
           PY
       - name: Upload capability report
         uses: actions/upload-artifact@v4
