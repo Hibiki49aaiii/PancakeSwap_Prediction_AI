@@ -7,6 +7,10 @@ from pancake_prediction_ai.fork_execution import Stage5BExecutionResult
 from pancake_prediction_ai.fork_harness import ForkProbeResult
 from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
 from pancake_prediction_ai.stage5b_evidence import make_stage5b_execution_evidence
+from pancake_prediction_ai.stage5b_source_fingerprint import (
+    capture_stage5b_source_fingerprint,
+    validate_stage5b_source_fingerprint_payload,
+)
 
 
 BLOCK_HASH = "0x" + "ab" * 32
@@ -74,7 +78,7 @@ def execution_result() -> Stage5BExecutionResult:
     )
 
 
-def test_v3_evidence_passes_only_when_verified_fork_and_execution_lineage_match() -> None:
+def test_v4_evidence_passes_only_when_verified_fork_execution_and_source_lineage_match() -> None:
     evidence = make_stage5b_execution_evidence(
         fork_result(),
         execution_result(),
@@ -83,15 +87,18 @@ def test_v3_evidence_passes_only_when_verified_fork_and_execution_lineage_match(
     assert evidence.kind is EvidenceKind.STAGE5B_FORK
     assert evidence.origin is EvidenceOrigin.OBSERVED
     assert evidence.passed
-    assert evidence.payload["schema"] == "stage5b_verified_local_bsc_fork_execution_v3"
+    assert evidence.payload["schema"] == "stage5b_verified_local_bsc_fork_execution_v4"
     assert evidence.payload["execution_transport"] == "loopback_impersonated_eth_sendTransaction"
+    source = evidence.payload["generator_source_fingerprint"]
+    assert source == capture_stage5b_source_fingerprint()
+    assert validate_stage5b_source_fingerprint_payload(source)
     assert evidence.payload["private_key_used"] is False
     assert evidence.payload["raw_signed_transaction_used"] is False
     assert evidence.payload["mainnet_transaction_broadcast"] is False
     assert len(evidence.artifact_sha256) == 64
 
 
-def test_v3_evidence_rejects_execution_for_different_prediction_contract() -> None:
+def test_v4_evidence_rejects_execution_for_different_prediction_contract() -> None:
     execution = replace(
         execution_result(),
         prediction_contract="0x3333333333333333333333333333333333333333",
@@ -100,25 +107,25 @@ def test_v3_evidence_rejects_execution_for_different_prediction_contract() -> No
     assert not evidence.passed
 
 
-def test_v3_evidence_rejects_execution_from_different_fork_base_block() -> None:
+def test_v4_evidence_rejects_execution_from_different_fork_base_block() -> None:
     execution = replace(execution_result(), fork_base_block=122)
     evidence = make_stage5b_execution_evidence(fork_result(), execution)
     assert not evidence.passed
 
 
-def test_v3_evidence_rejects_execution_from_different_fork_base_hash() -> None:
+def test_v4_evidence_rejects_execution_from_different_fork_base_hash() -> None:
     execution = replace(execution_result(), fork_base_block_hash="0x" + "cd" * 32)
     evidence = make_stage5b_execution_evidence(fork_result(), execution)
     assert not evidence.passed
 
 
-def test_v3_evidence_rejects_failed_execution_even_with_verified_provenance() -> None:
+def test_v4_evidence_rejects_failed_execution_even_with_verified_provenance() -> None:
     execution = replace(execution_result(), bear_event_observed=False)
     evidence = make_stage5b_execution_evidence(fork_result(), execution)
     assert not evidence.passed
 
 
-def test_v3_evidence_rejects_unverified_fork_even_with_successful_execution() -> None:
+def test_v4_evidence_rejects_unverified_fork_even_with_successful_execution() -> None:
     fork = replace(fork_result(), upstream_verified=False)
     evidence = make_stage5b_execution_evidence(fork, execution_result())
     assert not evidence.passed
