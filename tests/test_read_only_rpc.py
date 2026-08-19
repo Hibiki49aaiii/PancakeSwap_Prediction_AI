@@ -5,14 +5,21 @@ from urllib.request import Request
 
 import pytest
 
-from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient, RpcError
+from pancake_prediction_ai.read_only_rpc import (
+    DEFAULT_USER_AGENT,
+    ReadOnlyJsonRpcClient,
+    RpcError,
+)
 
 
-def test_read_only_rpc_parses_chain_id() -> None:
+def test_read_only_rpc_parses_chain_id_and_sets_explicit_http_headers() -> None:
     seen: list[dict[str, object]] = []
 
     def transport(request: Request, timeout: float) -> bytes:
         assert timeout == 3.0
+        assert request.get_header("Accept") == "application/json"
+        assert request.get_header("Content-type") == "application/json"
+        assert request.get_header("User-agent") == DEFAULT_USER_AGENT
         payload = json.loads(request.data or b"{}")
         seen.append(payload)
         return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": "0x38"}).encode()
