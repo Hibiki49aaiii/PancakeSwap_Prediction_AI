@@ -14,10 +14,74 @@ from pancake_prediction_ai.evidence_gate import (
 )
 
 
-def evidence(kind: EvidenceKind, *, origin: EvidenceOrigin = EvidenceOrigin.OBSERVED, passed: bool = True) -> Evidence:
-    payload = {"kind": kind.value, "test": "fixture", "passed": passed}
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return Evidence(kind, origin, passed, digest, "2026-08-19T00:00:00+09:00", payload)
+def _digest(payload: dict[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def evidence(
+    kind: EvidenceKind,
+    *,
+    origin: EvidenceOrigin = EvidenceOrigin.OBSERVED,
+    passed: bool = True,
+) -> Evidence:
+    payload: dict[str, object] = {"kind": kind.value, "test": "fixture", "passed": passed}
+    return Evidence(
+        kind,
+        origin,
+        passed,
+        _digest(payload),
+        "2026-08-19T00:00:00+09:00",
+        payload,
+    )
+
+
+def qualified_shadow(
+    *,
+    passed: bool = True,
+    origin: EvidenceOrigin = EvidenceOrigin.HYBRID,
+    blockers: list[str] | None = None,
+    settled_rounds: int = 20,
+    unresolved_rounds: int = 0,
+    claim_gas_modeled: bool = True,
+) -> Evidence:
+    blocker_values = [] if blockers is None else blockers
+    payload: dict[str, object] = {
+        "schema": "shadow_gate_evidence_v1",
+        "shadow_evidence_artifact_sha256": "a" * 64,
+        "shadow_artifact_schema": "shadow_economic_evidence_v1",
+        "artifact_class": "hybrid_shadow_not_live",
+        "source_event_store_availability": "observed",
+        "source_event_store_tip_hash": "b" * 64,
+        "acceptance_policy": {
+            "min_settled_rounds": 10,
+            "min_conditional_net_pnl_wei": 1,
+            "max_conditional_drawdown_wei": 100,
+            "min_average_selected_expected_return": 0.01,
+            "require_all_decisions_settled": True,
+            "require_fully_costed_claim_or_refund_gas": True,
+        },
+        "metrics": {
+            "settled_rounds": settled_rounds,
+            "unresolved_rounds": unresolved_rounds,
+            "conditional_net_pnl_wei": 50,
+            "conditional_max_drawdown_wei": 20,
+            "average_selected_expected_return": 0.05,
+            "claim_or_refund_gas_fully_modeled": claim_gas_modeled,
+        },
+        "blockers": blocker_values,
+        "funded_live_profitability_evidence": False,
+        "stage6b_funded_validation_evidence": False,
+    }
+    return Evidence(
+        EvidenceKind.SHADOW_ECONOMICS,
+        origin,
+        passed,
+        _digest(payload),
+        "2026-08-19T00:00:00+09:00",
+        payload,
+    )
 
 
 def safety(**changes: object) -> RuntimeSafetyState:
@@ -35,11 +99,11 @@ def safety(**changes: object) -> RuntimeSafetyState:
     return RuntimeSafetyState(**values)  # type: ignore[arg-type]
 
 
-def test_all_observed_evidence_and_safety_can_clear_stage6a() -> None:
+def test_observed_stage5_evidence_plus_qualified_hybrid_shadow_can_clear_stage6a() -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
         stage5b=evidence(EvidenceKind.STAGE5B_FORK),
-        shadow=evidence(EvidenceKind.SHADOW_ECONOMICS),
+        shadow=qualified_shadow(),
         safety=safety(),
     )
     assert decision.ready
@@ -51,22 +115,44 @@ def test_non_observed_stage5b_never_clears_gate(origin: EvidenceOrigin) -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
         stage5b=evidence(EvidenceKind.STAGE5B_FORK, origin=origin),
-        shadow=evidence(EvidenceKind.SHADOW_ECONOMICS),
+        shadow=qualified_shadow(),
         safety=safety(),
     )
     assert not decision.ready
     assert "stage5b_observed_pass_missing" in decision.blockers
 
 
-def test_shadow_profitability_must_be_observed_not_assumed() -> None:
+def test_generic_observed_shadow_json_cannot_clear_gate_anymore() -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
         stage5b=evidence(EvidenceKind.STAGE5B_FORK),
-        shadow=evidence(EvidenceKind.SHADOW_ECONOMICS, origin=EvidenceOrigin.ASSUMED),
+        shadow=evidence(EvidenceKind.SHADOW_ECONOMICS),
         safety=safety(),
     )
     assert not decision.ready
-    assert "shadow_observed_pass_missing" in decision.blockers
+    assert "shadow_qualified_hybrid_pass_missing" in decision.blockers
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        qualified_shadow(origin=EvidenceOrigin.OBSERVED),
+        qualified_shadow(passed=False),
+        qualified_shadow(blockers=["policy_failed"]),
+        qualified_shadow(settled_rounds=9),
+        qualified_shadow(unresolved_rounds=1),
+        qualified_shadow(claim_gas_modeled=False),
+    ],
+)
+def test_incomplete_or_misclassified_shadow_evidence_cannot_clear_gate(shadow: Evidence) -> None:
+    decision = evaluate_stage6a_readiness(
+        stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
+        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
+        shadow=shadow,
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "shadow_qualified_hybrid_pass_missing" in decision.blockers
 
 
 @pytest.mark.parametrize(
@@ -86,7 +172,7 @@ def test_each_runtime_safety_failure_blocks(changes: dict[str, object], blocker:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
         stage5b=evidence(EvidenceKind.STAGE5B_FORK),
-        shadow=evidence(EvidenceKind.SHADOW_ECONOMICS),
+        shadow=qualified_shadow(),
         safety=safety(**changes),
     )
     assert not decision.ready
