@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -33,6 +34,63 @@ def _default_transport(request: Request, timeout: float) -> bytes:
         return response.read()
 
 
+def _log_filter_range(params: list[Any]) -> tuple[int, int] | None:
+    if len(params) != 1 or not isinstance(params[0], dict):
+        return None
+    filter_ = params[0]
+    from_value = filter_.get("fromBlock")
+    to_value = filter_.get("toBlock")
+    if not isinstance(from_value, str) or not isinstance(to_value, str):
+        return None
+    if not from_value.startswith("0x") or not to_value.startswith("0x"):
+        return None
+    try:
+        from_block = int(from_value, 16)
+        to_block = int(to_value, 16)
+    except ValueError:
+        return None
+    if from_block < 0 or to_block < from_block:
+        return None
+    return from_block, to_block
+
+
+def _split_log_params(params: list[Any]) -> tuple[list[Any], list[Any]] | None:
+    range_ = _log_filter_range(params)
+    if range_ is None:
+        return None
+    from_block, to_block = range_
+    if from_block >= to_block:
+        return None
+    middle = (from_block + to_block) // 2
+    original = params[0]
+    left_filter = dict(original)
+    right_filter = dict(original)
+    left_filter["fromBlock"] = hex(from_block)
+    left_filter["toBlock"] = hex(middle)
+    right_filter["fromBlock"] = hex(middle + 1)
+    right_filter["toBlock"] = hex(to_block)
+    return [left_filter], [right_filter]
+
+
+def _looks_like_log_range_limit(error: object) -> bool:
+    if not isinstance(error, dict):
+        return False
+    message = str(error.get("message", "")).lower()
+    return any(
+        marker in message
+        for marker in (
+            "limited to",
+            "block range",
+            "range limit",
+            "too many results",
+            "too many logs",
+            "response size",
+            "query returned more",
+            "please narrow",
+        )
+    )
+
+
 @dataclass(slots=True)
 class ReadOnlyJsonRpcClient:
     endpoint: str
@@ -46,6 +104,17 @@ class ReadOnlyJsonRpcClient:
             raise ValueError("JSON-RPC endpoint must be an http(s) URL")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+
+    def _retry_split_logs(self, params: list[Any]) -> list[Any] | None:
+        split = _split_log_params(params)
+        if split is None:
+            return None
+        left_params, right_params = split
+        left = self.call("eth_getLogs", left_params)
+        right = self.call("eth_getLogs", right_params)
+        if not isinstance(left, list) or not isinstance(right, list):
+            raise RpcError("eth_getLogs split responses must be arrays")
+        return [*left, *right]
 
     def call(self, method: str, params: list[Any]) -> Any:
         if method not in READ_ONLY_RPC_METHODS:
@@ -74,7 +143,14 @@ class ReadOnlyJsonRpcClient:
             },
             method="POST",
         )
-        raw = self.transport(request, self.timeout_seconds)
+        try:
+            raw = self.transport(request, self.timeout_seconds)
+        except HTTPError as exc:
+            if method == "eth_getLogs" and exc.code == 403:
+                split_result = self._retry_split_logs(params)
+                if split_result is not None:
+                    return split_result
+            raise
         try:
             response = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -85,6 +161,10 @@ class ReadOnlyJsonRpcClient:
             raise RpcError("RPC response id mismatch")
         if "error" in response:
             error = response["error"]
+            if method == "eth_getLogs" and _looks_like_log_range_limit(error):
+                split_result = self._retry_split_logs(params)
+                if split_result is not None:
+                    return split_result
             if isinstance(error, dict):
                 code = error.get("code")
                 message = error.get("message")
