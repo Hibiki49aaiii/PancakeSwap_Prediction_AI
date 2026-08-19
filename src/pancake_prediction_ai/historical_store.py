@@ -50,6 +50,15 @@ def bind_reconstruction_dataset(store: EventStore, dataset_id: str) -> str:
     if not isinstance(dataset_id, str) or not dataset_id:
         raise ValueError("dataset_id is required")
 
+    # Persisted metadata is authoritative across process restarts. Check it
+    # before inspecting rows so callers receive the same namespace error whether
+    # the database is empty or already contains events.
+    bound = reconstruction_dataset_id(store)
+    if bound is not None and bound != dataset_id:
+        raise ValueError(
+            f"reconstructed Event Store is bound to dataset {bound}, not {dataset_id}"
+        )
+
     existing_events = store.read_all_ingest_order()
     existing_ids = {_event_dataset_id(item) for item in existing_events}
     if len(existing_ids) > 1:
