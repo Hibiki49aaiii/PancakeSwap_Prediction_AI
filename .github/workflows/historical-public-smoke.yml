@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      RPC_URL: https://bsc-dataseed.bnbchain.org
+      RPC_URL: https://bsc-rpc.publicnode.com
       DATASET_ID: public-history-smoke-${{ github.run_id }}
 
     steps:
@@ -43,8 +43,8 @@ jobs:
           print(ReadOnlyJsonRpcClient(os.environ["RPC_URL"], timeout_seconds=20).block_number())
           PY
           )
-          from_block=$((head - 20000))
-          to_block=$((head - 1000))
+          from_block=$((head - 1000))
+          to_block=$((head - 100))
           if [[ "$from_block" -le 0 ]]; then
             echo "invalid recent range" >&2
             exit 1
