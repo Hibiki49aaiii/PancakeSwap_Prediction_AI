@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 from .binance_public_rest import BinancePublicRestClient
 from .dataset_artifact import HistoricalDatasetArtifact, build_historical_dataset_artifact
-from .event_store import EventStore
+from .event_store import EventRecord, EventStore
 from .historical_binance import HistoricalBinanceBackfillResult, backfill_binance_aggregate_trades
 from .historical_dataset import (
     DecisionSnapshotBackfillResult,
@@ -32,6 +32,39 @@ from .round_history import (
 
 
 ClockNs = Callable[[], int]
+
+
+def _prediction_interval_from_round_snapshots(events: tuple[EventRecord, ...]) -> int | None:
+    """Recover the protocol-scheduled interval from reconstructed round state.
+
+    `rounds(epoch).lockTimestamp` is fixed when the round starts. It is therefore
+    safe to use for the decision clock, unlike the later LockRound transaction
+    timestamp which may include operator delay. Multiple distinct intervals in
+    one store are rejected because a single replay policy cannot silently span
+    configuration regimes.
+    """
+
+    intervals: set[int] = set()
+    for event in events:
+        if event.source != "pancake_prediction" or event.topic != "prediction.round_snapshot":
+            continue
+        start = event.payload.get("start_timestamp")
+        lock = event.payload.get("lock_timestamp")
+        if isinstance(start, bool) or isinstance(lock, bool):
+            raise ValueError("round snapshot timestamps must be integers")
+        if not isinstance(start, int) or not isinstance(lock, int):
+            raise ValueError("round snapshot timestamps must be integers")
+        interval = lock - start
+        if interval <= 0:
+            raise ValueError("round snapshot scheduled lock interval must be positive")
+        intervals.add(interval)
+    if not intervals:
+        return None
+    if len(intervals) != 1:
+        raise ValueError(
+            f"reconstructed store spans multiple Prediction intervals: {sorted(intervals)}"
+        )
+    return next(iter(intervals))
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +131,20 @@ class HistoricalPipeline:
         self.config = effective_config
         self.clock_ns = clock_ns
 
+    def _ensure_prediction_interval(self, events: tuple[EventRecord, ...]) -> int | None:
+        interval = self.config.prediction_interval_seconds
+        if interval is not None:
+            return interval
+        persisted = reconstruction_prediction_interval_seconds(self.store)
+        if persisted is not None:
+            self.config = replace(self.config, prediction_interval_seconds=persisted)
+            return persisted
+        derived = _prediction_interval_from_round_snapshots(events)
+        if derived is not None:
+            bind_reconstruction_prediction_interval_seconds(self.store, derived)
+            self.config = replace(self.config, prediction_interval_seconds=derived)
+        return derived
+
     def backfill_binance(
         self,
         client: BinancePublicRestClient,
@@ -141,9 +188,11 @@ class HistoricalPipeline:
         )
 
     def timelines(self) -> RoundTimelineBuildResult:
+        events = tuple(stored.event for stored in self.store.read_all_ingest_order())
+        interval = self._ensure_prediction_interval(events)
         return build_round_timelines(
-            (stored.event for stored in self.store.read_all_ingest_order()),
-            interval_seconds=self.config.prediction_interval_seconds,
+            events,
+            interval_seconds=interval,
         )
 
     def backfill_decision_protocol(
