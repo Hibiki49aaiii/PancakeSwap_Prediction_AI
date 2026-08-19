@@ -22,7 +22,10 @@ class FeatureScaler:
     def transform(self, values: Sequence[float]) -> tuple[float, ...]:
         if len(values) != len(self.means):
             raise ValueError("feature vector length mismatch")
-        return tuple((float(value) - mean) / scale for value, mean, scale in zip(values, self.means, self.scales, strict=True))
+        return tuple(
+            (float(value) - mean) / scale
+            for value, mean, scale in zip(values, self.means, self.scales, strict=True)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,8 @@ class BaselineModel:
     scaler: FeatureScaler
     weights: tuple[tuple[float, ...], ...]
     temperature: float = 1.0
+    training_prior: OutcomeProbability | None = None
+    prior_strength: float = 0.0
 
     def validate(self) -> None:
         if not self.feature_names or len(set(self.feature_names)) != len(self.feature_names):
@@ -44,6 +49,14 @@ class BaselineModel:
             raise ValueError("feature scales must be positive finite")
         if self.temperature <= 0 or not math.isfinite(self.temperature):
             raise ValueError("temperature must be positive finite")
+        if self.prior_strength < 0 or not math.isfinite(self.prior_strength):
+            raise ValueError("prior_strength must be non-negative finite")
+        if self.training_prior is None and self.prior_strength != 0:
+            raise ValueError("prior_strength requires training_prior")
+        if self.training_prior is not None:
+            self.training_prior.validate()
+            if self.prior_strength <= 0:
+                raise ValueError("training_prior requires positive prior_strength")
         for row in self.weights:
             if any(not math.isfinite(value) for value in row):
                 raise ValueError("model weights must be finite")
@@ -60,7 +73,10 @@ class BaselineModel:
     def logits(self, features: Mapping[str, float]) -> tuple[float, float, float]:
         self.validate()
         vector = self._vector(features)
-        result = tuple(sum(weight * value for weight, value in zip(row, vector, strict=True)) for row in self.weights)
+        result = tuple(
+            sum(weight * value for weight, value in zip(row, vector, strict=True))
+            for row in self.weights
+        )
         return result[0], result[1], result[2]
 
     def predict(self, features: Mapping[str, float]) -> OutcomeProbability:
@@ -72,6 +88,14 @@ class BaselineModel:
 
     def artifact_payload(self) -> dict[str, object]:
         self.validate()
+        prior_payload = None
+        if self.training_prior is not None:
+            prior_payload = {
+                "bull": self.training_prior.bull,
+                "bear": self.training_prior.bear,
+                "tie": self.training_prior.tie,
+                "strength": self.prior_strength,
+            }
         return {
             "model_type": "multinomial_softmax_baseline",
             "class_order": [label.value for label in _CLASS_ORDER],
@@ -80,11 +104,17 @@ class BaselineModel:
             "scales": list(self.scaler.scales),
             "weights": [list(row) for row in self.weights],
             "temperature": self.temperature,
+            "training_prior": prior_payload,
         }
 
     @property
     def artifact_sha256(self) -> str:
-        canonical = json.dumps(self.artifact_payload(), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        canonical = json.dumps(
+            self.artifact_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
         return hashlib.sha256(canonical).hexdigest()
 
 
@@ -109,7 +139,10 @@ def _fit_scaler(rows: Sequence[Sequence[float]]) -> FeatureScaler:
         raise ValueError("training feature rows must have fixed positive width")
     n = len(rows)
     means = tuple(sum(row[column] for row in rows) / n for column in range(width))
-    variances = tuple(sum((row[column] - means[column]) ** 2 for row in rows) / n for column in range(width))
+    variances = tuple(
+        sum((row[column] - means[column]) ** 2 for row in rows) / n
+        for column in range(width)
+    )
     scales = tuple(math.sqrt(value) if value > 1e-24 else 1.0 for value in variances)
     return FeatureScaler(means=means, scales=scales)
 
@@ -138,7 +171,18 @@ def fit_softmax_baseline(
     epochs: int = 500,
     l2: float = 1e-4,
     class_weights: Mapping[Outcome, float] | None = None,
+    class_prior: OutcomeProbability | None = None,
+    prior_strength: float = 0.0,
 ) -> BaselineModel:
+    """Fit a deterministic 3-class softmax baseline.
+
+    BULL and BEAR observations are mandatory. If TIE hasn't occurred in the
+    training window, fitting remains forbidden unless the caller supplies an
+    explicit 3-outcome prior with positive pseudo-count strength. This prevents
+    an accidental binary collapse while still supporting legitimately rare
+    house-win outcomes.
+    """
+
     names = tuple(feature_names)
     if not names or len(set(names)) != len(names) or any(not name for name in names):
         raise ValueError("feature_names must be non-empty and unique")
@@ -150,11 +194,25 @@ def fit_softmax_baseline(
         raise ValueError("epochs must be positive")
     if l2 < 0 or not math.isfinite(l2):
         raise ValueError("l2 must be non-negative finite")
+    if prior_strength < 0 or not math.isfinite(prior_strength):
+        raise ValueError("prior_strength must be non-negative finite")
+    if class_prior is None and prior_strength != 0:
+        raise ValueError("prior_strength requires class_prior")
+    if class_prior is not None:
+        class_prior.validate()
+        if prior_strength <= 0:
+            raise ValueError("class_prior requires positive prior_strength")
 
     present = {example.outcome for example in examples}
-    missing = [label.value for label in _CLASS_ORDER if label not in present]
-    if missing:
-        raise ValueError(f"all three outcome classes are required for training; missing: {missing}")
+    missing_directional = [
+        label.value for label in (Outcome.BULL, Outcome.BEAR) if label not in present
+    ]
+    if missing_directional:
+        raise ValueError(
+            f"BULL and BEAR observations are required for training; missing: {missing_directional}"
+        )
+    if Outcome.TIE not in present and class_prior is None:
+        raise ValueError("TIE observation missing; explicit three-outcome class_prior is required")
 
     weights_by_class = {label: 1.0 for label in _CLASS_ORDER}
     if class_weights is not None:
@@ -171,19 +229,38 @@ def fit_softmax_baseline(
     normalization = sum(sample_weights)
     width = len(names) + 1
     weights = [[0.0 for _ in range(width)] for _ in range(3)]
+    prior_vector = None
+    if class_prior is not None:
+        prior_vector = (class_prior.bull, class_prior.bear, class_prior.tie)
 
     for _ in range(epochs):
         gradient = [[0.0 for _ in range(width)] for _ in range(3)]
         for vector, target, sample_weight in zip(x, y, sample_weights, strict=True):
-            logits = [sum(weight * value for weight, value in zip(row, vector, strict=True)) for row in weights]
+            logits = [
+                sum(weight * value for weight, value in zip(row, vector, strict=True))
+                for row in weights
+            ]
             probabilities = _softmax(logits)
             for class_index in range(3):
-                error = (probabilities[class_index] - (1.0 if class_index == target else 0.0)) * sample_weight
+                error = (
+                    probabilities[class_index] - (1.0 if class_index == target else 0.0)
+                ) * sample_weight
                 for column in range(width):
                     gradient[class_index][column] += error * vector[column]
+
+        prior_probabilities = None
+        if prior_vector is not None:
+            prior_probabilities = _softmax([weights[index][0] for index in range(3)])
+
         for class_index in range(3):
             for column in range(width):
                 grad = gradient[class_index][column] / normalization
+                if column == 0 and prior_vector is not None and prior_probabilities is not None:
+                    grad += (
+                        prior_strength
+                        / normalization
+                        * (prior_probabilities[class_index] - prior_vector[class_index])
+                    )
                 if column != 0:
                     grad += l2 * weights[class_index][column]
                 weights[class_index][column] -= learning_rate * grad
@@ -193,6 +270,8 @@ def fit_softmax_baseline(
         scaler=scaler,
         weights=tuple(tuple(row) for row in weights),
         temperature=1.0,
+        training_prior=class_prior,
+        prior_strength=prior_strength,
     )
     model.validate()
     return model
