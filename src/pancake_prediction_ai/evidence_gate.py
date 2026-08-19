@@ -8,6 +8,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Mapping
 
+from .runtime_fingerprint import (
+    capture_runtime_fingerprint,
+    fingerprint_sha256,
+    validate_runtime_fingerprint_payload,
+)
+
 
 class EvidenceKind(StrEnum):
     STAGE5A_DRILL = "stage5a_drill"
@@ -22,7 +28,7 @@ class EvidenceOrigin(StrEnum):
     SELF_REPORTED = "self_reported"
 
 
-STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v1"
+STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v2"
 STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v1"
 SHADOW_GATE_SCHEMA = "shadow_gate_evidence_v1"
 
@@ -118,6 +124,16 @@ def _strict_int(mapping: Mapping[str, Any], key: str) -> int | None:
     return value
 
 
+def _valid_sha256(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
 def _valid_block_hash(value: object) -> bool:
     if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
         return False
@@ -129,7 +145,7 @@ def _valid_block_hash(value: object) -> bool:
 
 
 def _qualified_stage5a_pass(evidence: Evidence) -> bool:
-    """Accept only evidence emitted by the Stage 5A durability drill schema."""
+    """Accept only current-runtime evidence emitted by the Stage 5A drill schema."""
 
     if evidence.kind is not EvidenceKind.STAGE5A_DRILL:
         return False
@@ -147,6 +163,20 @@ def _qualified_stage5a_pass(evidence: Evidence) -> bool:
     if payload.get("transaction_signed") is not False:
         return False
     if payload.get("transaction_broadcast") is not False:
+        return False
+
+    runtime_payload = payload.get("runtime_fingerprint")
+    runtime_sha = payload.get("runtime_fingerprint_sha256")
+    if not validate_runtime_fingerprint_payload(runtime_payload):
+        return False
+    if not _valid_sha256(runtime_sha):
+        return False
+    if fingerprint_sha256(runtime_payload) != runtime_sha:
+        return False
+    # A Stage 5A drill from another Python/OS/architecture/SQLite stack cannot
+    # clear preflight on this process. The official gate therefore re-captures
+    # the current runtime rather than trusting a caller-supplied environment ID.
+    if capture_runtime_fingerprint().sha256 != runtime_sha:
         return False
 
     required_true = (
