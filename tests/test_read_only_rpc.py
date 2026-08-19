@@ -113,7 +113,14 @@ def test_eth_getlogs_http_403_splits_topic_or_before_block_range() -> None:
     ]
 
 
-def test_eth_getlogs_rpc_range_limit_is_split_but_other_rpc_errors_are_not() -> None:
+@pytest.mark.parametrize(
+    "limit_message",
+    [
+        "eth_getLogs is limited to 0 - 1 blocks range",
+        "limit exceeded",
+    ],
+)
+def test_eth_getlogs_rpc_range_limit_is_split(limit_message: str) -> None:
     def transport(request: Request, timeout: float) -> bytes:
         payload = json.loads(request.data or b"{}")
         filter_ = payload["params"][0]
@@ -124,7 +131,7 @@ def test_eth_getlogs_rpc_range_limit_is_split_but_other_rpc_errors_are_not() -> 
                 {
                     "jsonrpc": "2.0",
                     "id": payload["id"],
-                    "error": {"code": -32602, "message": "eth_getLogs is limited to 0 - 1 blocks range"},
+                    "error": {"code": -32005, "message": limit_message},
                 }
             ).encode()
         return json.dumps(
@@ -134,6 +141,27 @@ def test_eth_getlogs_rpc_range_limit_is_split_but_other_rpc_errors_are_not() -> 
     client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
     result = client.call("eth_getLogs", [{"fromBlock": "0x1", "toBlock": "0x2"}])
     assert [row["blockNumber"] for row in result] == ["0x1", "0x2"]
+
+
+def test_non_range_rpc_error_is_not_split() -> None:
+    calls = 0
+
+    def transport(request: Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        payload = json.loads(request.data or b"{}")
+        return json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "error": {"code": -32000, "message": "backend unavailable"},
+            }
+        ).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    with pytest.raises(RpcError, match="backend unavailable"):
+        client.call("eth_getLogs", [{"fromBlock": "0x1", "toBlock": "0x2"}])
+    assert calls == 1
 
 
 @pytest.mark.parametrize(
