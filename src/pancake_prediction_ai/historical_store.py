@@ -7,6 +7,7 @@ from .event_store import EventStore
 
 _METADATA_KEY = "reconstruction_dataset_id"
 _INTERVAL_METADATA_KEY = "reconstruction_prediction_interval_seconds"
+_SUBGRAPH_LATENCY_METADATA_KEY = "reconstruction_subgraph_latency_ns"
 _TRIGGER_NAME = "reconstructed_dataset_namespace_guard"
 
 
@@ -21,13 +22,7 @@ def reconstruction_dataset_id(store: EventStore) -> str | None:
 
 
 def reconstruction_prediction_interval_seconds(store: EventStore) -> int | None:
-    """Return the persisted scheduled Prediction interval for this replay.
-
-    Public-RPC reconstruction must use the lock time fixed at StartRound, not
-    the later operator LockRound transaction time. Persisting this value in the
-    SQLite source makes a subsequent artifact-build process recover the same
-    leakage-safe decision clock instead of silently reverting to actual lock.
-    """
+    """Return the persisted scheduled Prediction interval for this replay."""
 
     if store.mode != "reconstructed":
         raise ValueError("Prediction interval binding is only valid for reconstructed Event Store")
@@ -85,6 +80,66 @@ def bind_reconstruction_prediction_interval_seconds(
         store._conn.rollback()
         raise
     return interval_seconds
+
+
+def reconstruction_subgraph_latency_ns(store: EventStore) -> int | None:
+    """Return the persisted historical indexer-availability latency assumption."""
+
+    if store.mode != "reconstructed":
+        raise ValueError("subgraph latency binding is only valid for reconstructed Event Store")
+    row = store._conn.execute(
+        "SELECT value FROM store_metadata WHERE key = ?",
+        (_SUBGRAPH_LATENCY_METADATA_KEY,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        value = int(str(row[0]))
+    except ValueError as exc:
+        raise ValueError("persisted reconstruction subgraph latency is invalid") from exc
+    if value < 0:
+        raise ValueError("persisted reconstruction subgraph latency must be non-negative")
+    return value
+
+
+def bind_reconstruction_subgraph_latency_ns(
+    store: EventStore,
+    latency_ns: int,
+) -> int:
+    """Permanently bind one subgraph/indexer availability assumption to a store."""
+
+    if store.mode != "reconstructed":
+        raise ValueError("subgraph latency binding requires reconstructed Event Store")
+    if isinstance(latency_ns, bool) or not isinstance(latency_ns, int) or latency_ns < 0:
+        raise ValueError("latency_ns must be a non-negative integer")
+    bound = reconstruction_subgraph_latency_ns(store)
+    if bound is not None and bound != latency_ns:
+        raise ValueError(
+            f"reconstructed Event Store is bound to subgraph latency {bound}, not {latency_ns}"
+        )
+    try:
+        store._conn.execute("BEGIN IMMEDIATE")
+        row = store._conn.execute(
+            "SELECT value FROM store_metadata WHERE key = ?",
+            (_SUBGRAPH_LATENCY_METADATA_KEY,),
+        ).fetchone()
+        if row is None:
+            store._conn.execute(
+                "INSERT INTO store_metadata(key, value) VALUES (?, ?)",
+                (_SUBGRAPH_LATENCY_METADATA_KEY, str(latency_ns)),
+            )
+        elif int(str(row[0])) != latency_ns:
+            raise ValueError(
+                f"reconstructed Event Store is bound to subgraph latency {row[0]}, not {latency_ns}"
+            )
+        store._conn.commit()
+    except sqlite3.DatabaseError:
+        store._conn.rollback()
+        raise
+    except Exception:
+        store._conn.rollback()
+        raise
+    return latency_ns
 
 
 def _event_dataset_id(store_event) -> str:
