@@ -1,0 +1,131 @@
+name: historical-subgraph-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_epoch:
+        description: "First Prediction epoch to reconstruct"
+        required: true
+        type: string
+      to_epoch:
+        description: "Last Prediction epoch to reconstruct"
+        required: true
+        type: string
+      decision_lead_ns:
+        description: "Decision lead before scheduled lock, nanoseconds"
+        required: true
+        default: "10000000000"
+        type: string
+      binance_latency_ns:
+        description: "Assumed production Binance availability latency, nanoseconds"
+        required: true
+        default: "500000000"
+        type: string
+      onchain_latency_ns:
+        description: "Assumed production on-chain/oracle availability latency, nanoseconds"
+        required: true
+        default: "1000000000"
+        type: string
+      subgraph_latency_ns:
+        description: "Conservative measured Prediction subgraph/indexer availability latency, nanoseconds"
+        required: true
+        type: string
+      config_log_chunk_size:
+        description: "BSC RPC eth_getLogs chunk size for independent config-change proof"
+        required: true
+        default: "50"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  historical-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GRAPH_API_KEY: ${{ secrets.GRAPH_API_KEY }}
+      BSC_READ_RPC_URL: ${{ secrets.BSC_READ_RPC_URL }}
+      DATASET_ID: prediction-v2-subgraph-${{ github.run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Require secret-backed data sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GRAPH_API_KEY:-}" ]]; then
+            echo "GRAPH_API_KEY secret is required" >&2
+            exit 1
+          fi
+          if [[ -z "${BSC_READ_RPC_URL:-}" ]]; then
+            echo "BSC_READ_RPC_URL secret is required" >&2
+            exit 1
+          fi
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Acquire and freeze historical evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ppai-historical-subgraph \
+            --store artifacts/history.sqlite \
+            --dataset-id "$DATASET_ID" \
+            --rpc-url "$BSC_READ_RPC_URL" \
+            --from-epoch "${{ inputs.from_epoch }}" \
+            --to-epoch "${{ inputs.to_epoch }}" \
+            --decision-lead-ns "${{ inputs.decision_lead_ns }}" \
+            --binance-latency-ns "${{ inputs.binance_latency_ns }}" \
+            --onchain-latency-ns "${{ inputs.onchain_latency_ns }}" \
+            --subgraph-latency-ns "${{ inputs.subgraph_latency_ns }}" \
+            --config-log-chunk-size "${{ inputs.config_log_chunk_size }}" \
+            --dataset-output artifacts/dataset.json \
+            --summary-output artifacts/summary.json \
+            | tee artifacts/acquisition.log
+
+      - name: Independently verify frozen evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ppai-collector --store artifacts/history.sqlite verify-store --mode reconstructed
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from pancake_prediction_ai.dataset_artifact import load_historical_dataset_artifact
+
+          summary = json.loads(Path("artifacts/summary.json").read_text())
+          artifact = load_historical_dataset_artifact("artifacts/dataset.json")
+          payload = artifact.payload
+          assert summary["config_change_logs"] == 0
+          assert summary["subgraph_has_indexing_errors"] is False
+          assert summary["completed_rounds"] > 0
+          assert summary["decision_snapshots"] > 0
+          assert summary["examples"] > 0
+          assert summary["dataset_artifact_sha256"] == artifact.artifact_sha256
+          assert payload["source_event_store"]["tip_hash"] == summary["store_tip_hash"]
+          assert payload["assumptions"]["prediction_interval_seconds"] == summary["interval_seconds"]
+          assert payload["assumptions"]["subgraph_availability_latency_ns"] == summary["assumed_subgraph_latency_ns"]
+          PY
+
+      - name: Upload historical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-subgraph-evidence-${{ github.run_id }}
+          path: |
+            artifacts/history.sqlite
+            artifacts/dataset.json
+            artifacts/summary.json
+            artifacts/acquisition.log
+          if-no-files-found: warn
+          retention-days: 30
