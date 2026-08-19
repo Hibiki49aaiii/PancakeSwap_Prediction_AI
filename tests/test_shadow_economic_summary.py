@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pancake_prediction_ai.event_store import EventRecord, EventStore
 from pancake_prediction_ai.shadow_economic_summary import summarize_shadow_economics
 
@@ -79,5 +81,5 @@ def test_shadow_economic_summary_keeps_conditional_and_assumption_adjusted_pnl_s
     assert summary.conditional_max_drawdown_wei == 60
     assert summary.probability_adjusted_net_pnl_wei == 20.0
     assert summary.probability_adjusted_max_drawdown_wei == 30.0
-    assert summary.average_selected_expected_return == 0.2
+    assert summary.average_selected_expected_return == pytest.approx(0.2)
     assert summary.claim_or_refund_gas_fully_modeled is False
