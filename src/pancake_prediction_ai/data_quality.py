@@ -14,6 +14,7 @@ class SourceQualityPolicy:
     max_spread_bps: float
     min_recent_trade_count: int
     min_time_to_lock_seconds: float
+    require_book_sequence_id: bool = True
 
     def validate(self) -> None:
         if min(
@@ -45,16 +46,20 @@ def _latest(snapshot: ReplaySnapshot, source: str, topic: str):
     return items[-1]
 
 
-def _sequence_is_strictly_increasing(snapshot: ReplaySnapshot, source: str, topic: str, field: str) -> bool:
+def _sequence_status(snapshot: ReplaySnapshot, source: str, topic: str, field: str) -> str:
+    """Return `ok`, `unavailable`, or `non_monotonic` for one source sequence."""
+
     previous: int | None = None
     for item in snapshot.by_source_topic(source, topic):
         value = item.event.payload.get(field)
+        if value is None:
+            return "unavailable"
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"sequence field must be integer: {source}/{topic}.{field}")
+            raise ValueError(f"sequence field must be integer or null: {source}/{topic}.{field}")
         if previous is not None and value <= previous:
-            return False
+            return "non_monotonic"
         previous = value
-    return True
+    return "ok"
 
 
 def assess_source_quality(
@@ -90,13 +95,13 @@ def assess_source_quality(
     if features.time_to_lock_seconds < policy.min_time_to_lock_seconds:
         blockers.append("decision_too_close_to_lock")
 
-    if not _sequence_is_strictly_increasing(
-        snapshot, "binance_spot", "market.book_ticker", "update_id"
-    ):
+    book_sequence = _sequence_status(snapshot, "binance_spot", "market.book_ticker", "update_id")
+    if book_sequence == "non_monotonic":
         blockers.append("binance_book_sequence_non_monotonic")
-    if not _sequence_is_strictly_increasing(
-        snapshot, "binance_spot", "market.agg_trade", "aggregate_trade_id"
-    ):
+    elif book_sequence == "unavailable" and policy.require_book_sequence_id:
+        blockers.append("binance_book_sequence_unavailable")
+
+    if _sequence_status(snapshot, "binance_spot", "market.agg_trade", "aggregate_trade_id") == "non_monotonic":
         blockers.append("binance_trade_sequence_non_monotonic")
 
     return SourceQualityReport(
