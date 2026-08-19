@@ -30,6 +30,25 @@ def test_read_only_rpc_parses_chain_id_and_sets_explicit_http_headers() -> None:
     assert seen[0]["method"] == "eth_chainId"
 
 
+def test_eth_getlogs_singleton_topic_or_is_normalized_before_transport() -> None:
+    seen_topics: list[object] = []
+
+    def transport(request: Request, timeout: float) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        topic0 = payload["params"][0]["topics"][0]
+        seen_topics.append(topic0)
+        if isinstance(topic0, list):
+            raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
+        return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": []}).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    assert client.call(
+        "eth_getLogs",
+        [{"fromBlock": "0x1", "toBlock": "0x2", "topics": [["0xabc"]]}],
+    ) == []
+    assert seen_topics == ["0xabc"]
+
+
 def test_eth_getlogs_http_403_is_split_until_provider_accepts_range() -> None:
     seen_ranges: list[tuple[int, int]] = []
 
@@ -64,7 +83,8 @@ def test_eth_getlogs_http_403_splits_topic_or_before_block_range() -> None:
         filter_ = payload["params"][0]
         start = int(filter_["fromBlock"], 16)
         end = int(filter_["toBlock"], 16)
-        alternatives = tuple(filter_["topics"][0])
+        raw_topic0 = filter_["topics"][0]
+        alternatives = (raw_topic0,) if isinstance(raw_topic0, str) else tuple(raw_topic0)
         seen.append((start, end, alternatives))
         if len(alternatives) > 1:
             raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
