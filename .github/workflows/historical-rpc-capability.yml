@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-      - name: Probe filtered logs and current-state Chainlink history
+      - name: Probe small log chunks and epoch-indexed filters
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +46,15 @@ jobs:
           def topic(signature):
               return "0x" + keccak(signature.encode("ascii")).hex()
 
+          def uint_topic(value):
+              return "0x" + int(value).to_bytes(32, "big").hex()
+
+          current_raw = client.call(
+              "eth_call",
+              [{"to": BNB_PREDICTION_CONTRACT, "data": encode_call("currentEpoch()")}, "latest"],
+          )
+          current_epoch = int(decode_result(current_raw, ("uint256",))[0])
+
           lifecycle_topics = [
               topic("StartRound(uint256)"),
               topic("LockRound(uint256,uint256,int256)"),
@@ -61,8 +70,11 @@ jobs:
               topic("NewOracle(address)"),
           ]
 
-          def log_probe(width, topics):
+          def log_probe(width, topics, extra_topics=None):
               start = max(1, head - width)
+              topic_filter = [topics]
+              if extra_topics:
+                  topic_filter.extend(extra_topics)
               try:
                   logs = client.call(
                       "eth_getLogs",
@@ -70,10 +82,16 @@ jobs:
                           "address": BNB_PREDICTION_CONTRACT,
                           "fromBlock": hex(start),
                           "toBlock": hex(head),
-                          "topics": [topics],
+                          "topics": topic_filter,
                       }],
                   )
-                  return {"width_blocks": width, "ok": True, "count": len(logs)}
+                  return {
+                      "width_blocks": width,
+                      "ok": True,
+                      "count": len(logs),
+                      "first_block": int(logs[0]["blockNumber"],16) if logs else None,
+                      "last_block": int(logs[-1]["blockNumber"],16) if logs else None,
+                  }
               except Exception as exc:
                   return {
                       "width_blocks": width,
@@ -82,65 +100,25 @@ jobs:
                       "error": str(exc)[:500],
                   }
 
-          # Current oracle reference is a latest-state call, which public RPC supports.
-          oracle_raw = client.call(
-              "eth_call",
-              [{"to": BNB_PREDICTION_CONTRACT, "data": encode_call("oracle()")}, "latest"],
-          )
-          oracle = str(decode_result(oracle_raw, ("address",))[0]).lower()
-          latest_raw = client.call(
-              "eth_call",
-              [{"to": oracle, "data": encode_call("latestRoundData()")}, "latest"],
-          )
-          latest = decode_result(
-              latest_raw,
-              ("uint80", "int256", "uint256", "uint256", "uint80"),
-          )
-          latest_round = int(latest[0])
-          chainlink_history = []
-          for offset in [1, 10, 100, 1_000]:
-              round_id = latest_round - offset
-              item = {"round_offset": offset, "round_id": round_id}
-              try:
-                  raw = client.call(
-                      "eth_call",
-                      [{
-                          "to": oracle,
-                          "data": encode_call(
-                              "getRoundData(uint80)",
-                              argument_types=("uint80",),
-                              arguments=(round_id,),
-                          ),
-                      }, "latest"],
-                  )
-                  values = decode_result(
-                      raw,
-                      ("uint80", "int256", "uint256", "uint256", "uint80"),
-                  )
-                  item.update({
-                      "ok": True,
-                      "answer": int(values[1]),
-                      "updated_at_s": int(values[3]),
-                      "answered_in_round": int(values[4]),
-                  })
-              except Exception as exc:
-                  item.update({
-                      "ok": False,
-                      "error_type": type(exc).__name__,
-                      "error": str(exc)[:500],
-                  })
-              chainlink_history.append(item)
-
+          # For BetBull/BetBear, epoch is topic2 (topic1 is sender).
+          epoch_topic = uint_topic(current_epoch)
+          # For lifecycle events, epoch is topic1.
           result = {
               "chain_id": int(client.call("eth_chainId", []), 16),
               "head_block": head,
-              "prediction_contract": BNB_PREDICTION_CONTRACT,
-              "oracle": oracle,
-              "latest_chainlink_round": latest_round,
-              "lifecycle_logs": [log_probe(w, lifecycle_topics) for w in [5_000, 20_000, 50_000, 100_000]],
-              "bet_logs": [log_probe(w, bet_topics) for w in [500, 1_000, 2_000, 5_000]],
-              "config_logs": [log_probe(w, config_topics) for w in [20_000, 100_000, 500_000]],
-              "chainlink_get_round_data": chainlink_history,
+              "current_epoch": current_epoch,
+              "generic_lifecycle_small_chunks": [
+                  log_probe(w, lifecycle_topics) for w in [10, 25, 50, 100, 250, 500]
+              ],
+              "current_epoch_lifecycle": [
+                  log_probe(w, lifecycle_topics, [epoch_topic]) for w in [100, 250, 500, 1_000, 2_000, 5_000]
+              ],
+              "current_epoch_bets": [
+                  log_probe(w, bet_topics, [None, epoch_topic]) for w in [100, 250, 500, 1_000, 2_000, 5_000]
+              ],
+              "generic_config_small_chunks": [
+                  log_probe(w, config_topics) for w in [100, 250, 500, 1_000, 2_000, 5_000]
+              ],
           }
           print(json.dumps(result, sort_keys=True, separators=(",", ":")))
           PY
