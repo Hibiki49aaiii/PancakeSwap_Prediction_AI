@@ -12,10 +12,14 @@ from pancake_prediction_ai.evidence_gate import (
     RuntimeSafetyState,
     evaluate_stage6a_readiness,
 )
+from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
 from pancake_prediction_ai.runtime_fingerprint import (
     capture_runtime_fingerprint,
     fingerprint_sha256,
 )
+
+
+CHAINLINK_ORACLE = "0x2222222222222222222222222222222222222222"
 
 
 def _digest(payload: dict[str, object]) -> str:
@@ -88,10 +92,12 @@ def qualified_stage5b(
 ) -> Evidence:
     block_hash = "0x" + "ab" * 32
     payload: dict[str, object] = {
-        "schema": "stage5b_verified_local_bsc_fork_v1",
+        "schema": "stage5b_verified_local_bsc_fork_v2",
         "probe_type": "verified_local_bsc_fork",
         "transaction_signed": False,
         "mainnet_transaction_broadcast": False,
+        "prediction_contract": BNB_PREDICTION_CONTRACT,
+        "chainlink_contract": CHAINLINK_ORACLE,
         "chain_id": 56,
         "initial_block": 123,
         "mined_block": 124,
@@ -179,6 +185,8 @@ def qualified_shadow(
 
 def safety(**changes: object) -> RuntimeSafetyState:
     values = dict(
+        prediction_contract=BNB_PREDICTION_CONTRACT,
+        chainlink_oracle=CHAINLINK_ORACLE,
         kill_switch_armed=True,
         wallet_binding_ok=True,
         per_round_cap_ok=True,
@@ -264,8 +272,6 @@ def test_stage5a_evidence_from_different_runtime_stack_cannot_clear_gate() -> No
             "runtime_fingerprint_sha256": other_sha,
         }
     )
-    # The payload and its own digest are internally consistent; rejection comes
-    # from comparing the drill runtime to the runtime evaluating Stage 6A.
     decision = evaluate_stage6a_readiness(
         stage5a=stage5a,
         stage5b=qualified_stage5b(),
@@ -294,6 +300,8 @@ def test_stage5a_runtime_fingerprint_sha_must_match_nested_runtime_payload() -> 
 @pytest.mark.parametrize(
     "changes",
     [
+        {"prediction_contract": "0x3333333333333333333333333333333333333333"},
+        {"chainlink_contract": "0x4444444444444444444444444444444444444444"},
         {"chain_id": 1},
         {"upstream_chain_id": 1},
         {"reset_block": 122},
@@ -307,12 +315,23 @@ def test_stage5a_runtime_fingerprint_sha_must_match_nested_runtime_payload() -> 
         {"mainnet_transaction_broadcast": True},
     ],
 )
-def test_unverified_or_unsafe_stage5b_payload_cannot_clear_gate(changes: dict[str, object]) -> None:
+def test_unverified_misbound_or_unsafe_stage5b_payload_cannot_clear_gate(changes: dict[str, object]) -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=qualified_stage5a(),
         stage5b=qualified_stage5b(changes=changes),
         shadow=qualified_shadow(),
         safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
+
+
+def test_stage5b_evidence_must_match_runtime_chainlink_binding() -> None:
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(),
+        shadow=qualified_shadow(),
+        safety=safety(chainlink_oracle="0x4444444444444444444444444444444444444444"),
     )
     assert not decision.ready
     assert "stage5b_qualified_observed_pass_missing" in decision.blockers
@@ -358,6 +377,8 @@ def test_incomplete_misclassified_or_weakened_shadow_evidence_cannot_clear_gate(
 @pytest.mark.parametrize(
     ("changes", "blocker"),
     [
+        ({"prediction_contract": "0x3333333333333333333333333333333333333333"}, "prediction_contract_binding_failed"),
+        ({"chainlink_oracle": "not-an-address"}, "chainlink_oracle_binding_failed"),
         ({"kill_switch_armed": False}, "kill_switch_not_armed"),
         ({"wallet_binding_ok": False}, "wallet_binding_failed"),
         ({"per_round_cap_ok": False}, "per_round_cap_failed"),
