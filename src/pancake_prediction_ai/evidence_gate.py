@@ -22,6 +22,11 @@ class EvidenceOrigin(StrEnum):
     SELF_REPORTED = "self_reported"
 
 
+STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v1"
+STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v1"
+SHADOW_GATE_SCHEMA = "shadow_gate_evidence_v1"
+
+
 @dataclass(frozen=True, slots=True)
 class Evidence:
     kind: EvidenceKind
@@ -40,7 +45,12 @@ class Evidence:
         payload = obj.get("payload")
         if not isinstance(payload, dict):
             raise ValueError("payload must be an object")
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
         actual = hashlib.sha256(canonical).hexdigest()
         if declared != actual:
             raise ValueError("artifact_sha256 does not match canonical payload")
@@ -88,6 +98,139 @@ def _number(mapping: Mapping[str, Any], key: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def _payload_hash_matches(evidence: Evidence) -> bool:
+    try:
+        canonical = json.dumps(
+            evidence.payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    except (TypeError, ValueError):
+        return False
+    return hashlib.sha256(canonical).hexdigest() == evidence.artifact_sha256
+
+
+def _strict_int(mapping: Mapping[str, Any], key: str) -> int | None:
+    value = mapping.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _valid_block_hash(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
+        return False
+    try:
+        int(value[2:], 16)
+    except ValueError:
+        return False
+    return True
+
+
+def _qualified_stage5a_pass(evidence: Evidence) -> bool:
+    """Accept only evidence emitted by the Stage 5A durability drill schema."""
+
+    if evidence.kind is not EvidenceKind.STAGE5A_DRILL:
+        return False
+    if evidence.origin is not EvidenceOrigin.OBSERVED or not evidence.passed:
+        return False
+    if not _payload_hash_matches(evidence):
+        return False
+    payload = evidence.payload
+    if payload.get("schema") != STAGE5A_DRILL_SCHEMA:
+        return False
+    if payload.get("drill_type") != "local_sqlite_execution_state_durability":
+        return False
+    if payload.get("blockchain_transaction_created") is not False:
+        return False
+    if payload.get("transaction_signed") is not False:
+        return False
+    if payload.get("transaction_broadcast") is not False:
+        return False
+
+    required_true = (
+        "journal_mode_wal",
+        "synchronous_full",
+        "unresolved_recovered_after_restart",
+        "duplicate_active_nonce_rejected",
+        "unknown_state_persisted_after_missing_receipt",
+        "finalized_state_persisted_after_confirmations",
+        "terminal_nonce_released",
+        "terminal_reuse_cleanup_persisted",
+    )
+    if any(payload.get(key) is not True for key in required_true):
+        return False
+    unresolved = _strict_int(payload, "unresolved_count_final")
+    required_confirmations = _strict_int(payload, "required_confirmations")
+    if unresolved != 0:
+        return False
+    if required_confirmations is None or required_confirmations < 1:
+        return False
+    return True
+
+
+def _qualified_stage5b_pass(evidence: Evidence) -> bool:
+    """Accept only a local BSC fork probe independently matched to upstream BSC."""
+
+    if evidence.kind is not EvidenceKind.STAGE5B_FORK:
+        return False
+    if evidence.origin is not EvidenceOrigin.OBSERVED or not evidence.passed:
+        return False
+    if not _payload_hash_matches(evidence):
+        return False
+    payload = evidence.payload
+    if payload.get("schema") != STAGE5B_FORK_SCHEMA:
+        return False
+    if payload.get("probe_type") != "verified_local_bsc_fork":
+        return False
+    if payload.get("transaction_signed") is not False:
+        return False
+    if payload.get("mainnet_transaction_broadcast") is not False:
+        return False
+
+    chain_id = _strict_int(payload, "chain_id")
+    upstream_chain_id = _strict_int(payload, "upstream_chain_id")
+    initial_block = _strict_int(payload, "initial_block")
+    mined_block = _strict_int(payload, "mined_block")
+    reset_block = _strict_int(payload, "reset_block")
+    if chain_id != 56 or upstream_chain_id != 56:
+        return False
+    if initial_block is None or initial_block <= 0:
+        return False
+    if mined_block is None or mined_block < initial_block + 1:
+        return False
+    if reset_block != initial_block:
+        return False
+
+    required_true = (
+        "prediction_contract_code_present",
+        "chainlink_contract_code_present",
+        "prediction_code_present_after_reset",
+        "chainlink_code_present_after_reset",
+        "fork_reset_supported",
+        "fork_mine_observed",
+        "fork_block_hash_matches_upstream",
+        "reset_block_hash_matches_upstream",
+        "prediction_code_matches_upstream",
+        "chainlink_code_matches_upstream",
+        "prediction_code_matches_upstream_after_reset",
+        "chainlink_code_matches_upstream_after_reset",
+        "upstream_verified",
+    )
+    if any(payload.get(key) is not True for key in required_true):
+        return False
+
+    local_initial_hash = payload.get("local_initial_block_hash")
+    upstream_hash = payload.get("upstream_fork_block_hash")
+    local_reset_hash = payload.get("local_reset_block_hash")
+    if not all(_valid_block_hash(value) for value in (local_initial_hash, upstream_hash, local_reset_hash)):
+        return False
+    if not (local_initial_hash == upstream_hash == local_reset_hash):
+        return False
+    return True
+
+
 def _qualified_shadow_pass(evidence: Evidence) -> bool:
     """Accept only explicitly qualified hybrid paper/shadow economics evidence.
 
@@ -106,8 +249,10 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
         return False
     if evidence.origin is not EvidenceOrigin.HYBRID or not evidence.passed:
         return False
+    if not _payload_hash_matches(evidence):
+        return False
     payload = evidence.payload
-    if payload.get("schema") != "shadow_gate_evidence_v1":
+    if payload.get("schema") != SHADOW_GATE_SCHEMA:
         return False
     if payload.get("shadow_artifact_schema") != "shadow_economic_evidence_v1":
         return False
@@ -184,14 +329,15 @@ def evaluate_stage6a_readiness(
 ) -> GateDecision:
     blockers: list[str] = []
 
-    for evidence, kind, label in (
-        (stage5a, EvidenceKind.STAGE5A_DRILL, "stage5a"),
-        (stage5b, EvidenceKind.STAGE5B_FORK, "stage5b"),
-    ):
-        if evidence.kind is not kind:
-            blockers.append(f"{label}_wrong_evidence_kind")
-        if not evidence.is_observed_pass:
-            blockers.append(f"{label}_observed_pass_missing")
+    if stage5a.kind is not EvidenceKind.STAGE5A_DRILL:
+        blockers.append("stage5a_wrong_evidence_kind")
+    if not _qualified_stage5a_pass(stage5a):
+        blockers.append("stage5a_qualified_observed_pass_missing")
+
+    if stage5b.kind is not EvidenceKind.STAGE5B_FORK:
+        blockers.append("stage5b_wrong_evidence_kind")
+    if not _qualified_stage5b_pass(stage5b):
+        blockers.append("stage5b_qualified_observed_pass_missing")
 
     if shadow.kind is not EvidenceKind.SHADOW_ECONOMICS:
         blockers.append("shadow_wrong_evidence_kind")
