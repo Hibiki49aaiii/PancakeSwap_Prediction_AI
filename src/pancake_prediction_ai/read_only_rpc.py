@@ -54,7 +54,7 @@ def _log_filter_range(params: list[Any]) -> tuple[int, int] | None:
     return from_block, to_block
 
 
-def _split_log_params(params: list[Any]) -> tuple[list[Any], list[Any]] | None:
+def _split_log_range_params(params: list[Any]) -> tuple[list[Any], list[Any]] | None:
     range_ = _log_filter_range(params)
     if range_ is None:
         return None
@@ -70,6 +70,56 @@ def _split_log_params(params: list[Any]) -> tuple[list[Any], list[Any]] | None:
     right_filter["fromBlock"] = hex(middle + 1)
     right_filter["toBlock"] = hex(to_block)
     return [left_filter], [right_filter]
+
+
+def _split_log_topic_params(params: list[Any]) -> tuple[list[Any], list[Any]] | None:
+    if len(params) != 1 or not isinstance(params[0], dict):
+        return None
+    original = params[0]
+    topics = original.get("topics")
+    if not isinstance(topics, list) or not topics:
+        return None
+    alternatives = topics[0]
+    if not isinstance(alternatives, list):
+        return None
+    unique = list(dict.fromkeys(alternatives))
+    if len(unique) <= 1:
+        return None
+    middle = len(unique) // 2
+    left_topics = list(topics)
+    right_topics = list(topics)
+    left_topics[0] = unique[:middle]
+    right_topics[0] = unique[middle:]
+    left_filter = dict(original)
+    right_filter = dict(original)
+    left_filter["topics"] = left_topics
+    right_filter["topics"] = right_topics
+    return [left_filter], [right_filter]
+
+
+def _log_sort_key(value: Any) -> tuple[int, int, str]:
+    if not isinstance(value, dict):
+        return (2**256 - 1, 2**256 - 1, repr(value))
+    block = value.get("blockNumber")
+    index = value.get("logIndex")
+    try:
+        block_number = int(block, 16) if isinstance(block, str) and block.startswith("0x") else 2**256 - 1
+    except ValueError:
+        block_number = 2**256 - 1
+    try:
+        log_index = int(index, 16) if isinstance(index, str) and index.startswith("0x") else 2**256 - 1
+    except ValueError:
+        log_index = 2**256 - 1
+    tx_hash = str(value.get("transactionHash", ""))
+    return block_number, log_index, tx_hash
+
+
+def _merge_log_results(left: Any, right: Any) -> list[Any]:
+    if not isinstance(left, list) or not isinstance(right, list):
+        raise RpcError("eth_getLogs split responses must be arrays")
+    combined = [*left, *right]
+    combined.sort(key=_log_sort_key)
+    return combined
 
 
 def _looks_like_log_range_limit(error: object) -> bool:
@@ -106,15 +156,18 @@ class ReadOnlyJsonRpcClient:
             raise ValueError("timeout_seconds must be positive")
 
     def _retry_split_logs(self, params: list[Any]) -> list[Any] | None:
-        split = _split_log_params(params)
+        # Some public providers reject a topic-OR filter even for a tiny range.
+        # Splitting OR alternatives is semantically equivalent and avoids first
+        # exploding a range into hundreds of single-block requests.
+        split = _split_log_topic_params(params)
+        if split is None:
+            split = _split_log_range_params(params)
         if split is None:
             return None
         left_params, right_params = split
         left = self.call("eth_getLogs", left_params)
         right = self.call("eth_getLogs", right_params)
-        if not isinstance(left, list) or not isinstance(right, list):
-            raise RpcError("eth_getLogs split responses must be arrays")
-        return [*left, *right]
+        return _merge_log_results(left, right)
 
     def call(self, method: str, params: list[Any]) -> Any:
         if method not in READ_ONLY_RPC_METHODS:
