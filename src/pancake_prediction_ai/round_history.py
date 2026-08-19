@@ -37,10 +37,10 @@ class RoundTimeline:
     def lock_timestamp_ns(self) -> int:
         """Decision-time lock timestamp.
 
-        When the configured interval is known, this is the lock timestamp that
-        was fixed when StartRound executed (`startTimestamp + intervalSeconds`).
-        Falling back to the later LockRound event timestamp is retained only for
-        legacy callers that have not supplied interval configuration.
+        When schedule information is known, this is the timestamp fixed when
+        StartRound executed. Falling back to the later LockRound event timestamp
+        is retained only for legacy stores that contain no decision snapshot and
+        whose caller did not supply interval configuration.
         """
 
         if self.scheduled_lock_timestamp_ns is not None:
@@ -152,23 +152,45 @@ def _price(event: EventRecord, field: str) -> int:
     return value
 
 
+def _round_snapshot_schedule(events: tuple[EventRecord, ...]) -> dict[int, int]:
+    schedules: dict[int, int] = {}
+    for event in events:
+        if event.source != "pancake_prediction" or event.topic != "prediction.round_snapshot":
+            continue
+        epoch_value = event.payload.get("epoch")
+        lock_value = event.payload.get("lock_timestamp")
+        if isinstance(epoch_value, bool) or not isinstance(epoch_value, int) or epoch_value < 0:
+            raise ValueError("round snapshot epoch must be non-negative integer")
+        if isinstance(lock_value, bool) or not isinstance(lock_value, int) or lock_value <= 0:
+            raise ValueError("round snapshot lock_timestamp must be positive integer")
+        lock_ns = lock_value * 1_000_000_000
+        previous = schedules.get(epoch_value)
+        if previous is not None and previous != lock_ns:
+            raise ValueError(f"conflicting scheduled lock timestamps for epoch {epoch_value}")
+        schedules[epoch_value] = lock_ns
+    return schedules
+
+
 def build_round_timelines(
     events: Iterable[EventRecord],
     *,
     interval_seconds: int | None = None,
 ) -> RoundTimelineBuildResult:
-    """Build completed START/LOCK/END timelines.
+    """Build completed START/LOCK/END timelines without future lock-time leakage.
 
-    Supplying `interval_seconds` makes the decision timestamp leakage-safe: the
-    scheduled lock is reconstructed from information fixed at StartRound rather
-    than from the later operator transaction that emitted LockRound.
+    A supplied `interval_seconds` reconstructs the schedule directly from
+    StartRound. If decision-time round snapshots already exist, their public
+    `lock_timestamp` is used instead. The later LockRound block time is only a
+    legacy fallback when neither source is available.
     """
 
     if interval_seconds is not None and interval_seconds <= 0:
         raise ValueError("interval_seconds must be positive when supplied")
 
+    event_values = tuple(events)
+    snapshot_schedules = _round_snapshot_schedule(event_values)
     grouped: dict[int, dict[LifecycleKind, EventRecord]] = {}
-    for event in events:
+    for event in event_values:
         if event.source != "pancake_prediction" or event.topic != "prediction.round_lifecycle":
             continue
         kind = _lifecycle_kind(event)
@@ -193,13 +215,16 @@ def build_round_timelines(
         if not (start.observed_at_ns <= lock.observed_at_ns <= end.observed_at_ns):
             raise ValueError(f"non-chronological lifecycle availability for epoch {epoch}")
 
-        scheduled_lock_timestamp_ns = None
+        scheduled_lock_timestamp_ns = snapshot_schedules.get(epoch)
         if interval_seconds is not None:
-            scheduled_lock_timestamp_ns = start.event_time_ns + interval_seconds * 1_000_000_000
-            if scheduled_lock_timestamp_ns > lock.event_time_ns:
-                raise ValueError(
-                    f"LockRound for epoch {epoch} occurred before its scheduled lock timestamp"
-                )
+            from_start = start.event_time_ns + interval_seconds * 1_000_000_000
+            if scheduled_lock_timestamp_ns is not None and scheduled_lock_timestamp_ns != from_start:
+                raise ValueError(f"round snapshot schedule disagrees with interval for epoch {epoch}")
+            scheduled_lock_timestamp_ns = from_start
+        if scheduled_lock_timestamp_ns is not None and scheduled_lock_timestamp_ns > lock.event_time_ns:
+            raise ValueError(
+                f"LockRound for epoch {epoch} occurred before its scheduled lock timestamp"
+            )
 
         lock_price = _price(lock, "LOCK")
         close_price = _price(end, "END")
