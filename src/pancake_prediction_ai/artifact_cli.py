@@ -6,11 +6,20 @@ from pathlib import Path
 from typing import Sequence
 
 from .dataset_artifact import load_historical_dataset_artifact
-from .evaluation_artifact import BaselineEvaluationConfig, evaluate_historical_dataset_artifact
+from .evaluation_artifact import (
+    BaselineEvaluationConfig,
+    evaluate_historical_dataset_artifact,
+    load_baseline_evaluation_artifact,
+)
 from .event_store import EventStore
 from .historical_pipeline import HistoricalPipeline, HistoricalPipelineConfig
+from .research_manifest import build_research_run_manifest
 from .tie_prior import TiePriorPolicy
-from .trained_model_artifact import PromotedModelConfig, train_promoted_model_artifact
+from .trained_model_artifact import (
+    PromotedModelConfig,
+    load_promoted_model_artifact,
+    train_promoted_model_artifact,
+)
 
 
 def _positive_int(value: str) -> int:
@@ -95,6 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--tie-z-score", type=_positive_float, default=1.96)
     promote.add_argument("--tie-directional-alpha", type=_positive_float, default=0.5)
     promote.add_argument("--minimum-tie-probability", type=float, default=1e-6)
+
+    manifest = sub.add_parser(
+        "build-manifest",
+        help="Bind dataset, OOS evaluation, and promoted model into one reconstructed research manifest",
+    )
+    manifest.add_argument("--dataset", type=Path, required=True)
+    manifest.add_argument("--evaluation", type=Path, required=True)
+    manifest.add_argument("--model", type=Path, required=True)
+    manifest.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -173,6 +191,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"model sha256={artifact.artifact_sha256} "
             f"eligible_rounds={artifact.payload['eligible_round_count']} output={args.output}"
+        )
+        return 0
+
+    if args.command == "build-manifest":
+        dataset = load_historical_dataset_artifact(args.dataset)
+        evaluation = load_baseline_evaluation_artifact(args.evaluation)
+        model = load_promoted_model_artifact(args.model)
+        manifest = build_research_run_manifest(
+            dataset,
+            evaluation,
+            model,
+            generated_at_ns=generated_at_ns,
+        )
+        manifest.write(args.output)
+        metrics = manifest.payload["oos_metrics"]
+        print(
+            f"manifest sha256={manifest.artifact_sha256} "
+            f"dataset={manifest.payload['dataset_artifact_sha256']} "
+            f"oos_count={metrics['count']} output={args.output}"
         )
         return 0
 
