@@ -9,6 +9,12 @@ class Side(StrEnum):
     BEAR = "BEAR"
 
 
+class Outcome(StrEnum):
+    BULL = "BULL"
+    BEAR = "BEAR"
+    TIE = "TIE"
+
+
 @dataclass(frozen=True, slots=True)
 class PoolState:
     bull_wei: int
@@ -41,6 +47,9 @@ class ExecutionCost:
 @dataclass(frozen=True, slots=True)
 class EVResult:
     side: Side
+    probability_bull: float
+    probability_bear: float
+    probability_tie: float
     probability_win: float
     gross_payout_if_win_wei: float
     pnl_if_win_wei: float
@@ -58,29 +67,37 @@ class EVResult:
 def evaluate_bet_ev(
     *,
     probability_bull: float,
+    probability_tie: float = 0.0,
     side: Side,
     stake_wei: int,
     pool: PoolState,
     cost: ExecutionCost = ExecutionCost(),
 ) -> EVResult:
-    """Evaluate one binary Prediction bet using diluted pool economics.
+    """Evaluate a Pancake Prediction position using three settlement outcomes.
+
+    PancakePredictionV2/V3 settles close > lock as BULL, close < lock as BEAR,
+    and close == lock as a house-win tie. Therefore BEAR is not strictly
+    `1 - P(BULL)` when tie probability is non-zero.
 
     The user's own stake is included in the winning-side denominator. Optional
     same/opposite-side inflows represent conservative expected pool movement
     after the decision snapshot but before lock. Gas is charged whenever an
-    execution attempt succeeds. If execution itself fails, expected PnL is
-    treated as zero here; separate reconciliation costs belong in execution
-    accounting rather than being hidden in model accuracy.
+    execution attempt succeeds.
     """
 
     pool.validate()
     cost.validate()
     if not 0.0 <= probability_bull <= 1.0:
         raise ValueError("probability_bull must be in [0, 1]")
+    if not 0.0 <= probability_tie <= 1.0:
+        raise ValueError("probability_tie must be in [0, 1]")
+    if probability_bull + probability_tie > 1.0:
+        raise ValueError("probability_bull + probability_tie must be <= 1")
     if stake_wei <= 0:
         raise ValueError("stake_wei must be positive")
 
-    p_win = probability_bull if side is Side.BULL else 1.0 - probability_bull
+    probability_bear = 1.0 - probability_bull - probability_tie
+    p_win = probability_bull if side is Side.BULL else probability_bear
     own_side = pool.bull_wei if side is Side.BULL else pool.bear_wei
     other_side = pool.bear_wei if side is Side.BULL else pool.bull_wei
 
@@ -99,15 +116,16 @@ def evaluate_bet_ev(
     expected = cost.execution_success_probability * expected_if_executed
     expected_return = expected / stake_wei
 
-    denominator = gross_payout
-    if denominator <= 0:
+    if gross_payout <= 0:
         break_even = 1.0
     else:
-        # p * gross_payout - stake - gas = 0
-        break_even = (stake_wei + cost.gas_cost_wei) / denominator
+        break_even = (stake_wei + cost.gas_cost_wei) / gross_payout
 
     return EVResult(
         side=side,
+        probability_bull=probability_bull,
+        probability_bear=probability_bear,
+        probability_tie=probability_tie,
         probability_win=p_win,
         gross_payout_if_win_wei=gross_payout,
         pnl_if_win_wei=pnl_win,
