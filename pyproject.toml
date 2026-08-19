@@ -9,6 +9,8 @@ description = "Evidence-gated research and execution-readiness tooling for Panca
 requires-python = ">=3.12"
 dependencies = [
     "websockets>=17,<18",
+    "eth-abi>=5.2,<6",
+    "eth-hash[pycryptodome]>=0.8,<1",
 ]
 
 [tool.pytest.ini_options]
