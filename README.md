@@ -10,7 +10,7 @@ Previous local artifacts named `PancakePredictionResearch` are legacy developmen
 
 ## Objective
 
-Estimate the calibrated probability that a PancakeSwap Prediction round settles BULL or BEAR using only information observable before the decision cutoff, then act only when expected value remains positive after realistic costs and execution effects.
+Estimate the calibrated probability that a PancakeSwap Prediction round settles BULL or BEAR using only information observable before the decision cutoff, then evaluate economics only after realistic costs and execution effects.
 
 Primary target:
 
@@ -68,16 +68,48 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Legacy v0.6 foundation; canonical migration pending |
-| 1 | Deterministic replay | Legacy v0.6 foundation; canonical migration pending |
-| 2 | Leakage-safe, cost-aware backtest | Legacy v0.6 foundation; canonical migration pending |
-| 3 | Purged walk-forward / OOS evaluation | Legacy v0.6 foundation; canonical migration pending |
-| 4 | Paper / Shadow | Legacy v0.6 foundation; observed economic evidence still required |
+| 0 | Historical data integrity | **Canonical v0.7 append-only hash-chained Event Store implemented; CI tested** |
+| 1 | Deterministic replay | **Canonical observation-time replay and leakage cutoff implemented; CI tested** |
+| 2 | Leakage-safe, cost-aware evaluation | **Canonical diluted pool EV + probabilistic metrics implemented; real dataset evaluation pending** |
+| 3 | Purged walk-forward / OOS evaluation | **Canonical split generator implemented; real OOS evidence pending** |
+| 4 | Paper / Shadow | **Durable decision/settlement ledger implemented; observed multi-round economics evidence still required** |
 | 5A | Durable execution fault model | **Canonical v0.7 implementation complete; CI tested** |
 | 5B | BSC fork execution | Harness implemented; **BLOCKED until observed real local-fork evidence is recorded** |
 | 6A | Tiny-live readiness / safety preflight | v0.7 evidence gate implemented; cannot clear from assumed evidence |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
+
+### Stage 0-1 data and replay invariants
+
+The canonical research path now enforces:
+
+- append-only SQLite event persistence;
+- SHA-256 event hash chaining so silent historical mutation is detectable;
+- unique event identifiers;
+- separate source/event time and local observation time;
+- deterministic replay ordered by observation time and ingest sequence;
+- strict exclusion of anything first observed after the decision cutoff, even when the embedded source timestamp is older;
+- latest-value and freshness helpers that operate only on a leakage-safe replay snapshot.
+
+### Stage 2-3 evaluation invariants
+
+The canonical evaluation path now includes:
+
+- own-stake payout dilution in the winning-side denominator;
+- configurable treasury fee and gas cost;
+- configurable same-side/opposite-side post-decision pool movement assumptions;
+- explicit execution-success probability instead of silently treating every candidate as filled;
+- break-even probability calculation;
+- Brier score, log loss and expected calibration error (ECE);
+- chronological purged walk-forward splits with optional rolling training windows.
+
+These modules are infrastructure, not evidence that a strategy is profitable. Real historical and out-of-sample data must still be ingested and evaluated.
+
+### Stage 4 shadow invariants
+
+The durable shadow ledger stores the decision-time record separately from the later settlement record. It prevents duplicate decisions/settlements for the same round, requires settlement after the recorded decision cutoff, and calculates simulated settlement economics from the later observed final pools.
+
+A shadow evidence object can only be derived from an explicit evaluation policy and observed ledger summary. The repository does not contain observed multi-round profitability evidence yet.
 
 ### Stage 5A canonical fault model
 
