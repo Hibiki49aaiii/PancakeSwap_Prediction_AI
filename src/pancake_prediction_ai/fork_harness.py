@@ -56,6 +56,17 @@ class ForkProbeResult:
 
     @property
     def passed(self) -> bool:
+        """Backward-compatible local probe result.
+
+        `passed` only means the local Anvil-style mechanics behaved correctly.
+        Stage 5B evidence uses `verified_passed`, which additionally requires
+        independent upstream BSC provenance checks.
+        """
+
+        return self.local_probe_passed
+
+    @property
+    def verified_passed(self) -> bool:
         return (
             self.local_probe_passed
             and self.upstream_verified
@@ -109,10 +120,11 @@ def _probe_local_core(
     *,
     prediction_contract: str,
     chainlink_contract: str,
-) -> tuple[dict[str, Any], str, str, str, str]:
+    capture_block_hashes: bool,
+) -> tuple[dict[str, Any], str | None, str | None, str, str, str, str]:
     chain_id = _hex_int(rpc("eth_chainId", []))
     initial_block = _hex_int(rpc("eth_blockNumber", []))
-    local_initial_hash = _block_hash(rpc, initial_block)
+    local_initial_hash = _block_hash(rpc, initial_block) if capture_block_hashes else None
     prediction_code = _normalize_hex(
         rpc("eth_getCode", [prediction_contract, "latest"]),
         field="prediction code",
@@ -132,7 +144,7 @@ def _probe_local_core(
 
     reset_result = rpc("anvil_reset", [])
     reset_block = _hex_int(rpc("eth_blockNumber", []))
-    local_reset_hash = _block_hash(rpc, reset_block)
+    local_reset_hash = _block_hash(rpc, reset_block) if capture_block_hashes else None
     prediction_code_after_reset = _normalize_hex(
         rpc("eth_getCode", [prediction_contract, "latest"]),
         field="prediction code after reset",
@@ -172,17 +184,17 @@ def probe_local_bsc_fork(
     prediction_contract: str,
     chainlink_contract: str,
 ) -> ForkProbeResult:
-    """Run a local-only probe.
+    """Run the legacy local-only mechanics probe.
 
-    This can test Anvil reset/mine mechanics but cannot prove BSC fork provenance
-    by itself. Consequently `result.passed` remains False until an upstream BSC
-    RPC comparison is performed by `probe_verified_local_bsc_fork`.
+    This confirms local reset/mine mechanics and contract-code presence but does
+    not prove that the node is actually forked from BSC. Use
+    `probe_verified_local_bsc_fork` before producing Stage 5B gate evidence.
     """
 
     (
         core,
-        local_initial_hash,
-        local_reset_hash,
+        _local_initial_hash,
+        _local_reset_hash,
         _prediction_code,
         _chainlink_code,
         _prediction_code_after_reset,
@@ -191,12 +203,9 @@ def probe_local_bsc_fork(
         rpc,
         prediction_contract=prediction_contract,
         chainlink_contract=chainlink_contract,
+        capture_block_hashes=False,
     )
-    return ForkProbeResult(
-        **core,
-        local_initial_block_hash=local_initial_hash,
-        local_reset_block_hash=local_reset_hash,
-    )
+    return ForkProbeResult(**core)
 
 
 def probe_verified_local_bsc_fork(
@@ -226,7 +235,11 @@ def probe_verified_local_bsc_fork(
         local_rpc,
         prediction_contract=prediction_contract,
         chainlink_contract=chainlink_contract,
+        capture_block_hashes=True,
     )
+    if local_initial_hash is None or local_reset_hash is None:
+        raise AssertionError("verified fork probe requires local block hashes")
+
     initial_block = int(core["initial_block"])
     upstream_chain_id = _hex_int(upstream_rpc("eth_chainId", []))
     upstream_hash = _block_hash(upstream_rpc, initial_block)
@@ -290,7 +303,7 @@ def make_stage5b_evidence(
     return Evidence(
         kind=EvidenceKind.STAGE5B_FORK,
         origin=EvidenceOrigin.OBSERVED,
-        passed=result.passed,
+        passed=result.verified_passed,
         artifact_sha256=digest,
         recorded_at=recorded_at or datetime.now(timezone.utc).isoformat(),
         payload=payload,
