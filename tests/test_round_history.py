@@ -50,6 +50,31 @@ def test_completed_timelines_preserve_three_protocol_outcomes() -> None:
     assert result.completed[0].lock_available_at_ns == 1_110
 
 
+def test_schedule_aware_timeline_does_not_use_late_lockround_timestamp_for_decision_cutoff() -> None:
+    start_ns = 1_000_000_000_000
+    events = [
+        _event(LifecycleKind.START, 7, start_ns, start_ns + 10, None),
+        # Operator is 8 seconds late relative to the 60-second configured lock.
+        _event(LifecycleKind.LOCK, 7, start_ns + 68_000_000_000, start_ns + 68_000_000_010, 100),
+        _event(LifecycleKind.END, 7, start_ns + 128_000_000_000, start_ns + 128_000_000_010, 101),
+    ]
+    result = build_round_timelines(events, interval_seconds=60)
+    timeline = result.completed[0]
+    assert timeline.scheduled_lock_timestamp_ns == start_ns + 60_000_000_000
+    assert timeline.lock_timestamp_ns == start_ns + 60_000_000_000
+    assert timeline.lock_event.event_time_ns == start_ns + 68_000_000_000
+
+
+def test_schedule_aware_timeline_rejects_lock_before_contract_schedule() -> None:
+    events = [
+        _event(LifecycleKind.START, 7, 1_000_000_000_000, 1_000_000_000_010),
+        _event(LifecycleKind.LOCK, 7, 1_050_000_000_000, 1_050_000_000_010, 100),
+        _event(LifecycleKind.END, 7, 1_120_000_000_000, 1_120_000_000_010, 101),
+    ]
+    with pytest.raises(ValueError, match="before its scheduled lock"):
+        build_round_timelines(events, interval_seconds=60)
+
+
 def test_partial_range_surfaces_incomplete_epoch_instead_of_fabricating_label() -> None:
     events = [
         _event(LifecycleKind.START, 7, 1_000, 1_010),
