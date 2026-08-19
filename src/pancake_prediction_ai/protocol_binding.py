@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .abi_codec import decode_result
-from .pancake_contract import BNB_PREDICTION_CONTRACT, prediction_oracle_call
+from .abi_codec import decode_result, encode_call
+from .pancake_contract import BNB_PREDICTION_CONTRACT
 
 
 RpcCall = Callable[[str, list[Any]], Any]
@@ -64,7 +64,7 @@ def discover_bnb_prediction_binding(
         [
             {
                 "to": prediction_contract,
-                "data": prediction_oracle_call(),
+                "data": encode_call("oracle()"),
             },
             "latest",
         ],
