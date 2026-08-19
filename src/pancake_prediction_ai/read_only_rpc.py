@@ -34,6 +34,34 @@ def _default_transport(request: Request, timeout: float) -> bytes:
         return response.read()
 
 
+def _normalize_single_log_topic_params(params: list[Any]) -> list[Any] | None:
+    """Normalize `topics: [[A]]` to the equivalent `topics: [A]` form.
+
+    Both forms are valid JSON-RPC filters. Some public provider frontends reject
+    the singleton-OR representation even though they accept the scalar topic.
+    Normalizing before transport preserves semantics and avoids treating that
+    provider quirk as a block-range failure.
+    """
+
+    if len(params) != 1 or not isinstance(params[0], dict):
+        return None
+    original = params[0]
+    topics = original.get("topics")
+    if not isinstance(topics, list) or not topics:
+        return None
+    alternatives = topics[0]
+    if not isinstance(alternatives, list):
+        return None
+    unique = list(dict.fromkeys(alternatives))
+    if len(unique) != 1:
+        return None
+    normalized_topics = list(topics)
+    normalized_topics[0] = unique[0]
+    normalized_filter = dict(original)
+    normalized_filter["topics"] = normalized_topics
+    return [normalized_filter]
+
+
 def _log_filter_range(params: list[Any]) -> tuple[int, int] | None:
     if len(params) != 1 or not isinstance(params[0], dict):
         return None
@@ -174,6 +202,10 @@ class ReadOnlyJsonRpcClient:
             raise PermissionError(f"RPC method is outside read-only boundary: {method}")
         if not isinstance(params, list):
             raise ValueError("params must be a list")
+        if method == "eth_getLogs":
+            normalized = _normalize_single_log_topic_params(params)
+            if normalized is not None:
+                params = normalized
 
         request_id = self._next_id
         self._next_id += 1
