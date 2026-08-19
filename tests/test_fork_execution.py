@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 from eth_abi import encode
@@ -151,7 +152,12 @@ class FakePredictionForkRpc:
         )
 
     def _bettable(self) -> bool:
-        return self.round["start"] != 0 and self.round["lock"] != 0 and self.timestamp > self.round["start"] and self.timestamp < self.round["lock"]
+        return (
+            self.round["start"] != 0
+            and self.round["lock"] != 0
+            and self.timestamp > self.round["start"]
+            and self.timestamp < self.round["lock"]
+        )
 
     def _validate_bet(self, *, account: str, epoch: int, value: int) -> None:
         if epoch != EPOCH:
@@ -201,7 +207,10 @@ class FakePredictionForkRpc:
                 account = self._decode_account(data)
                 position, amount, claimed = self.ledger.get(account, (0, 0, False))
                 return _hex_data(("uint8", "uint256", "bool"), (position, amount, claimed))
-            if selector in {function_selector("betBull(uint256)"), function_selector("betBear(uint256)")}:
+            if selector in {
+                function_selector("betBull(uint256)"),
+                function_selector("betBear(uint256)"),
+            }:
                 account = str(tx.get("from", "")).lower()
                 value = int(str(tx.get("value", "0x0")), 16)
                 self._validate_bet(account=account, epoch=self._decode_epoch(data), value=value)
@@ -287,8 +296,7 @@ def test_execution_probe_exercises_bull_bear_revert_and_reset_paths() -> None:
 
 
 def test_execution_probe_rejects_unverified_fork() -> None:
-    bad = verified_fork()
-    bad = ForkProbeResult(**{**bad.__dict__, "upstream_verified": False})  # type: ignore[attr-defined]
+    bad = replace(verified_fork(), upstream_verified=False)
     with pytest.raises(ValueError, match="verified fork"):
         run_stage5b_prediction_execution_probe(FakePredictionForkRpc(), fork_result=bad)
 
