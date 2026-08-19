@@ -6,6 +6,7 @@ from .event_store import EventStore
 
 
 _METADATA_KEY = "reconstruction_dataset_id"
+_INTERVAL_METADATA_KEY = "reconstruction_prediction_interval_seconds"
 _TRIGGER_NAME = "reconstructed_dataset_namespace_guard"
 
 
@@ -17,6 +18,73 @@ def reconstruction_dataset_id(store: EventStore) -> str | None:
         (_METADATA_KEY,),
     ).fetchone()
     return None if row is None else str(row[0])
+
+
+def reconstruction_prediction_interval_seconds(store: EventStore) -> int | None:
+    """Return the persisted scheduled Prediction interval for this replay.
+
+    Public-RPC reconstruction must use the lock time fixed at StartRound, not
+    the later operator LockRound transaction time. Persisting this value in the
+    SQLite source makes a subsequent artifact-build process recover the same
+    leakage-safe decision clock instead of silently reverting to actual lock.
+    """
+
+    if store.mode != "reconstructed":
+        raise ValueError("Prediction interval binding is only valid for reconstructed Event Store")
+    row = store._conn.execute(
+        "SELECT value FROM store_metadata WHERE key = ?",
+        (_INTERVAL_METADATA_KEY,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        value = int(str(row[0]))
+    except ValueError as exc:
+        raise ValueError("persisted reconstruction Prediction interval is invalid") from exc
+    if value <= 0:
+        raise ValueError("persisted reconstruction Prediction interval must be positive")
+    return value
+
+
+def bind_reconstruction_prediction_interval_seconds(
+    store: EventStore,
+    interval_seconds: int,
+) -> int:
+    """Permanently bind the scheduled Prediction interval used by a replay."""
+
+    if store.mode != "reconstructed":
+        raise ValueError("Prediction interval binding requires reconstructed Event Store")
+    if isinstance(interval_seconds, bool) or not isinstance(interval_seconds, int) or interval_seconds <= 0:
+        raise ValueError("interval_seconds must be a positive integer")
+
+    bound = reconstruction_prediction_interval_seconds(store)
+    if bound is not None and bound != interval_seconds:
+        raise ValueError(
+            f"reconstructed Event Store is bound to Prediction interval {bound}, not {interval_seconds}"
+        )
+    try:
+        store._conn.execute("BEGIN IMMEDIATE")
+        row = store._conn.execute(
+            "SELECT value FROM store_metadata WHERE key = ?",
+            (_INTERVAL_METADATA_KEY,),
+        ).fetchone()
+        if row is None:
+            store._conn.execute(
+                "INSERT INTO store_metadata(key, value) VALUES (?, ?)",
+                (_INTERVAL_METADATA_KEY, str(interval_seconds)),
+            )
+        elif int(str(row[0])) != interval_seconds:
+            raise ValueError(
+                f"reconstructed Event Store is bound to Prediction interval {row[0]}, not {interval_seconds}"
+            )
+        store._conn.commit()
+    except sqlite3.DatabaseError:
+        store._conn.rollback()
+        raise
+    except Exception:
+        store._conn.rollback()
+        raise
+    return interval_seconds
 
 
 def _event_dataset_id(store_event) -> str:
@@ -50,9 +118,6 @@ def bind_reconstruction_dataset(store: EventStore, dataset_id: str) -> str:
     if not isinstance(dataset_id, str) or not dataset_id:
         raise ValueError("dataset_id is required")
 
-    # Persisted metadata is authoritative across process restarts. Check it
-    # before inspecting rows so callers receive the same namespace error whether
-    # the database is empty or already contains events.
     bound = reconstruction_dataset_id(store)
     if bound is not None and bound != dataset_id:
         raise ValueError(
@@ -86,9 +151,6 @@ def bind_reconstruction_dataset(store: EventStore, dataset_id: str) -> str:
                 f"reconstructed Event Store is bound to dataset {row[0]}, not {dataset_id}"
             )
 
-        # json_extract is part of modern SQLite JSON support used by CPython.
-        # The trigger is stored in the database and therefore survives process
-        # restarts and protects all subsequent append paths.
         store._conn.execute(
             f"""
             CREATE TRIGGER IF NOT EXISTS {_TRIGGER_NAME}
