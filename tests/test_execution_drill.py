@@ -11,6 +11,7 @@ from pancake_prediction_ai.execution_drill import (
     run_stage5a_execution_drill,
     write_stage5a_evidence,
 )
+from pancake_prediction_ai.runtime_fingerprint import fingerprint_sha256
 
 
 def test_stage5a_drill_exercises_restart_nonce_unknown_finalization_and_cleanup(tmp_path) -> None:
@@ -18,6 +19,7 @@ def test_stage5a_drill_exercises_restart_nonce_unknown_finalization_and_cleanup(
     result = run_stage5a_execution_drill(database, required_confirmations=3)
 
     assert result.passed
+    assert result.runtime_fingerprint.sha256
     assert result.journal_mode_wal
     assert result.synchronous_full
     assert result.unresolved_recovered_after_restart
@@ -35,10 +37,14 @@ def test_stage5a_drill_exercises_restart_nonce_unknown_finalization_and_cleanup(
     assert evidence.kind is EvidenceKind.STAGE5A_DRILL
     assert evidence.origin is EvidenceOrigin.OBSERVED
     assert evidence.passed
-    assert evidence.payload["schema"] == "stage5a_execution_drill_v1"
+    assert evidence.payload["schema"] == "stage5a_execution_drill_v2"
     assert evidence.payload["blockchain_transaction_created"] is False
     assert evidence.payload["transaction_signed"] is False
     assert evidence.payload["transaction_broadcast"] is False
+    runtime_payload = evidence.payload["runtime_fingerprint"]
+    assert isinstance(runtime_payload, dict)
+    assert evidence.payload["runtime_fingerprint_sha256"] == fingerprint_sha256(runtime_payload)
+    assert evidence.payload["runtime_fingerprint_sha256"] == result.runtime_fingerprint.sha256
 
     path = write_stage5a_evidence(evidence, tmp_path / "stage5a-evidence.json")
     loaded = Evidence.from_path(path)
@@ -78,3 +84,4 @@ def test_written_stage5a_document_is_canonical_json_object(tmp_path) -> None:
     assert obj["origin"] == "observed"
     assert obj["passed"] is True
     assert obj["artifact_sha256"] == evidence.artifact_sha256
+    assert obj["payload"]["runtime_fingerprint"]["schema"] == "execution_runtime_fingerprint_v1"
