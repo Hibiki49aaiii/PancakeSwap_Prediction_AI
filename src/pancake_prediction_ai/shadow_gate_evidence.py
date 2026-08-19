@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .evidence_gate import Evidence, EvidenceKind, EvidenceOrigin
 from .shadow_evidence_artifact import ShadowEconomicEvidenceArtifact
@@ -28,6 +30,15 @@ class ShadowGateAcceptancePolicy:
             raise ValueError("max_conditional_drawdown_wei must be non-negative")
         if not math.isfinite(self.min_average_selected_expected_return):
             raise ValueError("min_average_selected_expected_return must be finite")
+        # Stage 6A may tighten shadow acceptance thresholds but may not weaken
+        # completeness or cost coverage. Keep these fields explicit in artifacts
+        # so reviewers can see the non-negotiable requirements.
+        if self.require_all_decisions_settled is not True:
+            raise ValueError("Stage 6A shadow policy must require all decisions settled")
+        if self.require_fully_costed_claim_or_refund_gas is not True:
+            raise ValueError(
+                "Stage 6A shadow policy must require fully costed claim/refund gas"
+            )
 
 
 def _canonical(payload: dict[str, object]) -> bytes:
@@ -84,12 +95,11 @@ def build_shadow_gate_evidence(
         blockers.append("shadow_source_not_observed")
     if source.get("hash_chain_verified") is not True:
         blockers.append("shadow_source_hash_chain_unverified")
+    if completeness.get("structurally_eligible_for_shadow_gate_policy") is not True:
+        blockers.append("shadow_artifact_structurally_incomplete")
     if settled_rounds < policy.min_settled_rounds:
         blockers.append("shadow_settled_rounds_below_policy")
-    if (
-        policy.require_all_decisions_settled
-        and unresolved_rounds != 0
-    ):
+    if unresolved_rounds != 0:
         blockers.append("shadow_unresolved_rounds_present")
     if conditional_net_pnl_wei < policy.min_conditional_net_pnl_wei:
         blockers.append("shadow_net_pnl_below_policy")
@@ -99,10 +109,7 @@ def build_shadow_gate_evidence(
         blockers.append("shadow_average_expected_return_missing")
     elif average_expected < policy.min_average_selected_expected_return:
         blockers.append("shadow_average_expected_return_below_policy")
-    if (
-        policy.require_fully_costed_claim_or_refund_gas
-        and not claim_gas_modeled
-    ):
+    if not claim_gas_modeled:
         blockers.append("shadow_claim_or_refund_gas_incomplete")
 
     payload: dict[str, object] = {
@@ -134,3 +141,43 @@ def build_shadow_gate_evidence(
         recorded_at=recorded_at,
         payload=payload,
     )
+
+
+def write_shadow_gate_evidence(evidence: Evidence, path: str | Path) -> Path:
+    """Atomically persist a qualified-or-failed shadow gate evidence document."""
+
+    if evidence.kind is not EvidenceKind.SHADOW_ECONOMICS:
+        raise ValueError("shadow gate writer requires SHADOW_ECONOMICS evidence")
+    if evidence.origin is not EvidenceOrigin.HYBRID:
+        raise ValueError("shadow gate writer requires HYBRID evidence")
+    payload = dict(evidence.payload)
+    actual = hashlib.sha256(_canonical(payload)).hexdigest()
+    if actual != evidence.artifact_sha256:
+        raise ValueError("shadow gate evidence SHA-256 mismatch")
+    document = {
+        "kind": evidence.kind.value,
+        "origin": evidence.origin.value,
+        "passed": evidence.passed,
+        "artifact_sha256": evidence.artifact_sha256,
+        "recorded_at": evidence.recorded_at,
+        "payload": payload,
+    }
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(
+        document,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode()
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return destination
