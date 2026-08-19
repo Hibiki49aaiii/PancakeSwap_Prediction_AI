@@ -5,6 +5,7 @@ from typing import Sequence
 
 from .baseline_model import LabeledFeatures, fit_softmax_baseline, fit_temperature
 from .dataset import TrainingExample
+from .economics import Outcome
 from .metrics import OutcomeMetrics, OutcomeProbability, evaluate_outcome_probabilities
 from .walk_forward_dataset import AvailabilitySafeFold
 
@@ -14,7 +15,7 @@ class OOSPrediction:
     round_id: int
     example_index: int
     probability: OutcomeProbability
-    outcome: object
+    outcome: Outcome
     model_artifact_sha256: str
     temperature: float
 
@@ -57,13 +58,15 @@ def evaluate_baseline_walk_forward(
     learning_rate: float = 0.05,
     epochs: int = 500,
     l2: float = 1e-4,
+    class_prior: OutcomeProbability | None = None,
+    prior_strength: float = 0.0,
 ) -> BaselineWalkForwardResult:
     """Train/calibrate/test a deterministic baseline without temporal reuse.
 
     Each fold's availability-safe training indices are split chronologically:
     the oldest rows fit model weights, the newest rows fit only temperature,
-    and test rows are never used in either step. Overlapping test folds are
-    rejected because counting one round more than once would bias OOS metrics.
+    and test rows are never used in either step. A fold without observed TIEs
+    is usable only when an explicit three-outcome prior is supplied.
     """
 
     if calibration_size <= 0:
@@ -72,6 +75,12 @@ def evaluate_baseline_walk_forward(
         raise ValueError("examples are required")
     if not folds:
         raise ValueError("folds are required")
+    if class_prior is not None:
+        class_prior.validate()
+        if prior_strength <= 0:
+            raise ValueError("class_prior requires positive prior_strength")
+    elif prior_strength != 0:
+        raise ValueError("prior_strength requires class_prior")
 
     predictions: list[OOSPrediction] = []
     fold_results: list[FoldEvaluation] = []
@@ -95,8 +104,11 @@ def evaluate_baseline_walk_forward(
         calibration = [_labeled(examples[index]) for index in calibration_indices]
 
         present = {row.outcome for row in model_train}
-        if len(present) < 3:
-            skipped.append(SkippedFold(fold_index, "model_train_missing_outcome_class"))
+        if Outcome.BULL not in present or Outcome.BEAR not in present:
+            skipped.append(SkippedFold(fold_index, "model_train_missing_directional_class"))
+            continue
+        if Outcome.TIE not in present and class_prior is None:
+            skipped.append(SkippedFold(fold_index, "model_train_tie_missing_without_prior"))
             continue
 
         model = fit_softmax_baseline(
@@ -105,11 +117,13 @@ def evaluate_baseline_walk_forward(
             learning_rate=learning_rate,
             epochs=epochs,
             l2=l2,
+            class_prior=class_prior,
+            prior_strength=prior_strength,
         )
         calibrated = fit_temperature(model, calibration)
 
         fold_probabilities: list[OutcomeProbability] = []
-        fold_outcomes = []
+        fold_outcomes: list[Outcome] = []
         fold_predictions: list[OOSPrediction] = []
         for index in fold.test_indices:
             example = examples[index]
