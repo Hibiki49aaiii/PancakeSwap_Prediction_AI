@@ -1,0 +1,115 @@
+name: historical-public-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - v0.7/evidence-gates
+
+permissions:
+  contents: read
+
+jobs:
+  public-history-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RPC_URL: https://bsc-rpc.publicnode.com
+      DATASET_ID: public-history-smoke-${{ github.run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Select recent completed block range
+        id: range
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(python - <<'PY'
+          from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
+          print(ReadOnlyJsonRpcClient("https://bsc-rpc.publicnode.com", timeout_seconds=20).block_number())
+          PY
+          )
+          from_block=$((head - 20000))
+          to_block=$((head - 1000))
+          if [[ "$from_block" -le 0 ]]; then
+            echo "invalid recent range" >&2
+            exit 1
+          fi
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "from_block=$from_block" >> "$GITHUB_OUTPUT"
+          echo "to_block=$to_block" >> "$GITHUB_OUTPUT"
+          echo "head=$head from=$from_block to=$to_block"
+
+      - name: Run archive-free historical acquisition
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ppai-historical-public \
+            --store artifacts/public-history.sqlite \
+            --dataset-id "$DATASET_ID" \
+            --rpc-url "$RPC_URL" \
+            --from-block "${{ steps.range.outputs.from_block }}" \
+            --to-block "${{ steps.range.outputs.to_block }}" \
+            --decision-lead-ns 10000000000 \
+            --binance-latency-ns 500000000 \
+            --onchain-latency-ns 1000000000 \
+            --log-chunk-size 5000 \
+            --max-oracle-backtrack-rounds 128 \
+            --rpc-timeout-seconds 20 \
+            --summary-output artifacts/public-history-summary.json \
+            | tee artifacts/public-history.log
+
+      - name: Freeze reconstructed dataset artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ppai-artifact build-dataset \
+            --store artifacts/public-history.sqlite \
+            --dataset-id "$DATASET_ID" \
+            --decision-lead-ns 10000000000 \
+            --binance-latency-ns 500000000 \
+            --onchain-latency-ns 1000000000 \
+            --output artifacts/public-history-dataset.json \
+            | tee artifacts/public-history-dataset.log
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary = json.loads(Path("artifacts/public-history-summary.json").read_text())
+          dataset = json.loads(Path("artifacts/public-history-dataset.json").read_text())
+          assert summary["config_change_logs"] == 0
+          assert summary["completed_rounds"] > 0
+          assert summary["decision_snapshots"] > 0
+          assert summary["examples"] > 0
+          assert len(dataset["payload"]["examples"]) == summary["examples"]
+          assert dataset["payload"]["source_event_store"]["tip_hash"] == summary["store_tip_hash"]
+          PY
+
+      - name: Verify reconstructed store
+        run: ppai-collector --store artifacts/public-history.sqlite verify-store --mode reconstructed
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-public-smoke-${{ github.run_id }}
+          path: |
+            artifacts/public-history-summary.json
+            artifacts/public-history.log
+            artifacts/public-history-dataset.json
+            artifacts/public-history-dataset.log
+          if-no-files-found: warn
+          retention-days: 14
