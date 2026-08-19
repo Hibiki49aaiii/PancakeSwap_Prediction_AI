@@ -45,6 +45,8 @@ def qualified_shadow(
     settled_rounds: int = 20,
     unresolved_rounds: int = 0,
     claim_gas_modeled: bool = True,
+    require_all_decisions_settled: bool = True,
+    require_fully_costed_claim_or_refund_gas: bool = True,
 ) -> Evidence:
     blocker_values = [] if blockers is None else blockers
     payload: dict[str, object] = {
@@ -59,8 +61,10 @@ def qualified_shadow(
             "min_conditional_net_pnl_wei": 1,
             "max_conditional_drawdown_wei": 100,
             "min_average_selected_expected_return": 0.01,
-            "require_all_decisions_settled": True,
-            "require_fully_costed_claim_or_refund_gas": True,
+            "require_all_decisions_settled": require_all_decisions_settled,
+            "require_fully_costed_claim_or_refund_gas": (
+                require_fully_costed_claim_or_refund_gas
+            ),
         },
         "metrics": {
             "settled_rounds": settled_rounds,
@@ -142,9 +146,13 @@ def test_generic_observed_shadow_json_cannot_clear_gate_anymore() -> None:
         qualified_shadow(settled_rounds=9),
         qualified_shadow(unresolved_rounds=1),
         qualified_shadow(claim_gas_modeled=False),
+        qualified_shadow(require_all_decisions_settled=False),
+        qualified_shadow(require_fully_costed_claim_or_refund_gas=False),
     ],
 )
-def test_incomplete_or_misclassified_shadow_evidence_cannot_clear_gate(shadow: Evidence) -> None:
+def test_incomplete_misclassified_or_weakened_shadow_evidence_cannot_clear_gate(
+    shadow: Evidence,
+) -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
         stage5b=evidence(EvidenceKind.STAGE5B_FORK),
