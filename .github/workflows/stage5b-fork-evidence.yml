@@ -11,6 +11,9 @@ on:
         description: Fresh-fork attempts when the current round is too close to lock
         required: false
         default: "12"
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - v0.7/evidence-gates
