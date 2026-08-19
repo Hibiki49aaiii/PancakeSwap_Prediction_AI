@@ -1,0 +1,137 @@
+name: historical-rpc-capability
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Measure 1RPC historical retention and native log window
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python - <<'PY' | tee artifacts/historical-rpc-capability.json
+          import json
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          from eth_hash.auto import keccak
+          from pancake_prediction_ai.abi_codec import decode_result, encode_call
+          from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
+          from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
+
+          RPC_URL = "https://public.1rpc.io/bnb"
+          START_TOPIC = "0x" + keccak(b"StartRound(uint256)").hex()
+          OFFSETS = [100_000, 150_000, 200_000, 300_000, 400_000, 500_000, 750_000, 900_000, 1_000_000]
+          WIDTHS = [20, 50, 51, 100, 200, 500, 1_000]
+          client = ReadOnlyJsonRpcClient(RPC_URL, timeout_seconds=10.0)
+          head = client.block_number()
+          raw_epoch = client.call(
+              "eth_call",
+              [{"to": BNB_PREDICTION_CONTRACT, "data": encode_call("currentEpoch()")}, "latest"],
+          )
+          head_epoch = int(decode_result(raw_epoch, ("uint256",))[0])
+
+          retention = []
+          for offset in OFFSETS:
+              to_block = max(1, head - offset)
+              from_block = max(1, to_block - 19)
+              item = {"offset_blocks": offset, "from_block": from_block, "to_block": to_block}
+              try:
+                  values = client.call(
+                      "eth_getLogs",
+                      [{
+                          "address": BNB_PREDICTION_CONTRACT,
+                          "fromBlock": hex(from_block),
+                          "toBlock": hex(to_block),
+                          "topics": [START_TOPIC],
+                      }],
+                  )
+                  item.update({"ok": True, "count": len(values)})
+              except Exception as exc:
+                  item.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
+              retention.append(item)
+
+          def raw_rpc(method, params, request_id):
+              payload = json.dumps({
+                  "jsonrpc": "2.0",
+                  "id": request_id,
+                  "method": method,
+                  "params": params,
+              }, separators=(",", ":")).encode()
+              request = Request(
+                  RPC_URL,
+                  data=payload,
+                  headers={
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                      "User-Agent": "pancake-prediction-ai/0.7 capability-raw",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urlopen(request, timeout=10) as response:
+                      body = response.read()
+                  parsed = json.loads(body)
+                  if isinstance(parsed, dict) and "error" in parsed:
+                      return {"ok": False, "rpc_error": parsed["error"]}
+                  result = parsed.get("result") if isinstance(parsed, dict) else None
+                  return {"ok": True, "count": len(result) if isinstance(result, list) else None}
+              except HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")[:1000]
+                  return {"ok": False, "http_error": exc.code, "body": body}
+              except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+                  return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+          width_probe = []
+          anchor_to = max(1, head - 100_000)
+          for request_id, width in enumerate(WIDTHS, start=1):
+              from_block = max(1, anchor_to - width + 1)
+              outcome = raw_rpc(
+                  "eth_getLogs",
+                  [{
+                      "address": BNB_PREDICTION_CONTRACT,
+                      "fromBlock": hex(from_block),
+                      "toBlock": hex(anchor_to),
+                      "topics": [START_TOPIC],
+                  }],
+                  request_id,
+              )
+              width_probe.append({
+                  "width_blocks": width,
+                  "from_block": from_block,
+                  "to_block": anchor_to,
+                  **outcome,
+              })
+
+          report = {
+              "rpc_url": RPC_URL,
+              "chain_id": client.chain_id(),
+              "head_block": head,
+              "head_epoch": head_epoch,
+              "retention_probe": retention,
+              "native_window_probe_at_offset_100k": width_probe,
+          }
+          print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+          PY
+      - name: Upload capability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-rpc-capability
+          path: artifacts/historical-rpc-capability.json
+          if-no-files-found: error
+          retention-days: 14

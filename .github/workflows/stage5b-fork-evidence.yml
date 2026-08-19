@@ -1,0 +1,200 @@
+name: stage5b-fork-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_rpc_url:
+        description: Read-only BSC mainnet RPC URL
+        required: false
+        default: https://bsc-dataseed.bnbchain.org
+      attempts:
+        description: Fresh-fork attempts when the current round is too close to lock
+        required: false
+        default: "12"
+
+permissions:
+  contents: read
+
+jobs:
+  stage5b-v4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UPSTREAM_RPC_URL: ${{ inputs.upstream_rpc_url || 'https://bsc-dataseed.bnbchain.org' }}
+      ATTEMPTS: ${{ inputs.attempts || '12' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          cache: false
+
+      - name: Diagnose and verify upstream protocol binding
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          {
+            echo "=== cast chain-id ==="
+            cast chain-id --rpc-url "$UPSTREAM_RPC_URL"
+            echo "=== canonical Prediction bytecode length ==="
+            cast code 0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA --rpc-url "$UPSTREAM_RPC_URL" | wc -c
+            echo "=== Prediction oracle() via cast ==="
+            cast call 0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA "oracle()(address)" --rpc-url "$UPSTREAM_RPC_URL"
+            echo "=== Prediction oracle() via ppai-readiness ==="
+            ppai-readiness discover-binding --upstream-rpc-url "$UPSTREAM_RPC_URL"
+          } 2>&1 | tee artifacts/protocol-binding-debug.log
+          binding_line=$(tail -n 1 artifacts/protocol-binding-debug.log)
+          printf '%s\n' "$binding_line" > artifacts/protocol-binding.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          obj = json.loads(Path("artifacts/protocol-binding.json").read_text())
+          assert obj["chain_id"] == 56
+          assert obj["prediction_contract"].startswith("0x") and len(obj["prediction_contract"]) == 42
+          assert obj["chainlink_oracle"].startswith("0x") and len(obj["chainlink_oracle"]) == 42
+          PY
+
+      - name: Produce executed Stage 5B v4 evidence on fresh local BSC fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          : > artifacts/anvil.log
+          success=0
+          anvil_pid=""
+          cleanup() {
+            if [[ -n "$anvil_pid" ]]; then
+              kill "$anvil_pid" 2>/dev/null || true
+              wait "$anvil_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 "$ATTEMPTS"); do
+            cleanup
+            anvil_pid=""
+            echo "=== Stage5B fresh fork attempt $attempt/$ATTEMPTS ===" | tee -a artifacts/anvil.log
+            anvil \
+              --fork-url "$UPSTREAM_RPC_URL" \
+              --host 127.0.0.1 \
+              --port 8545 \
+              >> artifacts/anvil.log 2>&1 &
+            anvil_pid=$!
+
+            ready=0
+            for _ in $(seq 1 30); do
+              if cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$ready" -ne 1 ]]; then
+              echo "Anvil did not become ready" >&2
+              exit 1
+            fi
+
+            set +e
+            ppai-readiness stage5b-verify-fork \
+              --local-rpc-url http://127.0.0.1:8545 \
+              --upstream-rpc-url "$UPSTREAM_RPC_URL" \
+              --output artifacts/stage5b-provenance-${attempt}.json \
+              2>&1 | tee artifacts/stage5b-provenance-${attempt}.log
+            provenance_rc=${PIPESTATUS[0]}
+            set -e
+            if [[ -f artifacts/stage5b-provenance-${attempt}.json ]]; then
+              echo "=== Stage5B provenance JSON ===" | tee -a artifacts/stage5b-provenance-${attempt}.log
+              cat artifacts/stage5b-provenance-${attempt}.json | tee -a artifacts/stage5b-provenance-${attempt}.log
+            fi
+            if [[ "$provenance_rc" -ne 0 ]]; then
+              echo "Stage5B provenance failed with exit code $provenance_rc" >&2
+              exit "$provenance_rc"
+            fi
+
+            set +e
+            ppai-readiness stage5b-execute-fork \
+              --local-rpc-url http://127.0.0.1:8545 \
+              --upstream-rpc-url "$UPSTREAM_RPC_URL" \
+              --min-window-margin-seconds 10 \
+              --output artifacts/stage5b-v4-evidence.json \
+              2>&1 | tee artifacts/stage5b-attempt-${attempt}.log
+            rc=${PIPESTATUS[0]}
+            set -e
+
+            if [[ "$rc" -eq 0 ]]; then
+              success=1
+              break
+            fi
+            if [[ "$rc" -eq 3 ]]; then
+              echo "Current live round is unsuitable; reforking from a newer BSC head." | tee -a artifacts/anvil.log
+              cleanup
+              anvil_pid=""
+              sleep 20
+              continue
+            fi
+            echo "Stage5B execution failed with exit code $rc" >&2
+            exit "$rc"
+          done
+
+          if [[ "$success" -ne 1 ]]; then
+            echo "No safely bettable fork base was observed within $ATTEMPTS attempts" >&2
+            exit 1
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction_ai.evidence_gate import Evidence
+          from pancake_prediction_ai.stage5b_source_fingerprint import (
+              capture_stage5b_source_fingerprint,
+          )
+          evidence = Evidence.from_path(Path("artifacts/stage5b-v4-evidence.json"))
+          assert evidence.passed is True
+          assert evidence.payload["schema"] == "stage5b_verified_local_bsc_fork_execution_v4"
+          assert evidence.payload["generator_source_fingerprint"] == capture_stage5b_source_fingerprint()
+          assert evidence.payload["private_key_used"] is False
+          assert evidence.payload["raw_signed_transaction_used"] is False
+          assert evidence.payload["mainnet_transaction_broadcast"] is False
+          execution = evidence.payload["prediction_execution"]
+          assert execution["bull_tx_mined_success"] is True
+          assert execution["bear_tx_mined_success"] is True
+          assert execution["state_restored_after_bull_reset"] is True
+          assert execution["state_restored_after_bear_reset"] is True
+          PY
+
+      - name: Upload Stage 5B v4 evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5b-v4-evidence
+          path: |
+            artifacts/stage5b-v4-evidence.json
+            artifacts/protocol-binding.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload fork diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5b-fork-diagnostics-${{ github.run_id }}
+          path: |
+            artifacts/protocol-binding-debug.log
+            artifacts/protocol-binding.json
+            artifacts/anvil.log
+            artifacts/stage5b-provenance-*.json
+            artifacts/stage5b-provenance-*.log
+            artifacts/stage5b-attempt-*.log
+          if-no-files-found: warn
+          retention-days: 14
