@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .economics import Outcome, Side
+from .economics import Side
 from .event_store import EventRecord, EventStore, StoredEvent
 from .onchain_collector import (
     read_prediction_buffer_seconds_at_anchor,
@@ -67,6 +67,15 @@ def _float(payload: dict[str, object], field: str) -> float:
     return float(value)
 
 
+def _optional_non_negative_int(payload: dict[str, object], field: str) -> int | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"shadow economic decision {field} must be non-negative integer or null")
+    return value
+
+
 def _economic_decision(store: EventStore, round_id: int) -> StoredEvent:
     matches: list[StoredEvent] = []
     for stored in store.read_all_ingest_order():
@@ -100,7 +109,9 @@ def _existing_settlement(store: EventStore, round_id: int) -> StoredEvent | None
     return None if not matches else matches[0]
 
 
-def _decision_fields(decision: StoredEvent) -> tuple[ShadowEconomicAction, Side | None, int, int, float]:
+def _decision_fields(
+    decision: StoredEvent,
+) -> tuple[ShadowEconomicAction, Side | None, int, int, float, int | None]:
     payload = decision.event.payload
     try:
         action = ShadowEconomicAction(str(payload["action"]))
@@ -133,9 +144,13 @@ def _decision_fields(decision: StoredEvent) -> tuple[ShadowEconomicAction, Side 
         raise ValueError("shadow economic execution assumptions are invalid")
     gas = _int(assumed, "gas_cost_wei")
     p_exec = _float(assumed, "execution_success_probability")
+    claim_or_refund_gas = _optional_non_negative_int(
+        assumed,
+        "claim_or_refund_gas_cost_wei",
+    )
     if gas < 0 or not 0.0 <= p_exec <= 1.0:
         raise ValueError("shadow economic execution assumptions are invalid")
-    return action, side, stake, gas, p_exec
+    return action, side, stake, gas, p_exec, claim_or_refund_gas
 
 
 def _resolution(round_state: PredictionRoundState) -> ShadowRoundResolution:
@@ -146,7 +161,10 @@ def _resolution(round_state: PredictionRoundState) -> ShadowRoundResolution:
     return ShadowRoundResolution.TIE
 
 
-def _validate_settled_reward_fields(round_state: PredictionRoundState, resolution: ShadowRoundResolution) -> None:
+def _validate_settled_reward_fields(
+    round_state: PredictionRoundState,
+    resolution: ShadowRoundResolution,
+) -> None:
     if resolution is ShadowRoundResolution.BULL:
         if round_state.reward_base_cal_amount_wei != round_state.bull_amount_wei:
             raise ValueError("settled BULL reward base does not equal bull pool")
@@ -207,8 +225,11 @@ def _source_snapshot_event(
     )
 
 
-def _already_result(decision: StoredEvent, settlement: StoredEvent) -> ShadowEconomicSettlementResult:
-    action, side, _stake, _gas, _p_exec = _decision_fields(decision)
+def _already_result(
+    decision: StoredEvent,
+    settlement: StoredEvent,
+) -> ShadowEconomicSettlementResult:
+    action, side, _stake, _gas, _p_exec, _claim_gas = _decision_fields(decision)
     payload = settlement.event.payload
     resolution = ShadowRoundResolution(str(payload["resolution"]))
     return ShadowEconomicSettlementResult(
@@ -220,10 +241,15 @@ def _already_result(decision: StoredEvent, settlement: StoredEvent) -> ShadowEco
         anchor_number=_int(payload, "block_number"),
         anchor_hash=str(payload["block_hash"]),
         settled_fee_units=(
-            None if payload.get("settled_fee_units") is None else _int(payload, "settled_fee_units")
+            None
+            if payload.get("settled_fee_units") is None
+            else _int(payload, "settled_fee_units")
         ),
         pnl_if_executed_wei=_int(payload, "pnl_if_executed_wei"),
-        probability_adjusted_pnl_wei=_float(payload, "probability_adjusted_pnl_wei"),
+        probability_adjusted_pnl_wei=_float(
+            payload,
+            "probability_adjusted_pnl_wei",
+        ),
         blockers=(),
         stored_event=settlement,
     )
@@ -245,7 +271,9 @@ def reconcile_shadow_economic_round(
     `pnl_if_executed_wei` is a deterministic paper result conditional on the
     simulated bet having executed. `probability_adjusted_pnl_wei` additionally
     applies the decision-time execution-success probability and therefore still
-    contains an explicit assumption. Claim/refund transaction gas is not modeled.
+    contains an explicit assumption. Claim/refund gas is included when it was
+    fixed in the decision-time paper policy; otherwise winning/refund rounds are
+    explicitly marked as not fully costed.
     """
 
     if store.mode != "observed":
@@ -259,7 +287,7 @@ def reconcile_shadow_economic_round(
     if existing is not None:
         return _already_result(decision, existing)
 
-    action, side, stake, gas, p_exec = _decision_fields(decision)
+    action, side, stake, gas, p_exec, claim_or_refund_gas = _decision_fields(decision)
     anchor = anchor_fetcher(client)
     round_state = round_reader(
         client,
@@ -269,17 +297,35 @@ def reconcile_shadow_economic_round(
     )
     if round_state.start_timestamp == 0:
         return ShadowEconomicSettlementResult(
-            round_id, ShadowSettlementStatus.PENDING, None, action, side,
-            anchor.number, anchor.block_hash, None, None, None,
-            ("round_unavailable",), None,
+            round_id,
+            ShadowSettlementStatus.PENDING,
+            None,
+            action,
+            side,
+            anchor.number,
+            anchor.block_hash,
+            None,
+            None,
+            None,
+            ("round_unavailable",),
+            None,
         )
 
     if not round_state.oracle_called:
         if round_state.close_timestamp == 0:
             return ShadowEconomicSettlementResult(
-                round_id, ShadowSettlementStatus.PENDING, None, action, side,
-                anchor.number, anchor.block_hash, None, None, None,
-                ("round_not_closed",), None,
+                round_id,
+                ShadowSettlementStatus.PENDING,
+                None,
+                action,
+                side,
+                anchor.number,
+                anchor.block_hash,
+                None,
+                None,
+                None,
+                ("round_not_closed",),
+                None,
             )
         buffer_seconds = buffer_reader(
             client,
@@ -288,9 +334,18 @@ def reconcile_shadow_economic_round(
         )
         if anchor.timestamp_s <= round_state.close_timestamp + buffer_seconds:
             return ShadowEconomicSettlementResult(
-                round_id, ShadowSettlementStatus.PENDING, None, action, side,
-                anchor.number, anchor.block_hash, None, None, None,
-                ("refund_window_not_open",), None,
+                round_id,
+                ShadowSettlementStatus.PENDING,
+                None,
+                action,
+                side,
+                anchor.number,
+                anchor.block_hash,
+                None,
+                None,
+                None,
+                ("refund_window_not_open",),
+                None,
             )
         resolution = ShadowRoundResolution.REFUND
         settled_fee_units = None
@@ -300,28 +355,52 @@ def reconcile_shadow_economic_round(
             _validate_settled_reward_fields(round_state, resolution)
         except ValueError as exc:
             return ShadowEconomicSettlementResult(
-                round_id, ShadowSettlementStatus.ANOMALY, resolution, action, side,
-                anchor.number, anchor.block_hash, None, None, None,
-                (str(exc),), None,
+                round_id,
+                ShadowSettlementStatus.ANOMALY,
+                resolution,
+                action,
+                side,
+                anchor.number,
+                anchor.block_hash,
+                None,
+                None,
+                None,
+                (str(exc),),
+                None,
             )
         settled_fee_units = None
         if resolution in {ShadowRoundResolution.BULL, ShadowRoundResolution.BEAR}:
             candidates = _infer_fee_units(round_state)
             if len(candidates) != 1:
                 return ShadowEconomicSettlementResult(
-                    round_id, ShadowSettlementStatus.ANOMALY, resolution, action, side,
-                    anchor.number, anchor.block_hash, None, None, None,
-                    (f"settlement_fee_not_uniquely_inferable:{len(candidates)}",), None,
+                    round_id,
+                    ShadowSettlementStatus.ANOMALY,
+                    resolution,
+                    action,
+                    side,
+                    anchor.number,
+                    anchor.block_hash,
+                    None,
+                    None,
+                    None,
+                    (f"settlement_fee_not_uniquely_inferable:{len(candidates)}",),
+                    None,
                 )
             settled_fee_units = candidates[0]
 
     pnl_if_executed = 0
     gross_payout = 0
+    applied_claim_or_refund_gas = 0
+    claim_or_refund_gas_modeled = True
     if action is ShadowEconomicAction.BET:
         assert side is not None
         if resolution is ShadowRoundResolution.REFUND:
             gross_payout = stake
-            pnl_if_executed = -gas
+            if claim_or_refund_gas is None:
+                claim_or_refund_gas_modeled = False
+            else:
+                applied_claim_or_refund_gas = claim_or_refund_gas
+            pnl_if_executed = -gas - applied_claim_or_refund_gas
         else:
             won = (
                 side is Side.BULL and resolution is ShadowRoundResolution.BULL
@@ -331,12 +410,23 @@ def reconcile_shadow_economic_round(
             if won:
                 if settled_fee_units is None:
                     return ShadowEconomicSettlementResult(
-                        round_id, ShadowSettlementStatus.ANOMALY, resolution, action, side,
-                        anchor.number, anchor.block_hash, None, None, None,
-                        ("winning_settlement_missing_fee",), None,
+                        round_id,
+                        ShadowSettlementStatus.ANOMALY,
+                        resolution,
+                        action,
+                        side,
+                        anchor.number,
+                        anchor.block_hash,
+                        None,
+                        None,
+                        None,
+                        ("winning_settlement_missing_fee",),
+                        None,
                     )
                 winning_pool = (
-                    round_state.bull_amount_wei if side is Side.BULL else round_state.bear_amount_wei
+                    round_state.bull_amount_wei
+                    if side is Side.BULL
+                    else round_state.bear_amount_wei
                 ) + stake
                 simulated_total = round_state.total_amount_wei + stake
                 treasury = (simulated_total * settled_fee_units) // 10_000
@@ -344,7 +434,16 @@ def reconcile_shadow_economic_round(
                 if winning_pool <= 0:
                     raise AssertionError("simulated winning pool must be positive")
                 gross_payout = (stake * distributable) // winning_pool
-                pnl_if_executed = gross_payout - stake - gas
+                if claim_or_refund_gas is None:
+                    claim_or_refund_gas_modeled = False
+                else:
+                    applied_claim_or_refund_gas = claim_or_refund_gas
+                pnl_if_executed = (
+                    gross_payout
+                    - stake
+                    - gas
+                    - applied_claim_or_refund_gas
+                )
             else:
                 pnl_if_executed = -stake - gas
 
@@ -377,6 +476,8 @@ def reconcile_shadow_economic_round(
             "selected_side": None if side is None else side.value,
             "stake_wei": stake,
             "gas_cost_wei": gas,
+            "claim_or_refund_gas_cost_wei": claim_or_refund_gas,
+            "claim_or_refund_gas_applied_wei": applied_claim_or_refund_gas,
             "execution_success_probability": p_exec,
             "pnl_if_executed_wei": pnl_if_executed,
             "probability_adjusted_pnl_wei": probability_adjusted,
@@ -389,7 +490,9 @@ def reconcile_shadow_economic_round(
             "decision_fee_units": decision_fee_units,
             "settled_fee_units": settled_fee_units,
             "fee_changed_from_decision": (
-                False if settled_fee_units is None else settled_fee_units != decision_fee_units
+                False
+                if settled_fee_units is None
+                else settled_fee_units != decision_fee_units
             ),
             "final_pool_excluding_paper_stake": {
                 "total_amount_wei": round_state.total_amount_wei,
@@ -399,12 +502,14 @@ def reconcile_shadow_economic_round(
                 "reward_amount_wei": round_state.reward_amount_wei,
             },
             "post_decision_flow_replaced_by_observed_final_pool": True,
-            "claim_or_refund_gas_modeled": False,
+            "claim_or_refund_gas_modeled": claim_or_refund_gas_modeled,
         },
     )
     stored_source, stored_settlement = store.append_many((source, settlement))
     if stored_settlement.prev_hash != stored_source.event_hash:
-        raise AssertionError("derived settlement must chain directly to source settlement snapshot")
+        raise AssertionError(
+            "derived settlement must chain directly to source settlement snapshot"
+        )
     if not store.verify_chain():
         raise RuntimeError("Event Store hash chain failed after shadow settlement")
 
