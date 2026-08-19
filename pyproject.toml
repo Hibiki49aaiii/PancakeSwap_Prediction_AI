@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 ppai-collector = "pancake_prediction_ai.collector_cli:main"
+ppai-artifact = "pancake_prediction_ai.artifact_cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
