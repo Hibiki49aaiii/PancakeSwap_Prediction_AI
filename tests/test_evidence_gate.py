@@ -12,6 +12,10 @@ from pancake_prediction_ai.evidence_gate import (
     RuntimeSafetyState,
     evaluate_stage6a_readiness,
 )
+from pancake_prediction_ai.runtime_fingerprint import (
+    capture_runtime_fingerprint,
+    fingerprint_sha256,
+)
 
 
 def _digest(payload: dict[str, object]) -> str:
@@ -43,12 +47,16 @@ def qualified_stage5a(
     passed: bool = True,
     changes: dict[str, object] | None = None,
 ) -> Evidence:
+    runtime = capture_runtime_fingerprint()
+    runtime_payload = runtime.payload()
     payload: dict[str, object] = {
-        "schema": "stage5a_execution_drill_v1",
+        "schema": "stage5a_execution_drill_v2",
         "drill_type": "local_sqlite_execution_state_durability",
         "blockchain_transaction_created": False,
         "transaction_signed": False,
         "transaction_broadcast": False,
+        "runtime_fingerprint": runtime_payload,
+        "runtime_fingerprint_sha256": runtime.sha256,
         "journal_mode_wal": True,
         "synchronous_full": True,
         "unresolved_recovered_after_restart": True,
@@ -237,6 +245,44 @@ def test_non_observed_stage5b_never_clears_gate(origin: EvidenceOrigin) -> None:
 def test_incomplete_or_unsafe_stage5a_payload_cannot_clear_gate(changes: dict[str, object]) -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=qualified_stage5a(changes=changes),
+        stage5b=qualified_stage5b(),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5a_qualified_observed_pass_missing" in decision.blockers
+
+
+def test_stage5a_evidence_from_different_runtime_stack_cannot_clear_gate() -> None:
+    current = capture_runtime_fingerprint().payload()
+    other = dict(current)
+    other["python_version"] = "0.0.0-different-runtime"
+    other_sha = fingerprint_sha256(other)
+    stage5a = qualified_stage5a(
+        changes={
+            "runtime_fingerprint": other,
+            "runtime_fingerprint_sha256": other_sha,
+        }
+    )
+    # The payload and its own digest are internally consistent; rejection comes
+    # from comparing the drill runtime to the runtime evaluating Stage 6A.
+    decision = evaluate_stage6a_readiness(
+        stage5a=stage5a,
+        stage5b=qualified_stage5b(),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5a_qualified_observed_pass_missing" in decision.blockers
+
+
+def test_stage5a_runtime_fingerprint_sha_must_match_nested_runtime_payload() -> None:
+    current = capture_runtime_fingerprint().payload()
+    other = dict(current)
+    other["sqlite_version"] = "0.0.0"
+    stage5a = qualified_stage5a(changes={"runtime_fingerprint": other})
+    decision = evaluate_stage6a_readiness(
+        stage5a=stage5a,
         stage5b=qualified_stage5b(),
         shadow=qualified_shadow(),
         safety=safety(),
