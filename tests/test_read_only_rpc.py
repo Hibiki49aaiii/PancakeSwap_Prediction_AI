@@ -143,6 +143,39 @@ def test_eth_getlogs_rpc_range_limit_is_split(limit_message: str) -> None:
     assert [row["blockNumber"] for row in result] == ["0x1", "0x2"]
 
 
+def test_rpc_range_limit_splits_block_range_before_topic_or() -> None:
+    seen: list[tuple[int, int, tuple[str, ...]]] = []
+
+    def transport(request: Request, timeout: float) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        filter_ = payload["params"][0]
+        start = int(filter_["fromBlock"], 16)
+        end = int(filter_["toBlock"], 16)
+        raw_topic0 = filter_["topics"][0]
+        alternatives = (raw_topic0,) if isinstance(raw_topic0, str) else tuple(raw_topic0)
+        seen.append((start, end, alternatives))
+        if end > start:
+            return json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"code": -32005, "message": "limit exceeded"},
+                }
+            ).encode()
+        return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": []}).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    assert client.call(
+        "eth_getLogs",
+        [{"fromBlock": "0x1", "toBlock": "0x2", "topics": [["0xa", "0xb", "0xc"]]}],
+    ) == []
+    assert seen[:3] == [
+        (1, 2, ("0xa", "0xb", "0xc")),
+        (1, 1, ("0xa", "0xb", "0xc")),
+        (2, 2, ("0xa", "0xb", "0xc")),
+    ]
+
+
 def test_non_range_rpc_error_is_not_split() -> None:
     calls = 0
 
