@@ -5,7 +5,9 @@ import pytest
 from pancake_prediction_ai.event_store import EventRecord, EventStore
 from pancake_prediction_ai.historical_store import (
     bind_reconstruction_dataset,
+    bind_reconstruction_prediction_interval_seconds,
     reconstruction_dataset_id,
+    reconstruction_prediction_interval_seconds,
     verify_reconstruction_dataset_binding,
 )
 from pancake_prediction_ai.provenance import ReconstructionPolicy, reconstruct_event
@@ -39,6 +41,20 @@ def test_first_binding_persists_dataset_id_and_trigger(tmp_path) -> None:
         assert verify_reconstruction_dataset_binding(reopened)
         reopened.append(_event("b", "dataset-a"))
         assert len(reopened.read_all_ingest_order()) == 2
+
+
+def test_prediction_interval_binding_persists_and_cannot_be_rebound(tmp_path) -> None:
+    path = tmp_path / "history.sqlite"
+    with EventStore(path, mode="reconstructed") as store:
+        assert reconstruction_prediction_interval_seconds(store) is None
+        assert bind_reconstruction_prediction_interval_seconds(store, 300) == 300
+        assert reconstruction_prediction_interval_seconds(store) == 300
+        with pytest.raises(ValueError, match="bound to Prediction interval 300"):
+            bind_reconstruction_prediction_interval_seconds(store, 60)
+
+    with EventStore(path, mode="reconstructed") as reopened:
+        assert reconstruction_prediction_interval_seconds(reopened) == 300
+        assert bind_reconstruction_prediction_interval_seconds(reopened, 300) == 300
 
 
 def test_direct_low_level_append_of_other_dataset_is_blocked_by_sqlite_trigger(tmp_path) -> None:
@@ -81,3 +97,5 @@ def test_observed_store_cannot_be_bound_as_reconstructed_dataset(tmp_path) -> No
     with EventStore(tmp_path / "observed.sqlite") as store:
         with pytest.raises(ValueError, match="reconstructed Event Store"):
             bind_reconstruction_dataset(store, "dataset-a")
+        with pytest.raises(ValueError, match="reconstructed Event Store"):
+            bind_reconstruction_prediction_interval_seconds(store, 300)
