@@ -9,6 +9,7 @@ from pancake_prediction_ai.baseline_model import (
     mean_log_loss,
 )
 from pancake_prediction_ai.economics import Outcome
+from pancake_prediction_ai.metrics import OutcomeProbability
 
 
 def _examples() -> list[LabeledFeatures]:
@@ -61,13 +62,45 @@ def test_temperature_calibration_does_not_worsen_calibration_set_log_loss() -> N
     assert after <= before + 1e-9
 
 
-def test_training_refuses_to_silently_collapse_back_to_binary() -> None:
+def test_missing_tie_without_prior_is_rejected_instead_of_binary_collapse() -> None:
     examples = [
         LabeledFeatures({"x": -1.0}, Outcome.BEAR),
         LabeledFeatures({"x": 1.0}, Outcome.BULL),
     ]
-    with pytest.raises(ValueError, match="all three outcome classes"):
+    with pytest.raises(ValueError, match="explicit three-outcome class_prior"):
         fit_softmax_baseline(examples, feature_names=["x"])
+
+
+def test_missing_tie_can_train_only_with_explicit_three_outcome_prior() -> None:
+    examples = [
+        LabeledFeatures({"x": -2.0}, Outcome.BEAR),
+        LabeledFeatures({"x": -1.0}, Outcome.BEAR),
+        LabeledFeatures({"x": 1.0}, Outcome.BULL),
+        LabeledFeatures({"x": 2.0}, Outcome.BULL),
+    ]
+    prior = OutcomeProbability(bull=0.495, bear=0.495, tie=0.01)
+    model = fit_softmax_baseline(
+        examples,
+        feature_names=["x"],
+        class_prior=prior,
+        prior_strength=20.0,
+        epochs=500,
+    )
+    neutral = model.predict({"x": 0.0})
+    assert neutral.tie > 0
+    assert model.training_prior == prior
+    assert model.prior_strength == 20.0
+    assert model.artifact_payload()["training_prior"] == {
+        "bull": 0.495,
+        "bear": 0.495,
+        "tie": 0.01,
+        "strength": 20.0,
+    }
+
+
+def test_prior_strength_without_prior_is_rejected() -> None:
+    with pytest.raises(ValueError, match="requires class_prior"):
+        fit_softmax_baseline(_examples(), feature_names=["x"], prior_strength=1.0)
 
 
 def test_missing_prediction_feature_is_hard_failure() -> None:
