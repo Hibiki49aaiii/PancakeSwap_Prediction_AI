@@ -23,6 +23,7 @@ class ShadowEconomicAction(StrEnum):
 class ShadowEconomicPolicy:
     stake_wei: int
     gas_cost_wei: int = 0
+    claim_or_refund_gas_cost_wei: int | None = None
     same_side_inflow_wei: int = 0
     opposite_side_inflow_wei: int = 0
     execution_success_probability: float = 1.0
@@ -33,6 +34,11 @@ class ShadowEconomicPolicy:
             raise ValueError("shadow stake_wei must be positive")
         if self.gas_cost_wei < 0:
             raise ValueError("shadow gas_cost_wei must be non-negative")
+        if (
+            self.claim_or_refund_gas_cost_wei is not None
+            and self.claim_or_refund_gas_cost_wei < 0
+        ):
+            raise ValueError("shadow claim_or_refund_gas_cost_wei must be non-negative")
         if self.same_side_inflow_wei < 0 or self.opposite_side_inflow_wei < 0:
             raise ValueError("shadow post-decision inflows must be non-negative")
         if not 0.0 <= self.execution_success_probability <= 1.0:
@@ -44,6 +50,11 @@ class ShadowEconomicPolicy:
         self.validate()
         return ExecutionCost(
             gas_cost_wei=self.gas_cost_wei,
+            claim_cost_if_win_wei=(
+                0
+                if self.claim_or_refund_gas_cost_wei is None
+                else self.claim_or_refund_gas_cost_wei
+            ),
             same_side_inflow_wei=self.same_side_inflow_wei,
             opposite_side_inflow_wei=self.opposite_side_inflow_wei,
             execution_success_probability=self.execution_success_probability,
@@ -134,7 +145,8 @@ def record_shadow_economic_decision(
     used, never from a later round observation or from floating-point features.
     Both sides are evaluated with identical stake/cost assumptions. A model may
     predict a direction yet still produce an explicit ABSTAIN when neither side
-    clears the economic threshold.
+    clears the economic threshold. Optional claim/refund gas is fixed before the
+    outcome and incorporated into win-side EV rather than added retrospectively.
     """
 
     if store.mode != "observed":
@@ -214,6 +226,7 @@ def record_shadow_economic_decision(
             },
             "assumed_execution": {
                 "gas_cost_wei": policy.gas_cost_wei,
+                "claim_or_refund_gas_cost_wei": policy.claim_or_refund_gas_cost_wei,
                 "same_side_inflow_wei": policy.same_side_inflow_wei,
                 "opposite_side_inflow_wei": policy.opposite_side_inflow_wei,
                 "execution_success_probability": policy.execution_success_probability,
