@@ -67,6 +67,7 @@ def _artifact(store: EventStore):
             long_window_ns=30_000_000_000,
             short_window_ns=5_000_000_000,
         ),
+        prediction_interval_seconds=300,
     )
 
 
@@ -78,6 +79,7 @@ def test_artifact_digest_is_reproducible_for_same_store_and_configuration(tmp_pa
         assert first.artifact_sha256 == second.artifact_sha256
         assert first.payload == second.payload
         assert first.payload["source_event_store"]["tip_hash"] == store.read_all_ingest_order()[-1].event_hash
+        assert first.payload["assumptions"]["prediction_interval_seconds"] == 300
 
 
 def test_write_load_roundtrip_preserves_examples_and_outcomes(tmp_path) -> None:
@@ -92,6 +94,7 @@ def test_write_load_roundtrip_preserves_examples_and_outcomes(tmp_path) -> None:
     assert [example.round_id for example in loaded.examples] == [10, 11]
     assert [example.outcome for example in loaded.examples] == [Outcome.BULL, Outcome.TIE]
     assert loaded.skipped == (ExampleSkip(epoch=12, reason="feature_unavailable:test"),)
+    assert loaded.payload["assumptions"]["prediction_interval_seconds"] == 300
 
 
 def test_payload_tampering_is_detected(tmp_path) -> None:
@@ -104,6 +107,22 @@ def test_payload_tampering_is_detected(tmp_path) -> None:
     path.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         load_historical_dataset_artifact(path)
+
+
+def test_invalid_prediction_interval_is_rejected(tmp_path) -> None:
+    with EventStore(tmp_path / "history.sqlite", mode="reconstructed") as store:
+        store.append(_historical_event())
+        with pytest.raises(ValueError, match="prediction_interval_seconds"):
+            build_historical_dataset_artifact(
+                store,
+                _result(),
+                dataset_id="x",
+                generated_at_ns=1,
+                decision_lead_ns=1,
+                assumed_binance_latency_ns=0,
+                assumed_onchain_latency_ns=0,
+                prediction_interval_seconds=0,
+            )
 
 
 def test_source_store_tamper_blocks_artifact_generation(tmp_path) -> None:
