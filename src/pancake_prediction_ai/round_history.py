@@ -58,6 +58,8 @@ def backfill_round_lifecycle_logs(
     chunk_size: int = 5_000,
     prediction_contract: str = BNB_PREDICTION_CONTRACT,
 ) -> LifecycleBackfillResult:
+    """Backfill START/LOCK/END lifecycle events with idempotent persistence."""
+
     if store.mode != "reconstructed":
         raise ValueError("lifecycle backfill requires reconstructed Event Store")
     if not dataset_id:
@@ -69,6 +71,9 @@ def backfill_round_lifecycle_logs(
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
 
+    existing_event_ids = {
+        stored.event.event_id for stored in store.read_all_ingest_order()
+    }
     chunks_completed = 0
     events_appended = 0
     chunk_start = from_block
@@ -87,14 +92,16 @@ def backfill_round_lifecycle_logs(
                 assumed_latency_ns=assumed_latency_ns,
                 captured_at_ns=observation.event.observed_at_ns,
             )
-            reconstructed.append(
-                reconstruct_event(
-                    observation.event,
-                    policy=policy,
-                    availability_base_ns=observation.event.event_time_ns,
-                    availability_basis="block_timestamp",
-                )
+            event = reconstruct_event(
+                observation.event,
+                policy=policy,
+                availability_base_ns=observation.event.event_time_ns,
+                availability_basis="block_timestamp",
             )
+            if event.event_id in existing_event_ids:
+                continue
+            reconstructed.append(event)
+            existing_event_ids.add(event.event_id)
         if reconstructed:
             store.append_many(reconstructed)
             events_appended += len(reconstructed)
