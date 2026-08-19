@@ -35,13 +35,7 @@ def _default_transport(request: Request, timeout: float) -> bytes:
 
 
 def _normalize_single_log_topic_params(params: list[Any]) -> list[Any] | None:
-    """Normalize `topics: [[A]]` to the equivalent `topics: [A]` form.
-
-    Both forms are valid JSON-RPC filters. Some public provider frontends reject
-    the singleton-OR representation even though they accept the scalar topic.
-    Normalizing before transport preserves semantics and avoids treating that
-    provider quirk as a block-range failure.
-    """
+    """Normalize `topics: [[A]]` to the equivalent `topics: [A]` form."""
 
     if len(params) != 1 or not isinstance(params[0], dict):
         return None
@@ -184,13 +178,28 @@ class ReadOnlyJsonRpcClient:
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-    def _retry_split_logs(self, params: list[Any]) -> list[Any] | None:
-        # Some public providers reject a topic-OR filter even for a tiny range.
-        # Splitting OR alternatives is semantically equivalent and avoids first
-        # exploding a range into hundreds of single-block requests.
-        split = _split_log_topic_params(params)
-        if split is None:
+    def _retry_split_logs(
+        self,
+        params: list[Any],
+        *,
+        prefer_range: bool,
+    ) -> list[Any] | None:
+        """Retry a log filter without changing its set semantics.
+
+        HTTP 403 is commonly a provider/WAF rejection of topic-OR syntax, so it
+        splits topic alternatives first. Explicit JSON-RPC range-limit errors
+        instead split the block interval first, avoiding a needless 3x fan-out
+        for filters such as Prediction config-change topic ORs on 1RPC.
+        """
+
+        if prefer_range:
             split = _split_log_range_params(params)
+            if split is None:
+                split = _split_log_topic_params(params)
+        else:
+            split = _split_log_topic_params(params)
+            if split is None:
+                split = _split_log_range_params(params)
         if split is None:
             return None
         left_params, right_params = split
@@ -233,7 +242,7 @@ class ReadOnlyJsonRpcClient:
             raw = self.transport(request, self.timeout_seconds)
         except HTTPError as exc:
             if method == "eth_getLogs" and exc.code == 403:
-                split_result = self._retry_split_logs(params)
+                split_result = self._retry_split_logs(params, prefer_range=False)
                 if split_result is not None:
                     return split_result
             raise
@@ -248,7 +257,7 @@ class ReadOnlyJsonRpcClient:
         if "error" in response:
             error = response["error"]
             if method == "eth_getLogs" and _looks_like_log_range_limit(error):
-                split_result = self._retry_split_logs(params)
+                split_result = self._retry_split_logs(params, prefer_range=True)
                 if split_result is not None:
                     return split_result
             if isinstance(error, dict):
