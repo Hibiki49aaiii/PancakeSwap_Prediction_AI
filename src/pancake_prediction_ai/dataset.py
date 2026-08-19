@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from .economics import Outcome
 from .event_store import StoredEvent
 from .replay import build_snapshot, latest_numeric
 
@@ -22,7 +23,7 @@ class NumericFeatureSpec:
 @dataclass(frozen=True, slots=True)
 class RoundLabel:
     round_id: int
-    outcome_bull: bool
+    outcome: Outcome
     available_at_ns: int
 
     def validate(self) -> None:
@@ -36,7 +37,7 @@ class TrainingExample:
     decision_cutoff_ns: int
     label_available_at_ns: int
     features: tuple[tuple[str, float], ...]
-    outcome_bull: bool
+    outcome: Outcome
 
     def feature_dict(self) -> dict[str, float]:
         return dict(self.features)
@@ -78,7 +79,7 @@ def build_training_example(
         decision_cutoff_ns=decision_cutoff_ns,
         label_available_at_ns=label.available_at_ns,
         features=tuple(values),
-        outcome_bull=label.outcome_bull,
+        outcome=label.outcome,
     )
 
 
