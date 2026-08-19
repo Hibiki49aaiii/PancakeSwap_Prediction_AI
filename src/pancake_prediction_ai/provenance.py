@@ -55,19 +55,27 @@ def reconstruct_event(
     event: EventRecord,
     *,
     policy: ReconstructionPolicy,
+    availability_base_ns: int | None = None,
+    availability_basis: str = "event_time",
 ) -> EventRecord:
     """Create a historical replay record with explicit assumed availability.
 
-    The new `observed_at_ns` is an *assumption* (`event_time + latency`), never a
-    claim that this process actually observed the event in the past. The actual
-    backfill capture time and optional source-artifact digest stay in the hashed
-    payload provenance metadata.
+    Default replay availability is `event_time + assumed_latency`. Some sources
+    are only knowable when a containing snapshot/block becomes available. Those
+    callers must pass that explicit `availability_base_ns` and a descriptive
+    basis such as `block_timestamp`; the assumption is retained in the hashed
+    payload rather than silently overwriting source event time.
     """
 
     event.validate()
     policy.validate()
     if availability_mode(event) is not AvailabilityMode.OBSERVED:
         raise ValueError("only observed/raw events may be reconstructed")
+    if not availability_basis:
+        raise ValueError("availability_basis is required")
+    base_ns = event.event_time_ns if availability_base_ns is None else availability_base_ns
+    if base_ns < 0:
+        raise ValueError("availability_base_ns must be non-negative")
 
     payload = dict(event.payload)
     payload[_RESERVED_KEY] = {
@@ -76,12 +84,14 @@ def reconstruct_event(
         "assumed_latency_ns": policy.assumed_latency_ns,
         "captured_at_ns": policy.captured_at_ns,
         "source_artifact_sha256": policy.source_artifact_sha256,
+        "availability_basis": availability_basis,
+        "availability_base_ns": base_ns,
     }
     return EventRecord(
         event_id=f"reconstructed:{policy.dataset_id}:{event.event_id}",
         source=event.source,
         topic=event.topic,
         event_time_ns=event.event_time_ns,
-        observed_at_ns=event.event_time_ns + policy.assumed_latency_ns,
+        observed_at_ns=base_ns + policy.assumed_latency_ns,
         payload=payload,
     )
