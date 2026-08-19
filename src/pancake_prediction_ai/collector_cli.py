@@ -8,6 +8,7 @@ from .binance_ingest import poll_binance_public_once
 from .binance_public_rest import BinancePublicRestClient
 from .binance_websocket import BinanceMarketWebSocketIngestor, run_reconnecting_market_stream
 from .event_store import EventStore
+from .historical_binance import backfill_binance_aggregate_trades
 from .onchain_ingest import collect_and_persist_protocol_snapshot
 from .read_only_rpc import ReadOnlyJsonRpcClient
 
@@ -16,6 +17,13 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
     return parsed
 
 
@@ -41,12 +49,29 @@ def build_parser() -> argparse.ArgumentParser:
     ws.add_argument("--rest-gap-repair", action=argparse.BooleanOptionalAction, default=True)
     ws.add_argument("--reconnect-delay-seconds", type=float, default=1.0)
 
+    historical = sub.add_parser(
+        "historical-binance",
+        help="Backfill Binance aggTrades into a separate reconstructed Event Store",
+    )
+    historical.add_argument("--dataset-id", required=True)
+    historical.add_argument("--symbol", default="BNBUSDT")
+    historical.add_argument("--start-time-ms", type=_non_negative_int, required=True)
+    historical.add_argument("--end-time-ms", type=_non_negative_int, required=True)
+    historical.add_argument("--assumed-latency-ns", type=_non_negative_int, required=True)
+    historical.add_argument("--batch-limit", type=_positive_int, default=1000)
+    historical.add_argument("--max-batches", type=_positive_int, default=10_000)
+
     protocol = sub.add_parser("protocol-once", help="Collect one pinned Pancake + Chainlink BSC snapshot")
     protocol.add_argument("--rpc-url", required=True)
     protocol.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
 
     verify = sub.add_parser("verify-store", help="Verify the Event Store hash chain")
-    verify.set_defaults()
+    verify.add_argument(
+        "--mode",
+        choices=("observed", "reconstructed"),
+        default="observed",
+        help="Expected persisted availability mode",
+    )
     return parser
 
 
@@ -54,7 +79,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.store.parent.mkdir(parents=True, exist_ok=True)
 
-    with EventStore(args.store) as store:
+    if args.command == "historical-binance":
+        store_mode = "reconstructed"
+    elif args.command == "verify-store":
+        store_mode = args.mode
+    else:
+        store_mode = "observed"
+
+    with EventStore(args.store, mode=store_mode) as store:
         if args.command == "binance-rest-once":
             if not 1 <= args.trade_limit <= 1000:
                 raise SystemExit("--trade-limit must be in [1, 1000]")
@@ -83,6 +115,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "historical-binance":
+            if not 1 <= args.batch_limit <= 1000:
+                raise SystemExit("--batch-limit must be in [1, 1000]")
+            result = backfill_binance_aggregate_trades(
+                BinancePublicRestClient(),
+                store,
+                dataset_id=args.dataset_id,
+                symbol=args.symbol,
+                start_time_ms=args.start_time_ms,
+                end_time_ms=args.end_time_ms,
+                assumed_latency_ns=args.assumed_latency_ns,
+                batch_limit=args.batch_limit,
+                max_batches=args.max_batches,
+            )
+            print(
+                f"historical-binance dataset={result.dataset_id} events={result.events_appended} "
+                f"first_id={result.first_aggregate_trade_id} last_id={result.last_aggregate_trade_id}"
+            )
+            return 0
+
         if args.command == "protocol-once":
             if args.rpc_timeout_seconds <= 0:
                 raise SystemExit("--rpc-timeout-seconds must be positive")
@@ -100,7 +152,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "verify-store":
             ok = store.verify_chain()
-            print("event-store hash-chain: OK" if ok else "event-store hash-chain: FAILED")
+            print(
+                f"event-store mode={store.mode} hash-chain: "
+                + ("OK" if ok else "FAILED")
+            )
             return 0 if ok else 2
 
     raise AssertionError(f"unhandled command: {args.command}")
