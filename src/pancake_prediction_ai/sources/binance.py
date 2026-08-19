@@ -52,18 +52,50 @@ def _check_expected_symbol(symbol: str, expected_symbol: str | None) -> None:
         raise ValueError(f"unexpected Binance symbol: {symbol}")
 
 
+def _agg_trade_record(
+    *,
+    symbol: str,
+    aggregate_trade_id: int,
+    price: Decimal,
+    quantity: Decimal,
+    first_trade_id: int,
+    last_trade_id: int,
+    trade_time_ms: int,
+    buyer_is_maker: bool,
+    observed_at_ns: int,
+    exchange_event_time_ms: int | None,
+    capture_transport: str,
+) -> EventRecord:
+    return EventRecord(
+        event_id=f"binance:spot:agg_trade:{symbol}:{aggregate_trade_id}",
+        source="binance_spot",
+        topic="market.agg_trade",
+        event_time_ns=trade_time_ms * 1_000_000,
+        observed_at_ns=observed_at_ns,
+        payload={
+            "symbol": symbol,
+            "aggregate_trade_id": aggregate_trade_id,
+            "price": float(price),
+            "price_text": format(price, "f"),
+            "quantity": float(quantity),
+            "quantity_text": format(quantity, "f"),
+            "first_trade_id": first_trade_id,
+            "last_trade_id": last_trade_id,
+            "exchange_event_time_ms": exchange_event_time_ms,
+            "trade_time_ms": trade_time_ms,
+            "buyer_is_maker": buyer_is_maker,
+            "capture_transport": capture_transport,
+        },
+    )
+
+
 def normalize_agg_trade(
     message: Mapping[str, Any],
     *,
     observed_at_ns: int,
     expected_symbol: str | None = None,
 ) -> EventRecord:
-    """Normalize a Binance Spot `<symbol>@aggTrade` payload.
-
-    Binance supplies both event time (`E`) and trade time (`T`) in milliseconds.
-    The canonical event timestamp uses trade time, while `observed_at_ns` is the
-    caller's local arrival timestamp and is never derived from Binance fields.
-    """
+    """Normalize a Binance Spot `<symbol>@aggTrade` WebSocket payload."""
 
     if observed_at_ns < 0:
         raise ValueError("observed_at_ns must be non-negative")
@@ -86,56 +118,80 @@ def normalize_agg_trade(
     if not isinstance(buyer_is_maker, bool):
         raise ValueError("buyer-maker flag must be boolean")
 
-    return EventRecord(
-        event_id=f"binance:spot:agg_trade:{symbol}:{aggregate_trade_id}",
-        source="binance_spot",
-        topic="market.agg_trade",
-        event_time_ns=trade_time_ms * 1_000_000,
+    return _agg_trade_record(
+        symbol=symbol,
+        aggregate_trade_id=aggregate_trade_id,
+        price=price,
+        quantity=quantity,
+        first_trade_id=first_trade_id,
+        last_trade_id=last_trade_id,
+        trade_time_ms=trade_time_ms,
+        buyer_is_maker=buyer_is_maker,
         observed_at_ns=observed_at_ns,
-        payload={
-            "symbol": symbol,
-            "aggregate_trade_id": aggregate_trade_id,
-            "price": float(price),
-            "price_text": format(price, "f"),
-            "quantity": float(quantity),
-            "quantity_text": format(quantity, "f"),
-            "first_trade_id": first_trade_id,
-            "last_trade_id": last_trade_id,
-            "exchange_event_time_ms": event_time_ms,
-            "trade_time_ms": trade_time_ms,
-            "buyer_is_maker": buyer_is_maker,
-        },
+        exchange_event_time_ms=event_time_ms,
+        capture_transport="websocket",
     )
 
 
-def normalize_book_ticker(
+def normalize_rest_agg_trade(
     message: Mapping[str, Any],
     *,
+    symbol: str,
     observed_at_ns: int,
-    expected_symbol: str | None = None,
 ) -> EventRecord:
-    """Normalize a Binance Spot `<symbol>@bookTicker` payload.
+    """Normalize one `GET /api/v3/aggTrades` item.
 
-    The documented bookTicker payload has no exchange timestamp. The canonical
-    event time therefore equals the local observation timestamp instead of
-    inventing or borrowing a timestamp from another stream.
+    `observed_at_ns` must be the local response-arrival time. In particular, a
+    historical REST backfill must not copy the old trade timestamp into local
+    observation time, because that would falsely claim the data was available
+    to this system in the past.
     """
 
     if observed_at_ns < 0:
         raise ValueError("observed_at_ns must be non-negative")
-    data = _unwrap(message)
-    symbol = _symbol(data.get("s"))
-    _check_expected_symbol(symbol, expected_symbol)
-    update_id = _non_negative_int(data.get("u"), "book update id")
-    bid_price = _positive_decimal(data.get("b"), "bid price")
-    bid_quantity = _positive_decimal(data.get("B"), "bid quantity")
-    ask_price = _positive_decimal(data.get("a"), "ask price")
-    ask_quantity = _positive_decimal(data.get("A"), "ask quantity")
+    normalized_symbol = _symbol(symbol)
+    aggregate_trade_id = _non_negative_int(message.get("a"), "aggregate trade id")
+    trade_time_ms = _non_negative_int(message.get("T"), "trade time")
+    first_trade_id = _non_negative_int(message.get("f"), "first trade id")
+    last_trade_id = _non_negative_int(message.get("l"), "last trade id")
+    if last_trade_id < first_trade_id:
+        raise ValueError("last trade id must be >= first trade id")
+    price = _positive_decimal(message.get("p"), "price")
+    quantity = _positive_decimal(message.get("q"), "quantity")
+    buyer_is_maker = message.get("m")
+    if not isinstance(buyer_is_maker, bool):
+        raise ValueError("buyer-maker flag must be boolean")
+    return _agg_trade_record(
+        symbol=normalized_symbol,
+        aggregate_trade_id=aggregate_trade_id,
+        price=price,
+        quantity=quantity,
+        first_trade_id=first_trade_id,
+        last_trade_id=last_trade_id,
+        trade_time_ms=trade_time_ms,
+        buyer_is_maker=buyer_is_maker,
+        observed_at_ns=observed_at_ns,
+        exchange_event_time_ms=None,
+        capture_transport="rest",
+    )
+
+
+def _book_record(
+    *,
+    symbol: str,
+    bid_price: Decimal,
+    bid_quantity: Decimal,
+    ask_price: Decimal,
+    ask_quantity: Decimal,
+    observed_at_ns: int,
+    update_id: int | None,
+    capture_transport: str,
+) -> EventRecord:
     if bid_price > ask_price:
         raise ValueError("best bid cannot exceed best ask")
-
+    unique = str(update_id) if update_id is not None else f"rest:{observed_at_ns}"
     return EventRecord(
-        event_id=f"binance:spot:book_ticker:{symbol}:{update_id}",
+        event_id=f"binance:spot:book_ticker:{symbol}:{unique}",
         source="binance_spot",
         topic="market.book_ticker",
         event_time_ns=observed_at_ns,
@@ -154,5 +210,66 @@ def normalize_book_ticker(
             "mid_price": float((bid_price + ask_price) / Decimal(2)),
             "spread": float(ask_price - bid_price),
             "source_timestamp_available": False,
+            "sequence_id_available": update_id is not None,
+            "capture_transport": capture_transport,
         },
+    )
+
+
+def normalize_book_ticker(
+    message: Mapping[str, Any],
+    *,
+    observed_at_ns: int,
+    expected_symbol: str | None = None,
+) -> EventRecord:
+    """Normalize a Binance Spot `<symbol>@bookTicker` WebSocket payload.
+
+    The documented WebSocket bookTicker payload has no exchange timestamp. The
+    canonical event time therefore equals local observation time.
+    """
+
+    if observed_at_ns < 0:
+        raise ValueError("observed_at_ns must be non-negative")
+    data = _unwrap(message)
+    symbol = _symbol(data.get("s"))
+    _check_expected_symbol(symbol, expected_symbol)
+    update_id = _non_negative_int(data.get("u"), "book update id")
+    return _book_record(
+        symbol=symbol,
+        bid_price=_positive_decimal(data.get("b"), "bid price"),
+        bid_quantity=_positive_decimal(data.get("B"), "bid quantity"),
+        ask_price=_positive_decimal(data.get("a"), "ask price"),
+        ask_quantity=_positive_decimal(data.get("A"), "ask quantity"),
+        observed_at_ns=observed_at_ns,
+        update_id=update_id,
+        capture_transport="websocket",
+    )
+
+
+def normalize_rest_book_ticker(
+    message: Mapping[str, Any],
+    *,
+    observed_at_ns: int,
+    expected_symbol: str | None = None,
+) -> EventRecord:
+    """Normalize `GET /api/v3/ticker/bookTicker` for one symbol.
+
+    REST bookTicker exposes neither a source timestamp nor an update ID. Those
+    fields stay explicitly unavailable; no synthetic sequence number is
+    invented.
+    """
+
+    if observed_at_ns < 0:
+        raise ValueError("observed_at_ns must be non-negative")
+    symbol = _symbol(message.get("symbol"))
+    _check_expected_symbol(symbol, expected_symbol)
+    return _book_record(
+        symbol=symbol,
+        bid_price=_positive_decimal(message.get("bidPrice"), "bid price"),
+        bid_quantity=_positive_decimal(message.get("bidQty"), "bid quantity"),
+        ask_price=_positive_decimal(message.get("askPrice"), "ask price"),
+        ask_quantity=_positive_decimal(message.get("askQty"), "ask quantity"),
+        observed_at_ns=observed_at_ns,
+        update_id=None,
+        capture_transport="rest",
     )
