@@ -67,7 +67,7 @@ jobs:
             --decision-lead-ns 10000000000 \
             --binance-latency-ns 500000000 \
             --onchain-latency-ns 1000000000 \
-            --log-chunk-size 5000 \
+            --log-chunk-size 1000 \
             --max-oracle-backtrack-rounds 128 \
             --rpc-timeout-seconds 20 \
             --summary-output artifacts/public-history-summary.json \
