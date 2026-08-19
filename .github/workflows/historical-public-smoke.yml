@@ -43,7 +43,7 @@ jobs:
           print(ReadOnlyJsonRpcClient(os.environ["RPC_URL"], timeout_seconds=20).block_number())
           PY
           )
-          from_block=$((head - 1000))
+          from_block=$((head - 2500))
           to_block=$((head - 100))
           if [[ "$from_block" -le 0 ]]; then
             echo "invalid recent range" >&2
