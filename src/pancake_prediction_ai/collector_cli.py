@@ -15,7 +15,10 @@ from .observed_cycle import run_observed_shadow_cycle
 from .onchain_ingest import collect_and_persist_protocol_snapshot
 from .portable_features import PortableFeaturePolicy
 from .read_only_rpc import ReadOnlyJsonRpcClient
+from .shadow_economic_summary import summarize_shadow_economics
 from .shadow_economics import ShadowEconomicPolicy
+from .shadow_settlement import ShadowSettlementStatus, reconcile_shadow_economic_round
+from .shadow_settlement_batch import reconcile_pending_shadow_economic_rounds
 from .trained_model_artifact import load_promoted_model_artifact
 
 
@@ -133,6 +136,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
     )
 
+    settle = sub.add_parser(
+        "shadow-settle-round",
+        help="Reconcile one paper economic decision against a pinned observed round state",
+    )
+    settle.add_argument("--rpc-url", required=True)
+    settle.add_argument("--round-id", type=_non_negative_int, required=True)
+    settle.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
+
+    settle_pending = sub.add_parser(
+        "shadow-settle-pending",
+        help="Reconcile unresolved paper decisions against one shared current BSC block",
+    )
+    settle_pending.add_argument("--rpc-url", required=True)
+    settle_pending.add_argument("--max-rounds", type=_positive_int)
+    settle_pending.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
+
+    sub.add_parser(
+        "shadow-summary",
+        help="Summarize settled and unresolved multi-round paper economics",
+    )
+
     verify = sub.add_parser("verify-store", help="Verify the Event Store hash chain")
     verify.add_argument(
         "--mode",
@@ -141,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Expected persisted availability mode",
     )
     return parser
+
+
+def _rpc(url: str, timeout_seconds: float) -> ReadOnlyJsonRpcClient:
+    if timeout_seconds <= 0:
+        raise SystemExit("--rpc-timeout-seconds must be positive")
+    return ReadOnlyJsonRpcClient(url, timeout_seconds=timeout_seconds)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -208,8 +238,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise SystemExit("--to-block must be >= --from-block")
             if not 1 <= args.binance_batch_limit <= 1000:
                 raise SystemExit("--binance-batch-limit must be in [1, 1000]")
-            if args.rpc_timeout_seconds <= 0:
-                raise SystemExit("--rpc-timeout-seconds must be positive")
             feature_policy = PortableFeaturePolicy(
                 long_window_ns=args.long_window_ns,
                 short_window_ns=args.short_window_ns,
@@ -226,10 +254,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 store,
                 config=config,
                 binance_client=BinancePublicRestClient(),
-                rpc_client=ReadOnlyJsonRpcClient(
-                    args.rpc_url,
-                    timeout_seconds=args.rpc_timeout_seconds,
-                ),
+                rpc_client=_rpc(args.rpc_url, args.rpc_timeout_seconds),
                 from_block=args.from_block,
                 to_block=args.to_block,
                 symbol=args.symbol,
@@ -252,12 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "protocol-once":
-            if args.rpc_timeout_seconds <= 0:
-                raise SystemExit("--rpc-timeout-seconds must be positive")
-            client = ReadOnlyJsonRpcClient(
-                args.rpc_url,
-                timeout_seconds=args.rpc_timeout_seconds,
-            )
+            client = _rpc(args.rpc_url, args.rpc_timeout_seconds)
             result = collect_and_persist_protocol_snapshot(client, store)
             snapshot = result.snapshot
             print(
@@ -269,8 +289,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "shadow-cycle-once":
             if not 1 <= args.trade_limit <= 1000:
                 raise SystemExit("--trade-limit must be in [1, 1000]")
-            if args.rpc_timeout_seconds <= 0:
-                raise SystemExit("--rpc-timeout-seconds must be positive")
             economic_policy = None
             if args.shadow_stake_wei is not None:
                 economic_policy = ShadowEconomicPolicy(
@@ -286,10 +304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 store,
                 artifact,
                 binance_client=BinancePublicRestClient(),
-                rpc_client=ReadOnlyJsonRpcClient(
-                    args.rpc_url,
-                    timeout_seconds=args.rpc_timeout_seconds,
-                ),
+                rpc_client=_rpc(args.rpc_url, args.rpc_timeout_seconds),
                 symbol=args.symbol,
                 trade_limit=args.trade_limit,
                 economic_policy=economic_policy,
@@ -310,6 +325,60 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"events={cycle.store_event_count} tip={cycle.store_tip_hash}"
             )
             return 0 if inference.accepted else 3
+
+        if args.command == "shadow-settle-round":
+            result = reconcile_shadow_economic_round(
+                store,
+                _rpc(args.rpc_url, args.rpc_timeout_seconds),
+                round_id=args.round_id,
+            )
+            print(
+                f"shadow-settle round={result.round_id} status={result.status.value} "
+                f"resolution={'-' if result.resolution is None else result.resolution.value} "
+                f"pnl_if_executed={result.pnl_if_executed_wei} "
+                f"probability_adjusted_pnl={result.probability_adjusted_pnl_wei} "
+                f"blockers={','.join(result.blockers) or '-'}"
+            )
+            return 4 if result.status is ShadowSettlementStatus.ANOMALY else 0
+
+        if args.command == "shadow-settle-pending":
+            batch = reconcile_pending_shadow_economic_rounds(
+                store,
+                _rpc(args.rpc_url, args.rpc_timeout_seconds),
+                max_rounds=args.max_rounds,
+            )
+            settled = sum(
+                result.status in {ShadowSettlementStatus.SETTLED, ShadowSettlementStatus.ALREADY_SETTLED}
+                for result in batch.results
+            )
+            pending = sum(result.status is ShadowSettlementStatus.PENDING for result in batch.results)
+            anomalies = sum(result.status is ShadowSettlementStatus.ANOMALY for result in batch.results)
+            print(
+                f"shadow-settle-pending attempted={len(batch.attempted_round_ids)} "
+                f"settled={settled} pending={pending} anomalies={anomalies} "
+                f"anchor={'-' if batch.anchor is None else batch.anchor.number}"
+            )
+            return 4 if anomalies else 0
+
+        if args.command == "shadow-summary":
+            summary = summarize_shadow_economics(store)
+            avg_expected = (
+                "-" if summary.average_selected_expected_return is None
+                else f"{summary.average_selected_expected_return:.8f}"
+            )
+            print(
+                f"shadow-summary decisions={summary.decision_rounds} bets={summary.bet_decisions} "
+                f"abstain={summary.abstentions} settled={summary.settled_rounds} "
+                f"unresolved={summary.unresolved_rounds} wins={summary.winning_bets} "
+                f"losses={summary.losing_bets} ties={summary.tie_losses} refunds={summary.refunds} "
+                f"conditional_net_pnl_wei={summary.conditional_net_pnl_wei} "
+                f"conditional_max_drawdown_wei={summary.conditional_max_drawdown_wei} "
+                f"probability_adjusted_net_pnl_wei={summary.probability_adjusted_net_pnl_wei} "
+                f"probability_adjusted_max_drawdown_wei={summary.probability_adjusted_max_drawdown_wei} "
+                f"average_selected_expected_return={avg_expected} "
+                f"claim_or_refund_gas_fully_modeled={summary.claim_or_refund_gas_fully_modeled}"
+            )
+            return 0
 
         if args.command == "verify-store":
             ok = store.verify_chain()
