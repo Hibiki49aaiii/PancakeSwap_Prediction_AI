@@ -187,14 +187,15 @@ def observe_protocol_head_once(
             elif header.parent_hash != previous.block_hash:
                 anomalies.append("parent_hash_mismatch")
 
-    observed_at_ns = clock_ns()
-    if observed_at_ns < 0:
-        raise ValueError("clock returned negative observation time")
-
-    # Same/lower-height reorg conditions are audit-only. Round event IDs include
-    # block number but not block hash, so persisting replacement state at that
-    # height would collide and obscure what was actually observed first.
+    # Same/lower-height reorg conditions are audit-only. They require a local
+    # observation timestamp, but normal new-head snapshots deliberately do not
+    # sample the clock here: the snapshot collector samples exactly once after
+    # all pinned RPC responses have completed, producing a conservative
+    # availability timestamp for every event in that snapshot.
     if previous is not None and header.number <= previous.number:
+        observed_at_ns = clock_ns()
+        if observed_at_ns < 0:
+            raise ValueError("clock returned negative observation time")
         events = [_anchor_event(header, observed_at_ns=observed_at_ns)]
         events.extend(
             _anomaly_event(
