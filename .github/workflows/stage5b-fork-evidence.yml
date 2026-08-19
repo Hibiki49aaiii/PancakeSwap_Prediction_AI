@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 jobs:
-  stage5b-v3:
+  stage5b-v4:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -72,7 +72,7 @@ jobs:
           assert obj["chainlink_oracle"].startswith("0x") and len(obj["chainlink_oracle"]) == 42
           PY
 
-      - name: Produce executed Stage 5B v3 evidence on fresh local BSC fork
+      - name: Produce executed Stage 5B v4 evidence on fresh local BSC fork
         shell: bash
         run: |
           set -euo pipefail
@@ -134,7 +134,7 @@ jobs:
               --local-rpc-url http://127.0.0.1:8545 \
               --upstream-rpc-url "$UPSTREAM_RPC_URL" \
               --min-window-margin-seconds 10 \
-              --output artifacts/stage5b-v3-evidence.json \
+              --output artifacts/stage5b-v4-evidence.json \
               2>&1 | tee artifacts/stage5b-attempt-${attempt}.log
             rc=${PIPESTATUS[0]}
             set -e
@@ -162,9 +162,13 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from pancake_prediction_ai.evidence_gate import Evidence
-          evidence = Evidence.from_path(Path("artifacts/stage5b-v3-evidence.json"))
+          from pancake_prediction_ai.stage5b_source_fingerprint import (
+              capture_stage5b_source_fingerprint,
+          )
+          evidence = Evidence.from_path(Path("artifacts/stage5b-v4-evidence.json"))
           assert evidence.passed is True
-          assert evidence.payload["schema"] == "stage5b_verified_local_bsc_fork_execution_v3"
+          assert evidence.payload["schema"] == "stage5b_verified_local_bsc_fork_execution_v4"
+          assert evidence.payload["generator_source_fingerprint"] == capture_stage5b_source_fingerprint()
           assert evidence.payload["private_key_used"] is False
           assert evidence.payload["raw_signed_transaction_used"] is False
           assert evidence.payload["mainnet_transaction_broadcast"] is False
@@ -175,13 +179,13 @@ jobs:
           assert execution["state_restored_after_bear_reset"] is True
           PY
 
-      - name: Upload Stage 5B v3 evidence
+      - name: Upload Stage 5B v4 evidence
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: stage5b-v3-evidence
+          name: stage5b-v4-evidence
           path: |
-            artifacts/stage5b-v3-evidence.json
+            artifacts/stage5b-v4-evidence.json
             artifacts/protocol-binding.json
           if-no-files-found: error
           retention-days: 30
