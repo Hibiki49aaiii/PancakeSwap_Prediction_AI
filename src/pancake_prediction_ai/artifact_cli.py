@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -14,7 +15,15 @@ from .evaluation_artifact import (
 from .event_store import EventStore
 from .historical_pipeline import HistoricalPipeline, HistoricalPipelineConfig
 from .research_manifest import build_research_run_manifest
-from .shadow_evidence_artifact import build_shadow_economic_evidence_artifact
+from .shadow_evidence_artifact import (
+    build_shadow_economic_evidence_artifact,
+    load_shadow_economic_evidence_artifact,
+)
+from .shadow_gate_evidence import (
+    ShadowGateAcceptancePolicy,
+    build_shadow_gate_evidence,
+    write_shadow_gate_evidence,
+)
 from .tie_prior import TiePriorPolicy
 from .trained_model_artifact import (
     PromotedModelConfig,
@@ -121,6 +130,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shadow.add_argument("--store", type=Path, required=True)
     shadow.add_argument("--output", type=Path, required=True)
+
+    shadow_gate = sub.add_parser(
+        "build-shadow-gate-evidence",
+        help="Evaluate one hybrid shadow artifact against non-weakenable Stage 6A shadow policy requirements",
+    )
+    shadow_gate.add_argument("--shadow-evidence", type=Path, required=True)
+    shadow_gate.add_argument("--output", type=Path, required=True)
+    shadow_gate.add_argument("--min-settled-rounds", type=_positive_int, required=True)
+    shadow_gate.add_argument("--min-conditional-net-pnl-wei", type=int, required=True)
+    shadow_gate.add_argument(
+        "--max-conditional-drawdown-wei",
+        type=_non_negative_int,
+        required=True,
+    )
+    shadow_gate.add_argument(
+        "--min-average-selected-expected-return",
+        type=float,
+        required=True,
+    )
     return parser
 
 
@@ -236,6 +264,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"unresolved={completeness['unresolved_rounds']} "
             f"class={artifact.payload['evidence_classification']['artifact_class']} "
             f"output={args.output}"
+        )
+        return 0
+
+    if args.command == "build-shadow-gate-evidence":
+        artifact = load_shadow_economic_evidence_artifact(args.shadow_evidence)
+        policy = ShadowGateAcceptancePolicy(
+            min_settled_rounds=args.min_settled_rounds,
+            min_conditional_net_pnl_wei=args.min_conditional_net_pnl_wei,
+            max_conditional_drawdown_wei=args.max_conditional_drawdown_wei,
+            min_average_selected_expected_return=(
+                args.min_average_selected_expected_return
+            ),
+        )
+        evidence = build_shadow_gate_evidence(
+            artifact,
+            policy=policy,
+            recorded_at=datetime.now(timezone.utc).isoformat(),
+        )
+        write_shadow_gate_evidence(evidence, args.output)
+        print(
+            f"shadow-gate-evidence sha256={evidence.artifact_sha256} "
+            f"passed={evidence.passed} blockers={','.join(evidence.payload['blockers']) or '-'} "
+            f"origin={evidence.origin.value} output={args.output}"
         )
         return 0
 
