@@ -66,35 +66,35 @@ def test_duplicate_lifecycle_event_is_hard_failure() -> None:
         build_round_timelines([start, replace(start, event_id="other")])
 
 
+def _observation() -> RoundLifecycleObservation:
+    event = EventRecord(
+        event_id="raw-start",
+        source="pancake_prediction",
+        topic="prediction.round_lifecycle",
+        event_time_ns=1_000_000_000_000,
+        observed_at_ns=9_000_000_000_000,
+        payload={"kind": "START", "epoch": 1, "price": None},
+    )
+    return RoundLifecycleObservation(
+        kind=LifecycleKind.START,
+        epoch=1,
+        block_number=10,
+        block_hash="0x" + "ab" * 32,
+        block_timestamp_s=1000,
+        transaction_hash="0x" + "cd" * 32,
+        log_index=0,
+        oracle_round_id=None,
+        price=None,
+        event=event,
+    )
+
+
 def test_lifecycle_backfill_reconstructs_block_availability_and_chunks_atomically(tmp_path, monkeypatch) -> None:
     calls = []
 
     def fake_collect(client, *, from_block, to_block, prediction_contract):
         calls.append((from_block, to_block))
-        if from_block == 10:
-            event = EventRecord(
-                event_id="raw-start",
-                source="pancake_prediction",
-                topic="prediction.round_lifecycle",
-                event_time_ns=1_000_000_000_000,
-                observed_at_ns=9_000_000_000_000,
-                payload={"kind": "START", "epoch": 1, "price": None},
-            )
-            return (
-                RoundLifecycleObservation(
-                    kind=LifecycleKind.START,
-                    epoch=1,
-                    block_number=10,
-                    block_hash="0x" + "ab" * 32,
-                    block_timestamp_s=1000,
-                    transaction_hash="0x" + "cd" * 32,
-                    log_index=0,
-                    oracle_round_id=None,
-                    price=None,
-                    event=event,
-                ),
-            )
-        return ()
+        return (_observation(),) if from_block == 10 else ()
 
     monkeypatch.setattr(
         "pancake_prediction_ai.round_history.collect_round_lifecycle_logs",
@@ -120,3 +120,36 @@ def test_lifecycle_backfill_reconstructs_block_availability_and_chunks_atomicall
         assert store.verify_chain()
 
     assert calls == [(10, 11), (12, 13), (14, 14)]
+
+
+def test_lifecycle_backfill_retry_is_idempotent(tmp_path, monkeypatch) -> None:
+    def fake_collect(client, *, from_block, to_block, prediction_contract):
+        return (_observation(),)
+
+    monkeypatch.setattr(
+        "pancake_prediction_ai.round_history.collect_round_lifecycle_logs",
+        fake_collect,
+    )
+    with EventStore(tmp_path / "history.sqlite", mode="reconstructed") as store:
+        first = backfill_round_lifecycle_logs(
+            object(),  # type: ignore[arg-type]
+            store,
+            dataset_id="retry-v1",
+            from_block=10,
+            to_block=10,
+            assumed_latency_ns=2_000_000_000,
+        )
+        original_hash = store.read_all_ingest_order()[0].event_hash
+        second = backfill_round_lifecycle_logs(
+            object(),  # type: ignore[arg-type]
+            store,
+            dataset_id="retry-v1",
+            from_block=10,
+            to_block=10,
+            assumed_latency_ns=2_000_000_000,
+        )
+        assert first.events_appended == 1
+        assert second.events_appended == 0
+        assert len(store.read_all_ingest_order()) == 1
+        assert store.read_all_ingest_order()[0].event_hash == original_hash
+        assert store.verify_chain()
