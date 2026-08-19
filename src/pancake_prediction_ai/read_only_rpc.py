@@ -18,6 +18,7 @@ READ_ONLY_RPC_METHODS = frozenset(
         "eth_getLogs",
     }
 )
+DEFAULT_USER_AGENT = "pancake-prediction-ai/0.7 read-only-json-rpc"
 
 
 class RpcError(RuntimeError):
@@ -66,7 +67,11 @@ class ReadOnlyJsonRpcClient:
         request = Request(
             self.endpoint,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": DEFAULT_USER_AGENT,
+            },
             method="POST",
         )
         raw = self.transport(request, self.timeout_seconds)
