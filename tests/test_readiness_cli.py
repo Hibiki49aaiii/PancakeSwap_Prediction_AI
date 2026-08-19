@@ -57,7 +57,7 @@ class FakeUpstreamRpc:
 
 def _fixture_evidence() -> Evidence:
     payload: dict[str, object] = {
-        "schema": "stage5b_verified_local_bsc_fork_execution_v3",
+        "schema": "stage5b_verified_local_bsc_fork_execution_v4",
         "probe_type": "verified_local_bsc_fork_prediction_execution",
     }
     digest = hashlib.sha256(
@@ -161,7 +161,7 @@ def test_stage5b_execution_command_composes_provenance_execution_and_writer(
     monkeypatch.setattr(readiness_cli, "make_stage5b_execution_evidence", fake_build)
     monkeypatch.setattr(readiness_cli, "write_stage5b_evidence", fake_write)
 
-    output = tmp_path / "stage5b-v3.json"
+    output = tmp_path / "stage5b-v4.json"
     result = run_stage5b_execution_command(
         local_rpc=lambda method, params: None,
         upstream_rpc=lambda method, params: None,
