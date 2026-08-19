@@ -5,7 +5,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,46 +99,84 @@ class EventStore:
         ).encode()
 
     @staticmethod
-    def _hash(prev_hash: str, canonical_body: bytes) -> str:
-        return hashlib.sha256(prev_hash.encode() + b"|" + canonical_body).hexdigest()
-
-    def append(self, event: EventRecord) -> StoredEvent:
-        event.validate()
-        canonical = self._canonical_body(event)
-        payload_json = json.dumps(
+    def _payload_json(event: EventRecord) -> str:
+        return json.dumps(
             event.payload,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         )
-        row = self._conn.execute(
-            "SELECT event_hash FROM events ORDER BY ingest_seq DESC LIMIT 1"
-        ).fetchone()
-        prev_hash = str(row[0]) if row else "GENESIS"
-        event_hash = self._hash(prev_hash, canonical)
+
+    @staticmethod
+    def _hash(prev_hash: str, canonical_body: bytes) -> str:
+        return hashlib.sha256(prev_hash.encode() + b"|" + canonical_body).hexdigest()
+
+    def append(self, event: EventRecord) -> StoredEvent:
+        return self.append_many((event,))[0]
+
+    def append_many(self, events: Iterable[EventRecord]) -> tuple[StoredEvent, ...]:
+        """Append one logical event batch atomically while extending the hash chain.
+
+        Every event is validated before the transaction starts. If any insert in
+        the batch conflicts or fails, SQLite rolls the entire batch back; a
+        consumer can therefore never observe a partial protocol snapshot.
+        """
+
+        batch = tuple(events)
+        if not batch:
+            return ()
+        for event in batch:
+            event.validate()
+        event_ids = [event.event_id for event in batch]
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("duplicate event_id inside append batch")
+
+        stored: list[StoredEvent] = []
         try:
-            cur = self._conn.execute(
-                """
-                INSERT INTO events(
-                    event_id, source, topic, event_time_ns, observed_at_ns,
-                    payload_json, prev_hash, event_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.event_id,
-                    event.source,
-                    event.topic,
-                    event.event_time_ns,
-                    event.observed_at_ns,
-                    payload_json,
-                    prev_hash,
-                    event_hash,
-                ),
-            )
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT event_hash FROM events ORDER BY ingest_seq DESC LIMIT 1"
+            ).fetchone()
+            prev_hash = str(row[0]) if row else "GENESIS"
+
+            for event in batch:
+                canonical = self._canonical_body(event)
+                event_hash = self._hash(prev_hash, canonical)
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO events(
+                        event_id, source, topic, event_time_ns, observed_at_ns,
+                        payload_json, prev_hash, event_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_id,
+                        event.source,
+                        event.topic,
+                        event.event_time_ns,
+                        event.observed_at_ns,
+                        self._payload_json(event),
+                        prev_hash,
+                        event_hash,
+                    ),
+                )
+                stored.append(
+                    StoredEvent(
+                        ingest_seq=int(cur.lastrowid),
+                        event=event,
+                        prev_hash=prev_hash,
+                        event_hash=event_hash,
+                    )
+                )
+                prev_hash = event_hash
             self._conn.commit()
         except sqlite3.IntegrityError as exc:
-            raise ValueError(f"duplicate or conflicting event: {event.event_id}") from exc
-        return StoredEvent(int(cur.lastrowid), event, prev_hash, event_hash)
+            self._conn.rollback()
+            raise ValueError("duplicate or conflicting event in append batch") from exc
+        except Exception:
+            self._conn.rollback()
+            raise
+        return tuple(stored)
 
     @staticmethod
     def _decode_row(row: tuple[object, ...]) -> StoredEvent:
