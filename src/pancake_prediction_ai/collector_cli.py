@@ -9,8 +9,10 @@ from .binance_public_rest import BinancePublicRestClient
 from .binance_websocket import BinanceMarketWebSocketIngestor, run_reconnecting_market_stream
 from .event_store import EventStore
 from .historical_binance import backfill_binance_aggregate_trades
+from .observed_cycle import run_observed_shadow_cycle
 from .onchain_ingest import collect_and_persist_protocol_snapshot
 from .read_only_rpc import ReadOnlyJsonRpcClient
+from .trained_model_artifact import load_promoted_model_artifact
 
 
 def _positive_int(value: str) -> int:
@@ -64,6 +66,16 @@ def build_parser() -> argparse.ArgumentParser:
     protocol = sub.add_parser("protocol-once", help="Collect one pinned Pancake + Chainlink BSC snapshot")
     protocol.add_argument("--rpc-url", required=True)
     protocol.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
+
+    cycle = sub.add_parser(
+        "shadow-cycle-once",
+        help="Collect Binance + pinned BSC observations and run one promoted-model shadow inference",
+    )
+    cycle.add_argument("--rpc-url", required=True)
+    cycle.add_argument("--model-artifact", type=Path, required=True)
+    cycle.add_argument("--symbol", default="BNBUSDT")
+    cycle.add_argument("--trade-limit", type=_positive_int, default=1000)
+    cycle.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
 
     verify = sub.add_parser("verify-store", help="Verify the Event Store hash chain")
     verify.add_argument(
@@ -149,6 +161,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"oracle={snapshot.oracle_address} events={len(result.stored_events)}"
             )
             return 0
+
+        if args.command == "shadow-cycle-once":
+            if not 1 <= args.trade_limit <= 1000:
+                raise SystemExit("--trade-limit must be in [1, 1000]")
+            if args.rpc_timeout_seconds <= 0:
+                raise SystemExit("--rpc-timeout-seconds must be positive")
+            artifact = load_promoted_model_artifact(args.model_artifact)
+            cycle = run_observed_shadow_cycle(
+                store,
+                artifact,
+                binance_client=BinancePublicRestClient(),
+                rpc_client=ReadOnlyJsonRpcClient(
+                    args.rpc_url,
+                    timeout_seconds=args.rpc_timeout_seconds,
+                ),
+                symbol=args.symbol,
+                trade_limit=args.trade_limit,
+            )
+            inference = cycle.inference
+            print(
+                f"shadow-cycle epoch={cycle.protocol.snapshot.current_epoch} "
+                f"accepted={inference.accepted} blockers={','.join(inference.blockers) or '-'} "
+                f"outcome={inference.predicted_outcome or '-'} "
+                f"events={cycle.store_event_count} tip={cycle.store_tip_hash}"
+            )
+            return 0 if inference.accepted else 3
 
         if args.command == "verify-store":
             ok = store.verify_chain()
