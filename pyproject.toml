@@ -18,6 +18,7 @@ ppai-collector = "pancake_prediction_ai.collector_cli:main"
 ppai-artifact = "pancake_prediction_ai.artifact_cli:main"
 ppai-readiness = "pancake_prediction_ai.readiness_cli:main"
 ppai-historical-public = "pancake_prediction_ai.historical_public_cli:main"
+ppai-historical-subgraph = "pancake_prediction_ai.historical_subgraph_cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
