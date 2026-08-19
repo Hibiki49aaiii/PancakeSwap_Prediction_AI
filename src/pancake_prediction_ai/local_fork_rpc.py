@@ -14,10 +14,18 @@ LOCAL_FORK_RPC_METHODS = frozenset(
         "eth_blockNumber",
         "eth_getBlockByNumber",
         "eth_getCode",
+        "eth_call",
+        "eth_getTransactionReceipt",
+        "eth_sendTransaction",
         "evm_mine",
         "anvil_reset",
+        "anvil_impersonateAccount",
+        "anvil_stopImpersonatingAccount",
+        "anvil_setBalance",
     }
 )
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class LocalForkRpcError(RuntimeError):
@@ -28,18 +36,19 @@ Transport = Callable[[Request, float], bytes]
 
 
 def _default_transport(request: Request, timeout: float) -> bytes:
-    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - endpoint is explicitly configured
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - loopback endpoint is validated
         return response.read()
 
 
 @dataclass(slots=True)
 class LocalForkJsonRpcClient:
-    """JSON-RPC client restricted to local fork inspection/mutation methods.
+    """JSON-RPC client for a loopback-only local development fork.
 
-    The allowlist intentionally excludes account access, signing, transaction
-    creation and transaction broadcasting. The only mutating calls are Anvil/
-    EVM development-node controls used to mine one local block and reset the
-    local fork. Pointing this client at a mainnet RPC does not enable broadcast.
+    The client may submit an unsigned `eth_sendTransaction` only to a loopback
+    development node, using an account unlocked/impersonated by that node. It
+    never accepts a private key and never permits raw signed transactions or
+    signing RPC methods. An upstream/mainnet RPC must use the separate read-only
+    client and therefore cannot receive these local execution calls.
     """
 
     endpoint: str
@@ -51,6 +60,10 @@ class LocalForkJsonRpcClient:
         parsed = urlparse(self.endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("local fork JSON-RPC endpoint must be an http(s) URL")
+        if parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("local fork JSON-RPC endpoint must use a loopback host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("local fork JSON-RPC endpoint must not contain credentials")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
@@ -91,7 +104,9 @@ class LocalForkJsonRpcClient:
             if isinstance(error, dict):
                 code = error.get("code")
                 message = error.get("message")
-                raise LocalForkRpcError(f"RPC error {code}: {message}")
+                data = error.get("data")
+                suffix = f" data={data}" if data is not None else ""
+                raise LocalForkRpcError(f"RPC error {code}: {message}{suffix}")
             raise LocalForkRpcError(f"RPC error: {error}")
         if "result" not in response:
             raise LocalForkRpcError("RPC response missing result")
