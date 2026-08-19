@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
@@ -27,6 +28,52 @@ def test_read_only_rpc_parses_chain_id_and_sets_explicit_http_headers() -> None:
     client = ReadOnlyJsonRpcClient("http://127.0.0.1:8545", timeout_seconds=3.0, transport=transport)
     assert client.chain_id() == 56
     assert seen[0]["method"] == "eth_chainId"
+
+
+def test_eth_getlogs_http_403_is_split_until_provider_accepts_range() -> None:
+    seen_ranges: list[tuple[int, int]] = []
+
+    def transport(request: Request, timeout: float) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        filter_ = payload["params"][0]
+        start = int(filter_["fromBlock"], 16)
+        end = int(filter_["toBlock"], 16)
+        seen_ranges.append((start, end))
+        if end - start + 1 > 2:
+            raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
+        rows = [{"blockNumber": hex(block)} for block in range(start, end + 1)]
+        return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": rows}).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    result = client.call(
+        "eth_getLogs",
+        [{"fromBlock": "0xa", "toBlock": "0xd", "topics": [["0xabc"]]}],
+    )
+    assert [int(row["blockNumber"], 16) for row in result] == [10, 11, 12, 13]
+    assert seen_ranges == [(10, 13), (10, 11), (12, 13)]
+
+
+def test_eth_getlogs_rpc_range_limit_is_split_but_other_rpc_errors_are_not() -> None:
+    def transport(request: Request, timeout: float) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        filter_ = payload["params"][0]
+        start = int(filter_["fromBlock"], 16)
+        end = int(filter_["toBlock"], 16)
+        if end > start:
+            return json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "error": {"code": -32602, "message": "eth_getLogs is limited to 0 - 1 blocks range"},
+                }
+            ).encode()
+        return json.dumps(
+            {"jsonrpc": "2.0", "id": payload["id"], "result": [{"blockNumber": hex(start)}]}
+        ).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    result = client.call("eth_getLogs", [{"fromBlock": "0x1", "toBlock": "0x2"}])
+    assert [row["blockNumber"] for row in result] == ["0x1", "0x2"]
 
 
 @pytest.mark.parametrize(
