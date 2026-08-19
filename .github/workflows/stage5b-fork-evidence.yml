@@ -113,6 +113,23 @@ jobs:
             fi
 
             set +e
+            ppai-readiness stage5b-verify-fork \
+              --local-rpc-url http://127.0.0.1:8545 \
+              --upstream-rpc-url "$UPSTREAM_RPC_URL" \
+              --output artifacts/stage5b-provenance-${attempt}.json \
+              2>&1 | tee artifacts/stage5b-provenance-${attempt}.log
+            provenance_rc=${PIPESTATUS[0]}
+            set -e
+            if [[ -f artifacts/stage5b-provenance-${attempt}.json ]]; then
+              echo "=== Stage5B provenance JSON ===" | tee -a artifacts/stage5b-provenance-${attempt}.log
+              cat artifacts/stage5b-provenance-${attempt}.json | tee -a artifacts/stage5b-provenance-${attempt}.log
+            fi
+            if [[ "$provenance_rc" -ne 0 ]]; then
+              echo "Stage5B provenance failed with exit code $provenance_rc" >&2
+              exit "$provenance_rc"
+            fi
+
+            set +e
             ppai-readiness stage5b-execute-fork \
               --local-rpc-url http://127.0.0.1:8545 \
               --upstream-rpc-url "$UPSTREAM_RPC_URL" \
@@ -178,6 +195,8 @@ jobs:
             artifacts/protocol-binding-debug.log
             artifacts/protocol-binding.json
             artifacts/anvil.log
+            artifacts/stage5b-provenance-*.json
+            artifacts/stage5b-provenance-*.log
             artifacts/stage5b-attempt-*.log
           if-no-files-found: warn
           retention-days: 14
