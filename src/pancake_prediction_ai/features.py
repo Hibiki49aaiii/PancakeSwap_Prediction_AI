@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .event_store import StoredEvent
@@ -33,7 +35,7 @@ class CoreFeatures:
             "trade_count": float(self.trade_count),
             "pancake_bull_share": self.pancake_bull_share,
             "pancake_pool_imbalance": self.pancake_pool_imbalance,
-            "pancake_total_amount_wei": float(self.pancake_total_amount_wei),
+            "pancake_log_total_amount": math.log1p(self.pancake_total_amount_wei),
             "time_to_lock_seconds": self.time_to_lock_seconds,
         }
 
@@ -46,13 +48,22 @@ def _latest(snapshot: ReplaySnapshot, *, source: str, topic: str) -> StoredEvent
     return items[-1]
 
 
-def _numeric(payload: object, field: str) -> float:
-    if not isinstance(payload, dict) or field not in payload:
+def _numeric(payload: Mapping[str, object], field: str) -> float:
+    if field not in payload:
         raise ValueError(f"missing numeric payload field: {field}")
     value = payload[field]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"payload field is not numeric: {field}")
     return float(value)
+
+
+def _integer(payload: Mapping[str, object], field: str) -> int:
+    if field not in payload:
+        raise ValueError(f"missing integer payload field: {field}")
+    value = payload[field]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"payload field is not an integer: {field}")
+    return value
 
 
 def build_core_features(
@@ -101,7 +112,7 @@ def build_core_features(
         payload = item.event.payload
         price = _numeric(payload, "price")
         quantity = _numeric(payload, "quantity")
-        buyer_is_maker = payload.get("buyer_is_maker") if isinstance(payload, dict) else None
+        buyer_is_maker = payload.get("buyer_is_maker")
         if not isinstance(buyer_is_maker, bool):
             raise ValueError("agg trade buyer_is_maker must be boolean")
         notional = price * quantity
@@ -111,9 +122,9 @@ def build_core_features(
         trade_count += 1
     aggressor_flow_ratio = signed_notional / total_notional if total_notional > 0 else 0.0
 
-    bull = int(_numeric(round_snapshot.event.payload, "bull_amount_wei"))
-    bear = int(_numeric(round_snapshot.event.payload, "bear_amount_wei"))
-    total = int(_numeric(round_snapshot.event.payload, "total_amount_wei"))
+    bull = _integer(round_snapshot.event.payload, "bull_amount_wei")
+    bear = _integer(round_snapshot.event.payload, "bear_amount_wei")
+    total = _integer(round_snapshot.event.payload, "total_amount_wei")
     if bull < 0 or bear < 0 or total < 0 or bull + bear != total:
         raise ValueError("Pancake pool snapshot invariant failed")
     if total == 0:
