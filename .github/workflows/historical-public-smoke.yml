@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      RPC_URL: https://bsc-rpc.publicnode.com
+      RPC_URL: https://bsc-dataseed.bnbchain.org
       DATASET_ID: public-history-smoke-${{ github.run_id }}
 
     steps:
@@ -38,8 +38,9 @@ jobs:
         run: |
           set -euo pipefail
           head=$(python - <<'PY'
+          import os
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
-          print(ReadOnlyJsonRpcClient("https://bsc-rpc.publicnode.com", timeout_seconds=20).block_number())
+          print(ReadOnlyJsonRpcClient(os.environ["RPC_URL"], timeout_seconds=20).block_number())
           PY
           )
           from_block=$((head - 20000))
