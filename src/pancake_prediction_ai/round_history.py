@@ -31,9 +31,20 @@ class RoundTimeline:
     outcome: Outcome
     lock_available_at_ns: int
     label_available_at_ns: int
+    scheduled_lock_timestamp_ns: int | None = None
 
     @property
     def lock_timestamp_ns(self) -> int:
+        """Decision-time lock timestamp.
+
+        When the configured interval is known, this is the lock timestamp that
+        was fixed when StartRound executed (`startTimestamp + intervalSeconds`).
+        Falling back to the later LockRound event timestamp is retained only for
+        legacy callers that have not supplied interval configuration.
+        """
+
+        if self.scheduled_lock_timestamp_ns is not None:
+            return self.scheduled_lock_timestamp_ns
         return self.lock_event.event_time_ns
 
     @property
@@ -141,7 +152,21 @@ def _price(event: EventRecord, field: str) -> int:
     return value
 
 
-def build_round_timelines(events: Iterable[EventRecord]) -> RoundTimelineBuildResult:
+def build_round_timelines(
+    events: Iterable[EventRecord],
+    *,
+    interval_seconds: int | None = None,
+) -> RoundTimelineBuildResult:
+    """Build completed START/LOCK/END timelines.
+
+    Supplying `interval_seconds` makes the decision timestamp leakage-safe: the
+    scheduled lock is reconstructed from information fixed at StartRound rather
+    than from the later operator transaction that emitted LockRound.
+    """
+
+    if interval_seconds is not None and interval_seconds <= 0:
+        raise ValueError("interval_seconds must be positive when supplied")
+
     grouped: dict[int, dict[LifecycleKind, EventRecord]] = {}
     for event in events:
         if event.source != "pancake_prediction" or event.topic != "prediction.round_lifecycle":
@@ -168,6 +193,14 @@ def build_round_timelines(events: Iterable[EventRecord]) -> RoundTimelineBuildRe
         if not (start.observed_at_ns <= lock.observed_at_ns <= end.observed_at_ns):
             raise ValueError(f"non-chronological lifecycle availability for epoch {epoch}")
 
+        scheduled_lock_timestamp_ns = None
+        if interval_seconds is not None:
+            scheduled_lock_timestamp_ns = start.event_time_ns + interval_seconds * 1_000_000_000
+            if scheduled_lock_timestamp_ns > lock.event_time_ns:
+                raise ValueError(
+                    f"LockRound for epoch {epoch} occurred before its scheduled lock timestamp"
+                )
+
         lock_price = _price(lock, "LOCK")
         close_price = _price(end, "END")
         if close_price > lock_price:
@@ -188,6 +221,7 @@ def build_round_timelines(events: Iterable[EventRecord]) -> RoundTimelineBuildRe
                 outcome=outcome,
                 lock_available_at_ns=lock.observed_at_ns,
                 label_available_at_ns=end.observed_at_ns,
+                scheduled_lock_timestamp_ns=scheduled_lock_timestamp_ns,
             )
         )
 
