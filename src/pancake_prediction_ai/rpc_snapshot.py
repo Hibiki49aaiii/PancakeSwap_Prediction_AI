@@ -35,22 +35,75 @@ def _hex_int(value: object, field: str) -> int:
     return int(value, 16)
 
 
-def fetch_block_anchor(client: ReadOnlyJsonRpcClient) -> BlockAnchor:
-    """Capture a concrete block and use that number for all subsequent reads."""
-
-    number = client.block_number()
-    tag = hex(number)
+def fetch_block_anchor_by_number(
+    client: ReadOnlyJsonRpcClient,
+    block_number: int,
+) -> BlockAnchor:
+    if block_number < 0:
+        raise ValueError("block_number must be non-negative")
+    tag = hex(block_number)
     result = client.call("eth_getBlockByNumber", [tag, False])
+    if result is None:
+        raise RpcError(f"block {block_number} is unavailable from RPC")
     if not isinstance(result, dict):
         raise RpcError("eth_getBlockByNumber must return an object")
     returned_number = _hex_int(result.get("number"), "block.number")
-    if returned_number != number:
+    if returned_number != block_number:
         raise RpcError("block number changed inside pinned block response")
     block_hash = result.get("hash")
     timestamp_s = _hex_int(result.get("timestamp"), "block.timestamp")
-    anchor = BlockAnchor(number=number, block_hash=str(block_hash), timestamp_s=timestamp_s)
+    anchor = BlockAnchor(
+        number=block_number,
+        block_hash=str(block_hash),
+        timestamp_s=timestamp_s,
+    )
     anchor.validate()
     return anchor
+
+
+def fetch_block_anchor(client: ReadOnlyJsonRpcClient) -> BlockAnchor:
+    """Capture the current concrete block and pin subsequent reads to it."""
+
+    return fetch_block_anchor_by_number(client, client.block_number())
+
+
+def find_block_at_or_before_timestamp(
+    client: ReadOnlyJsonRpcClient,
+    *,
+    target_timestamp_s: int,
+    lower_block: int,
+    upper_block: int,
+) -> BlockAnchor:
+    """Binary-search an RPC block range for the latest block not after target.
+
+    The caller supplies explicit search bounds so this helper never silently
+    assumes archive depth or contract deployment history.
+    """
+
+    if target_timestamp_s <= 0:
+        raise ValueError("target_timestamp_s must be positive")
+    if lower_block < 0 or upper_block < lower_block:
+        raise ValueError("invalid block search bounds")
+
+    lower_anchor = fetch_block_anchor_by_number(client, lower_block)
+    upper_anchor = fetch_block_anchor_by_number(client, upper_block)
+    if target_timestamp_s < lower_anchor.timestamp_s:
+        raise ValueError("target timestamp predates lower block bound")
+    if target_timestamp_s >= upper_anchor.timestamp_s:
+        return upper_anchor
+
+    low = lower_block
+    high = upper_block
+    best = lower_anchor
+    while low <= high:
+        mid = (low + high) // 2
+        anchor = fetch_block_anchor_by_number(client, mid)
+        if anchor.timestamp_s <= target_timestamp_s:
+            best = anchor
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
 
 
 def eth_call_at(
