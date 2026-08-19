@@ -44,13 +44,13 @@ Event Store -> deterministic replay -> data quality -> feature families
 | 2 | Cost-aware evaluation | **3-outcome EV, metrics, feature family v0.1, baseline model implemented** |
 | 3 | Purged OOS | **Label-availability-safe folds, calibration split and train-only TIE prior implemented** |
 | 4 | Paper / Shadow | **Observed collection, promoted-model inference, EV decision, later settlement/reconcile/summary and hash-bound HYBRID evidence implemented; real multi-round evidence still required** |
-| 5A | Durable execution fault model | **SQLite restart/nonce/UNKNOWN/finalization drill, schema-bound evidence and CLI implemented; target-runtime evidence must be produced explicitly** |
-| 5B | BSC fork execution | **Upstream-verified local-fork harness and CLI implemented; BLOCKED until actual local BSC fork evidence is recorded** |
-| 6A | Tiny-live safety preflight | **Schema-bound Stage5 + qualified HYBRID shadow gate implemented; generic observed JSON cannot clear it** |
+| 5A | Durable execution fault model | **SQLite restart/nonce/UNKNOWN/finalization drill, runtime-bound schema evidence and CLI implemented; target-runtime evidence must be produced explicitly** |
+| 5B | BSC fork execution | **Upstream-verified, target-contract-bound local-fork harness and CLI implemented; BLOCKED until actual local BSC fork evidence is recorded** |
+| 6A | Tiny-live safety preflight | **Schema/runtime/protocol-bound Stage5 + qualified HYBRID shadow gate implemented; generic observed JSON cannot clear it** |
 | 6B | Funded validation | Not implemented |
 | 7 | Production | Not reached |
 
-Latest verified code checkpoint before this documentation update: **294/294 tests passed** on GitHub Actions for head `d783300c131ebd5555e4d0a3525256a18b977f99`.
+Latest verified code checkpoint: **316/316 tests passed** on GitHub Actions for head `5f4a56e457a8e044e830d6d6bd8a2ad1713f40de`.
 
 ## Protocol normalization
 
@@ -199,7 +199,9 @@ Primary probability diagnostics include multiclass Brier score, multiclass log l
 - cleanup of the nonce-reuse intent;
 - zero unresolved intents at drill completion.
 
-The drill uses synthetic nonces and transaction hashes. It creates, signs and broadcasts no blockchain transaction. Its evidence payload is SHA-256-bound with schema `stage5a_execution_drill_v1`.
+The drill uses synthetic nonces and transaction hashes. It creates, signs and broadcasts no blockchain transaction.
+
+Stage 5A schema `stage5a_execution_drill_v2` additionally embeds a canonical `execution_runtime_fingerprint_v1` covering Python implementation/version, OS/release/architecture, SQLite library/source ID and sorted SQLite compile options. Hostname, username, machine ID and filesystem path are intentionally excluded. Stage 6A recomputes the current runtime fingerprint and rejects Stage 5A evidence from a different runtime stack.
 
 ### Stage 5B verified local BSC fork
 
@@ -214,7 +216,9 @@ A local node reporting `chainId=56` is not sufficient evidence of a BSC fork.
 - `anvil_reset` returns to the same fork base;
 - post-reset block hash and bytecode still match upstream.
 
-Only that verified path can produce `passed=true` Stage 5B evidence. The legacy local-only mechanics probe may pass locally but its Stage 5B gate evidence remains failed because upstream provenance is missing.
+Stage 5B schema `stage5b_verified_local_bsc_fork_v2` also records the exact Prediction contract and Chainlink oracle addresses used by the probe. Stage 6A requires the Prediction address to equal the canonical BNB Prediction target and the evidence Chainlink address to equal the oracle bound by the current preflight state.
+
+Only the verified path can produce `passed=true` Stage 5B evidence. The legacy local-only mechanics probe may pass locally but its Stage 5B gate evidence remains failed because upstream provenance is missing.
 
 `LocalForkJsonRpcClient` has a narrow allowlist containing only chain/block/code inspection plus local `evm_mine` and `anvil_reset`. Account access, signing, `eth_sendTransaction` and `eth_sendRawTransaction` are rejected before transport.
 
@@ -224,12 +228,14 @@ Stage 6A can only become ready when all three evidence families and runtime safe
 
 Required evidence:
 
-- Stage 5A: `origin=observed`, `passed=true`, correct `stage5a_execution_drill_v1` schema, all durability checks true, zero unresolved intents and no transaction/signing/broadcast activity;
-- Stage 5B: `origin=observed`, `passed=true`, correct `stage5b_verified_local_bsc_fork_v1` schema, upstream block-hash/bytecode provenance matches and no signing/mainnet broadcast activity;
+- Stage 5A: `origin=observed`, `passed=true`, correct `stage5a_execution_drill_v2` schema, all durability checks true, zero unresolved intents, no transaction/signing/broadcast activity, and an execution runtime fingerprint equal to the runtime evaluating preflight;
+- Stage 5B: `origin=observed`, `passed=true`, correct `stage5b_verified_local_bsc_fork_v2` schema, upstream block-hash/bytecode provenance matches, exact target contract addresses match current protocol binding, and no signing/mainnet broadcast activity;
 - Shadow economics: `origin=hybrid`, qualified `shadow_gate_evidence_v1`, minimum settled-round/PnL/expected-return criteria, drawdown bound, all represented decisions settled, and claim/refund gas fully modeled when required.
 
 Runtime preflight additionally requires:
 
+- canonical Prediction contract binding;
+- a syntactically valid active Chainlink oracle binding matching Stage 5B evidence;
 - kill switch armed;
 - wallet binding OK;
 - per-round cap OK;
@@ -239,7 +245,9 @@ Runtime preflight additionally requires:
 - signing disabled during preflight;
 - mainnet broadcasting disabled during preflight.
 
-The gate recomputes payload SHA-256 and revalidates the stage-specific schema. Generic `origin=observed, passed=true` JSON, `assumed`, `self_reported`, or misclassified shadow evidence cannot clear the gate.
+The gate recomputes payload SHA-256 and revalidates the stage-specific schema. Generic `origin=observed, passed=true` JSON, `assumed`, `self_reported`, misclassified shadow evidence, evidence from another runtime stack, and fork evidence for another protocol address cannot clear the gate.
+
+`Evidence.from_json_bytes` also requires strict JSON top-level types. In particular, `passed` must be a real JSON boolean; truthy strings such as `"false"` cannot be coerced into a pass.
 
 ## Collector CLI
 
@@ -345,8 +353,8 @@ Still required before any Stage 6B funded-validation decision:
 
 - real reconstructed historical/OOS metrics from the current three-outcome pipeline;
 - real multi-round observed-market HYBRID shadow economics with all rounds settled and costs fully modeled;
-- explicit Stage 5A evidence from the intended validation runtime;
-- actual upstream-verified local BSC fork Stage 5B evidence;
+- explicit Stage 5A v2 evidence generated on the runtime that will evaluate preflight;
+- actual upstream-verified and target-contract-bound local BSC fork Stage 5B v2 evidence;
 - a Stage 6A preflight pass with signing and mainnet broadcasting still disabled.
 
 ## Next development phase
@@ -359,7 +367,7 @@ Phase 4.3 is now primarily evidence production:
 4. establish baseline three-outcome OOS metrics;
 5. accumulate, settle and freeze enough observed-market HYBRID shadow rounds to evaluate economics;
 6. run `ppai-readiness stage5a-drill` on the intended validation runtime;
-7. run the Stage 5B verifier against a genuine local BSC fork;
+7. run the Stage 5B verifier against a genuine local BSC fork using the canonical Prediction target and active oracle;
 8. only then evaluate Stage 6A readiness.
 
 ## Development rule
