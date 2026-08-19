@@ -47,7 +47,23 @@ class Evidence:
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             raise ValueError("evidence JSON must be an object")
-        declared = str(obj.get("artifact_sha256", ""))
+
+        kind_value = obj.get("kind")
+        origin_value = obj.get("origin")
+        passed_value = obj.get("passed")
+        recorded_at_value = obj.get("recorded_at")
+        declared_value = obj.get("artifact_sha256")
+        if not isinstance(kind_value, str):
+            raise ValueError("kind must be a string")
+        if not isinstance(origin_value, str):
+            raise ValueError("origin must be a string")
+        if not isinstance(passed_value, bool):
+            raise ValueError("passed must be a boolean")
+        if not isinstance(recorded_at_value, str) or not recorded_at_value:
+            raise ValueError("recorded_at must be a non-empty string")
+        if not isinstance(declared_value, str):
+            raise ValueError("artifact_sha256 must be a string")
+
         payload = obj.get("payload")
         if not isinstance(payload, dict):
             raise ValueError("payload must be an object")
@@ -58,14 +74,14 @@ class Evidence:
             allow_nan=False,
         ).encode()
         actual = hashlib.sha256(canonical).hexdigest()
-        if declared != actual:
+        if declared_value != actual:
             raise ValueError("artifact_sha256 does not match canonical payload")
         return cls(
-            kind=EvidenceKind(str(obj["kind"])),
-            origin=EvidenceOrigin(str(obj["origin"])),
-            passed=bool(obj["passed"]),
-            artifact_sha256=declared,
-            recorded_at=str(obj["recorded_at"]),
+            kind=EvidenceKind(kind_value),
+            origin=EvidenceOrigin(origin_value),
+            passed=passed_value,
+            artifact_sha256=declared_value,
+            recorded_at=recorded_at_value,
             payload=payload,
         )
 
