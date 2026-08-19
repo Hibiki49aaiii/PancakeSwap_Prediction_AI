@@ -15,7 +15,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,23 +38,19 @@ jobs:
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
 
           PROVIDERS = [
-              ("publicnode", "https://bsc-rpc.publicnode.com", 20),
-              ("1rpc", "https://public.1rpc.io/bnb", 20),
-              ("drpc", "https://bsc.drpc.org", 20),
-              ("ankr", "https://rpc.ankr.com/bsc", 20),
+              ("publicnode", "https://bsc-rpc.publicnode.com"),
+              ("1rpc", "https://public.1rpc.io/bnb"),
+              ("drpc", "https://bsc.drpc.org"),
+              ("ankr", "https://rpc.ankr.com/bsc"),
           ]
-          OFFSETS = [0, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000, 5_000_000]
+          OFFSETS = [10_000, 100_000, 1_000_000, 5_000_000]
+          WIDTH = 20
+          START_TOPIC = "0x" + keccak(b"StartRound(uint256)").hex()
 
-          def topic(signature):
-              return "0x" + keccak(signature.encode("ascii")).hex()
-
-          start_topic = topic("StartRound(uint256)")
-          bet_bull_topic = topic("BetBull(address,uint256,uint256)")
-
-          def probe_provider(name, url, width):
-              result = {"name": name, "rpc_url": url, "window_width_blocks": width}
+          def probe_provider(name, url):
+              result = {"name": name, "rpc_url": url, "window_width_blocks": WIDTH}
               try:
-                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=15.0)
+                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=6.0)
                   chain_id = client.chain_id()
                   head = client.block_number()
                   raw = client.call(
@@ -65,17 +61,12 @@ jobs:
               except Exception as exc:
                   result.update({"reachable": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
                   return result
-
               result.update({"reachable": True, "chain_id": chain_id, "head_block": head, "head_epoch": epoch})
-
-              def window(offset, topic0):
+              windows = []
+              for offset in OFFSETS:
                   to_block = max(1, head - offset)
-                  from_block = max(1, to_block - width + 1)
-                  item = {
-                      "offset_blocks": offset,
-                      "from_block": from_block,
-                      "to_block": to_block,
-                  }
+                  from_block = max(1, to_block - WIDTH + 1)
+                  item = {"offset_blocks": offset, "from_block": from_block, "to_block": to_block}
                   try:
                       values = client.call(
                           "eth_getLogs",
@@ -83,16 +74,14 @@ jobs:
                               "address": BNB_PREDICTION_CONTRACT,
                               "fromBlock": hex(from_block),
                               "toBlock": hex(to_block),
-                              "topics": [topic0],
+                              "topics": [START_TOPIC],
                           }],
                       )
                       item.update({"ok": True, "count": len(values)})
                   except Exception as exc:
                       item.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
-                  return item
-
-              result["start_round_windows"] = [window(offset, start_topic) for offset in OFFSETS]
-              result["bet_bull_windows"] = [window(offset, bet_bull_topic) for offset in OFFSETS]
+                  windows.append(item)
+              result["start_round_windows"] = windows
               return result
 
           report = {
