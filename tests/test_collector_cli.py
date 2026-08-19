@@ -25,6 +25,8 @@ def test_shadow_cycle_parser_accepts_only_simulated_economic_policy_fields() -> 
             "100",
             "--shadow-gas-cost-wei",
             "2",
+            "--shadow-claim-or-refund-gas-cost-wei",
+            "3",
             "--shadow-execution-success-probability",
             "0.75",
             "--shadow-min-expected-return",
@@ -33,6 +35,7 @@ def test_shadow_cycle_parser_accepts_only_simulated_economic_policy_fields() -> 
     )
     assert args.shadow_stake_wei == 100
     assert args.shadow_gas_cost_wei == 2
+    assert args.shadow_claim_or_refund_gas_cost_wei == 3
     assert args.shadow_execution_success_probability == 0.75
     assert args.shadow_min_expected_return == 0.01
 
