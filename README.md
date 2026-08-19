@@ -10,11 +10,13 @@ Previous local artifacts named `PancakePredictionResearch` are legacy developmen
 
 ## Objective
 
-Estimate the calibrated probability that a PancakeSwap Prediction round settles BULL or BEAR using only information observable before the decision cutoff, then evaluate economics only after realistic costs and execution effects.
+Estimate the calibrated PancakeSwap Prediction settlement distribution using only information observable before the decision cutoff, then evaluate economics only after realistic costs and execution effects.
 
 Primary target:
 
-`P(BULL settlement | information available at decision time)`
+`P(BULL), P(BEAR), P(TIE | information available at decision time)`
+
+`TIE` is a real protocol outcome: when close price equals lock price, the Prediction contract treats the round as a house win rather than a BEAR result. Therefore `P(BEAR) = 1 - P(BULL)` is not a valid general assumption.
 
 Economic evaluation must include at minimum:
 
@@ -24,6 +26,7 @@ Economic evaluation must include at minimum:
 - post-decision pool movement
 - transaction latency and missed-window risk
 - execution/reconciliation uncertainty
+- house-win tie probability
 
 Prediction accuracy alone is not a profitability criterion.
 
@@ -40,7 +43,7 @@ Replay / Data Quality
         |
 Feature Families + Regime
         |
-Probability Model
+3-outcome Probability Model
         |
 Calibration
         |
@@ -61,7 +64,7 @@ Shadow -> Fork -> Tiny Live gate
 4. Pancake pre-lock pool flow
 5. volatility / regime features
 6. execution-quality and latency features
-7. calibrated probability ensembles
+7. calibrated BULL/BEAR/TIE probability ensembles
 8. purged walk-forward and feature ablation
 
 ## Validation stages
@@ -70,14 +73,29 @@ Shadow -> Fork -> Tiny Live gate
 |---|---|---|
 | 0 | Historical data integrity | **Canonical v0.7 append-only hash-chained Event Store implemented; CI tested** |
 | 1 | Deterministic replay | **Canonical observation-time replay and leakage cutoff implemented; CI tested** |
-| 2 | Leakage-safe, cost-aware evaluation | **Canonical diluted pool EV + probabilistic metrics implemented; real dataset evaluation pending** |
-| 3 | Purged walk-forward / OOS evaluation | **Canonical split generator implemented; real OOS evidence pending** |
-| 4 | Paper / Shadow | **Durable decision/settlement ledger implemented; observed multi-round economics evidence still required** |
+| 2 | Leakage-safe, cost-aware evaluation | **Canonical diluted pool EV + 3-outcome probabilistic metrics implemented; real dataset evaluation pending** |
+| 3 | Purged walk-forward / OOS evaluation | **Canonical split generator and label-availability guard implemented; real OOS evidence pending** |
+| 4 | Paper / Shadow | **Durable tie-aware decision/settlement ledger implemented; observed multi-round economics evidence still required** |
 | 5A | Durable execution fault model | **Canonical v0.7 implementation complete; CI tested** |
 | 5B | BSC fork execution | Harness implemented; **BLOCKED until observed real local-fork evidence is recorded** |
 | 6A | Tiny-live readiness / safety preflight | v0.7 evidence gate implemented; cannot clear from assumed evidence |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
+
+### Protocol normalization
+
+The canonical adapter currently targets BNB Chain (`chainId = 56`) and the BNB Prediction contract published by PancakeSwap. Protocol-facing values are normalized before entering research/economic modules.
+
+Important unit boundary:
+
+- Pancake Prediction contract `treasuryFee`: denominator `10,000` (`200 = 2%`, `1000 = 10%`)
+- internal economics engine: parts-per-million (`ppm`)
+
+`pancake_contract.py` performs this conversion explicitly so raw on-chain fee units cannot be silently interpreted as ppm.
+
+The public `rounds(epoch)` tuple is normalized into a typed round state and checked for the invariant:
+
+`totalAmount == bullAmount + bearAmount`
 
 ### Stage 0-1 data and replay invariants
 
@@ -95,19 +113,22 @@ The canonical research path now enforces:
 
 The canonical evaluation path now includes:
 
+- three settlement outcomes: BULL, BEAR and house-win TIE;
 - own-stake payout dilution in the winning-side denominator;
 - configurable treasury fee and gas cost;
 - configurable same-side/opposite-side post-decision pool movement assumptions;
 - explicit execution-success probability instead of silently treating every candidate as filled;
-- break-even probability calculation;
-- Brier score, log loss and expected calibration error (ECE);
-- chronological purged walk-forward splits with optional rolling training windows.
+- break-even win probability calculation;
+- multiclass Brier score, multiclass log loss and top-label expected calibration error (ECE);
+- binary one-vs-rest metrics retained only as diagnostic tools;
+- chronological purged walk-forward splits with optional rolling training windows;
+- training examples whose label-availability time must be later than the decision cutoff.
 
 These modules are infrastructure, not evidence that a strategy is profitable. Real historical and out-of-sample data must still be ingested and evaluated.
 
 ### Stage 4 shadow invariants
 
-The durable shadow ledger stores the decision-time record separately from the later settlement record. It prevents duplicate decisions/settlements for the same round, requires settlement after the recorded decision cutoff, and calculates simulated settlement economics from the later observed final pools.
+The durable shadow ledger stores the decision-time record separately from the later settlement record. It prevents duplicate decisions/settlements for the same round, requires settlement after the recorded decision cutoff, preserves TIE as a distinct outcome, and calculates simulated settlement economics from the later observed final pools.
 
 A shadow evidence object can only be derived from an explicit evaluation policy and observed ledger summary. The repository does not contain observed multi-round profitability evidence yet.
 
