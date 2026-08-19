@@ -439,7 +439,10 @@ def backfill_subgraph_decision_snapshots(
         if reconstructed_round.event_id in existing:
             already_present.append(timeline.epoch)
             continue
-        stored = store.append_many((reconstructed_round, reconstructed_chainlink))
+        batch = [reconstructed_round]
+        if reconstructed_chainlink.event_id not in existing:
+            batch.append(reconstructed_chainlink)
+        stored = store.append_many(batch)
         existing.update(item.event.event_id for item in stored)
         points.append(
             DecisionSnapshotPoint(
