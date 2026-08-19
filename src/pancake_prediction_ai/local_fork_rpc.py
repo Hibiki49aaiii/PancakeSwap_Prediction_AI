@@ -25,6 +25,21 @@ LOCAL_FORK_RPC_METHODS = frozenset(
     }
 )
 
+# These methods can change local development-node state. Before the first one in
+# each mutation cycle we create an EVM snapshot. The public `anvil_reset` method
+# below is intentionally translated to `evm_revert(snapshot_id)` so a caller can
+# keep the existing reset abstraction without ever re-forking from a moving
+# upstream `latest` head.
+_SNAPSHOT_GUARDED_MUTATIONS = frozenset(
+    {
+        "eth_sendTransaction",
+        "evm_mine",
+        "anvil_impersonateAccount",
+        "anvil_stopImpersonatingAccount",
+        "anvil_setBalance",
+    }
+)
+
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -49,12 +64,18 @@ class LocalForkJsonRpcClient:
     never accepts a private key and never permits raw signed transactions or
     signing RPC methods. An upstream/mainnet RPC must use the separate read-only
     client and therefore cannot receive these local execution calls.
+
+    Local mutation cycles are guarded by `evm_snapshot` / `evm_revert`. The
+    exposed `anvil_reset` abstraction therefore restores the exact pre-mutation
+    fork base instead of asking Anvil to create/reset a fork from a potentially
+    newer upstream `latest` block.
     """
 
     endpoint: str
     timeout_seconds: float = 10.0
     transport: Transport = _default_transport
     _next_id: int = 1
+    _snapshot_id: str | int | None = None
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.endpoint)
@@ -67,12 +88,7 @@ class LocalForkJsonRpcClient:
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-    def call(self, method: str, params: list[Any]) -> Any:
-        if method not in LOCAL_FORK_RPC_METHODS:
-            raise PermissionError(f"RPC method is outside local-fork boundary: {method}")
-        if not isinstance(params, list):
-            raise ValueError("params must be a list")
-
+    def _rpc(self, method: str, params: list[Any]) -> Any:
         request_id = self._next_id
         self._next_id += 1
         payload = json.dumps(
@@ -111,3 +127,39 @@ class LocalForkJsonRpcClient:
         if "result" not in response:
             raise LocalForkRpcError("RPC response missing result")
         return response["result"]
+
+    def _ensure_snapshot(self) -> None:
+        if self._snapshot_id is not None:
+            return
+        snapshot_id = self._rpc("evm_snapshot", [])
+        if not isinstance(snapshot_id, (str, int)):
+            raise LocalForkRpcError("evm_snapshot returned an invalid snapshot id")
+        if isinstance(snapshot_id, str) and not snapshot_id:
+            raise LocalForkRpcError("evm_snapshot returned an empty snapshot id")
+        self._snapshot_id = snapshot_id
+
+    def _restore_snapshot(self) -> bool:
+        if self._snapshot_id is None:
+            raise LocalForkRpcError("local fork reset requested without an active snapshot")
+        snapshot_id = self._snapshot_id
+        try:
+            reverted = self._rpc("evm_revert", [snapshot_id])
+        finally:
+            # Anvil snapshots are single-use after a successful revert; also clear
+            # on failure so a subsequent cycle cannot silently reuse stale state.
+            self._snapshot_id = None
+        if reverted is not True:
+            raise LocalForkRpcError("evm_revert did not restore the guarded snapshot")
+        return True
+
+    def call(self, method: str, params: list[Any]) -> Any:
+        if method not in LOCAL_FORK_RPC_METHODS:
+            raise PermissionError(f"RPC method is outside local-fork boundary: {method}")
+        if not isinstance(params, list):
+            raise ValueError("params must be a list")
+
+        if method == "anvil_reset":
+            return self._restore_snapshot()
+        if method in _SNAPSHOT_GUARDED_MUTATIONS:
+            self._ensure_snapshot()
+        return self._rpc(method, params)
