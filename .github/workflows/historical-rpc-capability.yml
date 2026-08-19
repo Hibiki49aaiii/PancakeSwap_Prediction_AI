@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-      - name: Probe BSC public RPCs
+      - name: Measure PublicNode historical log depth
         shell: bash
         run: |
           set -euo pipefail
@@ -37,91 +37,54 @@ jobs:
           from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
 
-          endpoints = [
-              "https://bsc-dataseed.bnbchain.org",
-              "https://bsc-dataseed-public.bnbchain.org",
-              "https://bnb.rpc.subquery.network/public",
-              "https://bsc-rpc.publicnode.com",
-              "https://public.1rpc.io/bnb",
-          ]
+          RPC_URL = "https://bsc-rpc.publicnode.com"
+          client = ReadOnlyJsonRpcClient(RPC_URL, timeout_seconds=20.0)
 
           def topic(signature):
               return "0x" + keccak(signature.encode("ascii")).hex()
 
-          lifecycle_topics = [
-              topic("StartRound(uint256)"),
-              topic("LockRound(uint256,uint256,int256)"),
-              topic("EndRound(uint256,uint256,int256)"),
-          ]
-          config_topics = {
-              "buffer_interval": topic("NewBufferAndIntervalSeconds(uint256,uint256)"),
-              "treasury_fee": topic("NewTreasuryFee(uint256,uint256)"),
-              "oracle": topic("NewOracle(address)"),
-          }
-          current_data = encode_call("currentEpoch()")
+          start_topic = topic("StartRound(uint256)")
+          oracle_config_topic = topic("NewOracle(address)")
+          head = client.block_number()
+          raw = client.call(
+              "eth_call",
+              [{"to": BNB_PREDICTION_CONTRACT, "data": encode_call("currentEpoch()")}, "latest"],
+          )
+          head_epoch = int(decode_result(raw, ("uint256",))[0])
 
-          def log_call(client, head, topics, width=1000):
-              return client.call(
-                  "eth_getLogs",
-                  [{
-                      "address": BNB_PREDICTION_CONTRACT,
-                      "fromBlock": hex(max(1, head - width)),
-                      "toBlock": hex(head),
-                      "topics": [topics],
-                  }],
-              )
-
-          def probe(url):
-              result = {"rpc_url": url}
+          def probe_log_window(offset, width, topic0):
+              to_block = max(1, head - offset)
+              from_block = max(1, to_block - width + 1)
+              item = {
+                  "offset_blocks": offset,
+                  "width_blocks": width,
+                  "from_block": from_block,
+                  "to_block": to_block,
+              }
               try:
-                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=12.0)
-                  result["chain_id"] = client.chain_id()
-                  head = client.block_number()
-                  result["head_block"] = head
-                  raw = client.call(
-                      "eth_call",
-                      [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, "latest"],
+                  values = client.call(
+                      "eth_getLogs",
+                      [{
+                          "address": BNB_PREDICTION_CONTRACT,
+                          "fromBlock": hex(from_block),
+                          "toBlock": hex(to_block),
+                          "topics": [topic0],
+                      }],
                   )
-                  result["head_epoch"] = int(decode_result(raw, ("uint256",))[0])
+                  item.update({"ok": True, "count": len(values)})
               except Exception as exc:
-                  result.update({"reachable": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
-                  return result
-              result["reachable"] = True
+                  item.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
+              return item
 
-              state = []
-              for offset in [128, 20_000]:
-                  block = max(1, head - offset)
-                  item = {"offset_blocks": offset, "block": block}
-                  try:
-                      raw = client.call(
-                          "eth_call",
-                          [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, hex(block)],
-                      )
-                      item.update({"ok": True, "epoch": int(decode_result(raw, ("uint256",))[0])})
-                  except Exception as exc:
-                      item.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
-                  state.append(item)
-              result["historical_state"] = state
-
-              try:
-                  values = log_call(client, head, lifecycle_topics, 1000)
-                  result["lifecycle_logs"] = {"ok": True, "count": len(values)}
-              except Exception as exc:
-                  result["lifecycle_logs"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
-
-              config = {}
-              for name, value in config_topics.items():
-                  try:
-                      values = log_call(client, head, [value], 1000)
-                      config[name] = {"ok": True, "count": len(values)}
-                  except Exception as exc:
-                      config[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
-              result["config_logs"] = config
-              return result
-
+          offsets = [0, 2_500, 5_000, 10_000, 20_000, 50_000, 100_000, 250_000, 500_000, 1_000_000]
           report = {
-              "prediction_contract": BNB_PREDICTION_CONTRACT,
-              "providers": [probe(url) for url in endpoints],
+              "rpc_url": RPC_URL,
+              "chain_id": client.chain_id(),
+              "head_block": head,
+              "head_epoch": head_epoch,
+              "window_width_blocks": 500,
+              "start_round_windows": [probe_log_window(offset, 500, start_topic) for offset in offsets],
+              "oracle_config_windows": [probe_log_window(offset, 500, oracle_config_topic) for offset in offsets],
           }
           print(json.dumps(report, sort_keys=True, separators=(",", ":")))
           PY
