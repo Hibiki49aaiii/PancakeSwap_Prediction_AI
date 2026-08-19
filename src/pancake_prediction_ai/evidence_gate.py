@@ -14,6 +14,7 @@ from .runtime_fingerprint import (
     fingerprint_sha256,
     validate_runtime_fingerprint_payload,
 )
+from .stage5b_source_fingerprint import stage5b_source_fingerprint_matches_current
 
 
 class EvidenceKind(StrEnum):
@@ -30,7 +31,7 @@ class EvidenceOrigin(StrEnum):
 
 
 STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v2"
-STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_execution_v3"
+STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_execution_v4"
 SHADOW_GATE_SCHEMA = "shadow_gate_evidence_v1"
 
 
@@ -230,7 +231,7 @@ def _qualified_stage5b_pass(
     expected_prediction_contract: str,
     expected_chainlink_oracle: str,
 ) -> bool:
-    """Accept only upstream-verified and executed local-fork evidence."""
+    """Accept only source-bound, upstream-verified, executed local-fork evidence."""
 
     if evidence.kind is not EvidenceKind.STAGE5B_FORK:
         return False
@@ -244,6 +245,10 @@ def _qualified_stage5b_pass(
     if payload.get("probe_type") != "verified_local_bsc_fork_prediction_execution":
         return False
     if payload.get("execution_transport") != "loopback_impersonated_eth_sendTransaction":
+        return False
+    if not stage5b_source_fingerprint_matches_current(
+        payload.get("generator_source_fingerprint")
+    ):
         return False
     if payload.get("private_key_used") is not False:
         return False
