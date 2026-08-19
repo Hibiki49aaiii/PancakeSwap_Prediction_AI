@@ -89,6 +89,15 @@ def _int(payload: Mapping[str, Any], field: str) -> int:
     return value
 
 
+def _optional_non_negative_int(payload: Mapping[str, Any], field: str) -> int | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be non-negative integer or null")
+    return value
+
+
 def _numeric(payload: Mapping[str, Any], field: str) -> float:
     value = payload.get(field)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -101,7 +110,9 @@ def _summary_payload(summary: ShadowEconomicSummary) -> dict[str, Any]:
     return {key: raw[key] for key in raw}
 
 
-def _event_maps(events: tuple[StoredEvent, ...]) -> tuple[dict[str, StoredEvent], dict[str, StoredEvent]]:
+def _event_maps(
+    events: tuple[StoredEvent, ...],
+) -> tuple[dict[str, StoredEvent], dict[str, StoredEvent]]:
     by_id: dict[str, StoredEvent] = {}
     by_hash: dict[str, StoredEvent] = {}
     for stored in events:
@@ -123,10 +134,15 @@ def _assumption_profile(decision: StoredEvent) -> dict[str, Any]:
     profile = {
         "stake_wei": _int(payload, "stake_wei"),
         "gas_cost_wei": _int(assumed, "gas_cost_wei"),
+        "claim_or_refund_gas_cost_wei": _optional_non_negative_int(
+            assumed,
+            "claim_or_refund_gas_cost_wei",
+        ),
         "same_side_inflow_wei": _int(assumed, "same_side_inflow_wei"),
         "opposite_side_inflow_wei": _int(assumed, "opposite_side_inflow_wei"),
         "execution_success_probability": _numeric(
-            assumed, "execution_success_probability"
+            assumed,
+            "execution_success_probability",
         ),
         "min_expected_return": _numeric(assumed, "min_expected_return"),
     }
@@ -139,7 +155,9 @@ def _assumption_profile(decision: StoredEvent) -> dict[str, Any]:
     return profile
 
 
-def _round_rows(events: tuple[StoredEvent, ...]) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+def _round_rows(
+    events: tuple[StoredEvent, ...],
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     by_id, by_hash = _event_maps(events)
     decisions: dict[int, StoredEvent] = {}
     settlements: dict[int, StoredEvent] = {}
@@ -189,7 +207,8 @@ def _round_rows(events: tuple[StoredEvent, ...]) -> tuple[list[dict[str, Any]], 
             raise ValueError("economic decision predates its referenced model decision")
 
         source_tip_hash = _hash(
-            payload.get("source_snapshot_tip_hash"), "source_snapshot_tip_hash"
+            payload.get("source_snapshot_tip_hash"),
+            "source_snapshot_tip_hash",
         )
         source_tip = by_hash.get(source_tip_hash)
         if source_tip is None:
@@ -267,10 +286,12 @@ def _round_rows(events: tuple[StoredEvent, ...]) -> tuple[list[dict[str, Any]], 
                 "block_number": _int(settlement_payload, "block_number"),
                 "block_hash": str(settlement_payload.get("block_hash")),
                 "pnl_if_executed_wei": _int(
-                    settlement_payload, "pnl_if_executed_wei"
+                    settlement_payload,
+                    "pnl_if_executed_wei",
                 ),
                 "probability_adjusted_pnl_wei": _numeric(
-                    settlement_payload, "probability_adjusted_pnl_wei"
+                    settlement_payload,
+                    "probability_adjusted_pnl_wei",
                 ),
                 "claim_or_refund_gas_modeled": bool(
                     settlement_payload.get("claim_or_refund_gas_modeled") is True
@@ -289,9 +310,10 @@ def build_shadow_economic_evidence_artifact(
     """Freeze one observed-store shadow record without calling it live PnL.
 
     On-chain outcomes and final pools are observed. Bets, execution success,
-    decision gas and stake are paper/simulation inputs. The artifact preserves
-    that mixed evidence class explicitly and must not be used as proof of funded
-    live profitability.
+    decision gas and stake are paper/simulation inputs. Optional claim/refund gas
+    remains an assumed cost fixed at decision time. The artifact preserves that
+    mixed evidence class explicitly and must not be used as proof of funded live
+    profitability.
     """
 
     if store.mode != "observed":
@@ -309,6 +331,11 @@ def build_shadow_economic_evidence_artifact(
     summary = summarize_shadow_economics(store)
     settled_rounds = sum(row["settlement"] is not None for row in rows)
     unresolved_rounds = len(rows) - settled_rounds
+    structurally_qualifiable = (
+        settled_rounds > 0
+        and unresolved_rounds == 0
+        and summary.claim_or_refund_gas_fully_modeled
+    )
 
     payload: dict[str, Any] = {
         "schema": SHADOW_EVIDENCE_ARTIFACT_SCHEMA,
@@ -321,9 +348,9 @@ def build_shadow_economic_evidence_artifact(
             "model_output": "derived",
             "paper_action_and_stake": "simulated",
             "decision_gas_cost": "assumed",
+            "claim_or_refund_gas": "assumed_when_required_and_configured_else_incomplete",
             "execution_success_probability": "assumed",
             "paper_execution": "simulated_not_broadcast",
-            "claim_or_refund_gas": "not_modeled",
             "funded_live_profitability_evidence": False,
         },
         "source_event_store": {
@@ -343,9 +370,11 @@ def build_shadow_economic_evidence_artifact(
             "all_decisions_settled": unresolved_rounds == 0,
             "has_any_settled_round": settled_rounds > 0,
             "fully_costed_claim_or_refund_gas": summary.claim_or_refund_gas_fully_modeled,
+            "structurally_eligible_for_shadow_gate_policy": structurally_qualifiable,
         },
         "claims": {
             "may_support_shadow_model_evaluation": settled_rounds > 0,
+            "may_be_policy_qualified_for_stage6a_shadow_input": structurally_qualifiable,
             "may_support_funded_live_profitability_claim": False,
             "may_clear_stage_6b_funded_validation": False,
         },
@@ -410,6 +439,7 @@ def _validate_payload(payload: Mapping[str, Any]) -> None:
         )
         if _sha256_payload(profile) != profile_hash:
             raise ValueError("shadow evidence assumption profile SHA-256 mismatch")
+        _optional_non_negative_int(profile, "claim_or_refund_gas_cost_wei")
         for key in ("model_decision", "economic_decision", "source_round_snapshot"):
             reference = row.get(key)
             if not isinstance(reference, dict):
@@ -426,7 +456,8 @@ def _validate_payload(payload: Mapping[str, Any]) -> None:
             _hash(settlement.get("snapshot_event_hash"), "settlement snapshot hash")
             _hash(settlement.get("settlement_event_hash"), "settlement event hash")
             if _int(settlement, "snapshot_ingest_seq") >= _int(
-                settlement, "settlement_ingest_seq"
+                settlement,
+                "settlement_ingest_seq",
             ):
                 raise ValueError("shadow evidence settlement ordering is invalid")
     if round_ids != sorted(set(round_ids)):
@@ -445,10 +476,20 @@ def _validate_payload(payload: Mapping[str, Any]) -> None:
         raise ValueError("shadow evidence completeness decision count mismatch")
     if _int(completeness, "settled_rounds") != settled:
         raise ValueError("shadow evidence completeness settled count mismatch")
-    if _int(completeness, "unresolved_rounds") != len(rounds) - settled:
+    unresolved = len(rounds) - settled
+    if _int(completeness, "unresolved_rounds") != unresolved:
         raise ValueError("shadow evidence unresolved count mismatch")
+    expected_structural = (
+        settled > 0
+        and unresolved == 0
+        and summary.get("claim_or_refund_gas_fully_modeled") is True
+    )
+    if completeness.get("structurally_eligible_for_shadow_gate_policy") is not expected_structural:
+        raise ValueError("shadow evidence structural gate eligibility mismatch")
     if not isinstance(claims, dict):
         raise ValueError("shadow evidence claims are invalid")
+    if claims.get("may_be_policy_qualified_for_stage6a_shadow_input") is not expected_structural:
+        raise ValueError("shadow evidence Stage 6A structural claim mismatch")
     if claims.get("may_support_funded_live_profitability_claim") is not False:
         raise ValueError("shadow evidence cannot support funded live profitability claim")
     if claims.get("may_clear_stage_6b_funded_validation") is not False:
