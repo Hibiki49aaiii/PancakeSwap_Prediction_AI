@@ -2,6 +2,9 @@ name: historical-rpc-capability
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - v0.7/evidence-gates
