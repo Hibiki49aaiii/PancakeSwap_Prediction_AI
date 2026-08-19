@@ -12,13 +12,19 @@ from typing import Any, Mapping
 from .evidence_gate import Evidence, EvidenceKind, EvidenceOrigin
 from .execution_state import ExecutionIntent, IntentState, reconcile_receipt
 from .execution_store import IntentStore
+from .runtime_fingerprint import (
+    RuntimeFingerprint,
+    capture_runtime_fingerprint,
+    validate_runtime_fingerprint_payload,
+)
 
 
-STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v1"
+STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v2"
 
 
 @dataclass(frozen=True, slots=True)
 class Stage5ADrillResult:
+    runtime_fingerprint: RuntimeFingerprint
     journal_mode_wal: bool
     synchronous_full: bool
     unresolved_recovered_after_restart: bool
@@ -33,7 +39,8 @@ class Stage5ADrillResult:
     @property
     def passed(self) -> bool:
         return (
-            self.journal_mode_wal
+            validate_runtime_fingerprint_payload(self.runtime_fingerprint.payload())
+            and self.journal_mode_wal
             and self.synchronous_full
             and self.unresolved_recovered_after_restart
             and self.duplicate_active_nonce_rejected
@@ -74,6 +81,7 @@ def run_stage5a_execution_drill(
     if destination.exists():
         raise ValueError("Stage 5A drill database path must not already exist")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    runtime_fingerprint = capture_runtime_fingerprint()
 
     intent_id = "stage5a-drill-primary"
     reuse_id = "stage5a-drill-reuse"
@@ -183,6 +191,7 @@ def run_stage5a_execution_drill(
         unresolved_final = store.count_unresolved()
 
     return Stage5ADrillResult(
+        runtime_fingerprint=runtime_fingerprint,
         journal_mode_wal=journal_mode_wal,
         synchronous_full=synchronous_full,
         unresolved_recovered_after_restart=unresolved_recovered,
@@ -205,13 +214,18 @@ def make_stage5a_evidence(
     *,
     recorded_at: str | None = None,
 ) -> Evidence:
+    result_payload = asdict(result)
+    result_payload.pop("runtime_fingerprint", None)
+    runtime_payload = result.runtime_fingerprint.payload()
     payload: dict[str, Any] = {
         "schema": STAGE5A_DRILL_SCHEMA,
         "drill_type": "local_sqlite_execution_state_durability",
         "blockchain_transaction_created": False,
         "transaction_signed": False,
         "transaction_broadcast": False,
-        **asdict(result),
+        "runtime_fingerprint": runtime_payload,
+        "runtime_fingerprint_sha256": result.runtime_fingerprint.sha256,
+        **result_payload,
     }
     digest = hashlib.sha256(_canonical(payload)).hexdigest()
     return Evidence(
