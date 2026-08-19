@@ -31,6 +31,7 @@ class PoolState:
 @dataclass(frozen=True, slots=True)
 class ExecutionCost:
     gas_cost_wei: int = 0
+    claim_cost_if_win_wei: int = 0
     same_side_inflow_wei: int = 0
     opposite_side_inflow_wei: int = 0
     execution_success_probability: float = 1.0
@@ -38,6 +39,8 @@ class ExecutionCost:
     def validate(self) -> None:
         if self.gas_cost_wei < 0:
             raise ValueError("gas_cost_wei must be non-negative")
+        if self.claim_cost_if_win_wei < 0:
+            raise ValueError("claim_cost_if_win_wei must be non-negative")
         if self.same_side_inflow_wei < 0 or self.opposite_side_inflow_wei < 0:
             raise ValueError("post-decision inflows must be non-negative")
         if not 0.0 <= self.execution_success_probability <= 1.0:
@@ -81,8 +84,8 @@ def evaluate_bet_ev(
 
     The user's own stake is included in the winning-side denominator. Optional
     same/opposite-side inflows represent conservative expected pool movement
-    after the decision snapshot but before lock. Gas is charged whenever an
-    execution attempt succeeds.
+    after the decision snapshot but before lock. Entry gas is charged whenever
+    an execution attempt succeeds; optional claim gas is charged only on a win.
     """
 
     pool.validate()
@@ -110,16 +113,22 @@ def evaluate_bet_ev(
         raise ValueError("winning-side pool must be positive after stake")
 
     gross_payout = stake_wei / winning_side_pool * distributable
-    pnl_win = gross_payout - stake_wei - cost.gas_cost_wei
+    pnl_win = (
+        gross_payout
+        - stake_wei
+        - cost.gas_cost_wei
+        - cost.claim_cost_if_win_wei
+    )
     pnl_lose = -stake_wei - cost.gas_cost_wei
     expected_if_executed = p_win * pnl_win + (1.0 - p_win) * pnl_lose
     expected = cost.execution_success_probability * expected_if_executed
     expected_return = expected / stake_wei
 
-    if gross_payout <= 0:
+    net_claimable = gross_payout - cost.claim_cost_if_win_wei
+    if net_claimable <= 0:
         break_even = 1.0
     else:
-        break_even = (stake_wei + cost.gas_cost_wei) / gross_payout
+        break_even = (stake_wei + cost.gas_cost_wei) / net_claimable
 
     return EVResult(
         side=side,
