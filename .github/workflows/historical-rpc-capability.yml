@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-      - name: Probe third-party BSC public RPCs
+      - name: Probe BSC public RPCs
         shell: bash
         run: |
           set -euo pipefail
@@ -38,6 +38,9 @@ jobs:
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
 
           endpoints = [
+              "https://bsc-dataseed.bnbchain.org",
+              "https://bsc-dataseed-public.bnbchain.org",
+              "https://bnb.rpc.subquery.network/public",
               "https://bsc-rpc.publicnode.com",
               "https://public.1rpc.io/bnb",
           ]
@@ -55,7 +58,6 @@ jobs:
               "treasury_fee": topic("NewTreasuryFee(uint256,uint256)"),
               "oracle": topic("NewOracle(address)"),
           }
-
           current_data = encode_call("currentEpoch()")
 
           def log_call(client, head, topics, width=1000):
@@ -72,7 +74,7 @@ jobs:
           def probe(url):
               result = {"rpc_url": url}
               try:
-                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=20.0)
+                  client = ReadOnlyJsonRpcClient(url, timeout_seconds=12.0)
                   result["chain_id"] = client.chain_id()
                   head = client.block_number()
                   result["head_block"] = head
@@ -82,12 +84,12 @@ jobs:
                   )
                   result["head_epoch"] = int(decode_result(raw, ("uint256",))[0])
               except Exception as exc:
-                  result.update({"reachable": False, "error": str(exc)[:500]})
+                  result.update({"reachable": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
                   return result
               result["reachable"] = True
 
               state = []
-              for offset in [128, 2_000, 20_000, 100_000, 500_000, 1_000_000]:
+              for offset in [128, 20_000]:
                   block = max(1, head - offset)
                   item = {"offset_blocks": offset, "block": block}
                   try:
@@ -95,25 +97,17 @@ jobs:
                           "eth_call",
                           [{"to": BNB_PREDICTION_CONTRACT, "data": current_data}, hex(block)],
                       )
-                      item.update({
-                          "ok": True,
-                          "epoch": int(decode_result(raw, ("uint256",))[0]),
-                      })
+                      item.update({"ok": True, "epoch": int(decode_result(raw, ("uint256",))[0])})
                   except Exception as exc:
-                      item.update({"ok": False, "error": str(exc)[:500]})
+                      item.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]})
                   state.append(item)
               result["historical_state"] = state
 
-              logs = []
-              for width in [10, 100, 1_000, 5_000, 20_000]:
-                  item = {"width_blocks": width}
-                  try:
-                      values = log_call(client, head, lifecycle_topics, width)
-                      item.update({"ok": True, "count": len(values)})
-                  except Exception as exc:
-                      item.update({"ok": False, "error": str(exc)[:500]})
-                  logs.append(item)
-              result["lifecycle_logs"] = logs
+              try:
+                  values = log_call(client, head, lifecycle_topics, 1000)
+                  result["lifecycle_logs"] = {"ok": True, "count": len(values)}
+              except Exception as exc:
+                  result["lifecycle_logs"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
 
               config = {}
               for name, value in config_topics.items():
@@ -121,12 +115,7 @@ jobs:
                       values = log_call(client, head, [value], 1000)
                       config[name] = {"ok": True, "count": len(values)}
                   except Exception as exc:
-                      config[name] = {"ok": False, "error": str(exc)[:500]}
-              try:
-                  values = log_call(client, head, list(config_topics.values()), 1000)
-                  config["or_filter"] = {"ok": True, "count": len(values)}
-              except Exception as exc:
-                  config["or_filter"] = {"ok": False, "error": str(exc)[:500]}
+                      config[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
               result["config_logs"] = config
               return result
 
