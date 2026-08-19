@@ -91,12 +91,17 @@ jobs:
           from pathlib import Path
           summary = json.loads(Path("artifacts/public-history-summary.json").read_text())
           dataset = json.loads(Path("artifacts/public-history-dataset.json").read_text())
+          payload = dataset["payload"]
           assert summary["config_change_logs"] == 0
           assert summary["completed_rounds"] > 0
           assert summary["decision_snapshots"] > 0
           assert summary["examples"] > 0
-          assert len(dataset["payload"]["examples"]) == summary["examples"]
-          assert dataset["payload"]["source_event_store"]["tip_hash"] == summary["store_tip_hash"]
+          assert len(payload["examples"]) == summary["examples"]
+          assert payload["source_event_store"]["tip_hash"] == summary["store_tip_hash"]
+          assert payload["assumptions"]["prediction_interval_seconds"] == summary["interval_seconds"] == 300
+          for example in payload["examples"]:
+              features = dict(example["features"])
+              assert features["time_to_lock_seconds"] == 10.0
           PY
 
       - name: Verify reconstructed store
