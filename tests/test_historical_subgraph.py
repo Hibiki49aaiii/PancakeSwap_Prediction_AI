@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -16,7 +17,6 @@ from pancake_prediction_ai.historical_subgraph import (
 )
 from pancake_prediction_ai.historical_public_rpc import PredictionStaticConfig
 from pancake_prediction_ai.prediction_subgraph import PredictionSubgraphBet, PredictionSubgraphRound
-from pancake_prediction_ai.round_history import build_round_timelines
 
 
 ORACLE = "0x" + "12" * 20
@@ -70,6 +70,33 @@ def _bets() -> tuple[PredictionSubgraphBet, ...]:
         _bet("b", 1_289, 10_089, "Bull"),
         _bet("c", 1_290, 10_090, "Bear"),
     )
+
+
+def _second_round_and_bets() -> tuple[PredictionSubgraphRound, tuple[PredictionSubgraphBet, ...]]:
+    round_ = replace(
+        _round(),
+        id="43",
+        epoch=43,
+        start_at_s=1_310,
+        start_block=10_210,
+        start_hash="0x" + "44" * 32,
+        lock_at_s=1_618,
+        lock_block=10_310,
+        lock_hash="0x" + "55" * 32,
+        lock_price=Decimal("601.00000000"),
+        lock_round_id=50_001,
+        close_at_s=1_920,
+        close_block=10_410,
+        close_hash="0x" + "66" * 32,
+        close_price=Decimal("602.00000000"),
+        close_round_id=50_101,
+    )
+    bets = (
+        replace(_bet("d", 1_590, 10_290, "Bull"), epoch=43),
+        replace(_bet("e", 1_599, 10_299, "Bull"), epoch=43),
+        replace(_bet("f", 1_600, 10_300, "Bear"), epoch=43),
+    )
+    return round_, bets
 
 
 def _static() -> PredictionStaticConfig:
@@ -182,6 +209,59 @@ def test_decision_snapshot_excludes_bet_not_available_by_cutoff(tmp_path, monkey
         reconstruction = snapshot.payload["historical_reconstruction"]
         assert reconstruction["eligible_bet_count"] == 2
         assert snapshot.observed_at_ns == 1_290_000_000_000
+
+
+def test_reused_chainlink_round_is_persisted_once_across_two_decisions(tmp_path, monkeypatch) -> None:
+    shared_oracle = (49_999, 60_050_000_000, 1_275, 1_280, 49_999)
+    monkeypatch.setattr(
+        "pancake_prediction_ai.historical_subgraph._oracle_round_at_or_before_cutoff",
+        lambda *args, **kwargs: shared_oracle,
+    )
+    second_round, second_bets = _second_round_and_bets()
+    rounds = (_round(), second_round)
+    bets = {42: _bets(), 43: second_bets}
+    with EventStore(tmp_path / "history.sqlite", mode="reconstructed") as store:
+        pipeline = HistoricalPipeline(
+            store,
+            _config(prediction_interval_seconds=300, assumed_subgraph_latency_ns=1_000_000_000),
+        )
+        backfill_subgraph_lifecycle(
+            store,
+            rounds,
+            dataset_id="graph-v1",
+            interval_seconds=300,
+            assumed_subgraph_latency_ns=1_000_000_000,
+            captured_at_ns=_static().captured_at_ns,
+            meta_block=20_000,
+        )
+        backfill_subgraph_bets(
+            store,
+            rounds,
+            bets,
+            dataset_id="graph-v1",
+            assumed_subgraph_latency_ns=1_000_000_000,
+            captured_at_ns=_static().captured_at_ns,
+            meta_block=20_000,
+        )
+        result = backfill_subgraph_decision_snapshots(
+            object(),  # type: ignore[arg-type]
+            store,
+            pipeline.timelines().completed,
+            {42: rounds[0], 43: rounds[1]},
+            bets,
+            dataset_id="graph-v1",
+            static_config=_static(),
+            decision_lead_ns=10_000_000_000,
+            assumed_onchain_latency_ns=1_000_000_000,
+            assumed_subgraph_latency_ns=1_000_000_000,
+        )
+        assert len(result.points) == 2
+        stored = [item.event for item in store.read_all_ingest_order()]
+        snapshots = [event for event in stored if event.topic == "prediction.round_snapshot"]
+        chainlink = [event for event in stored if event.topic == "oracle.latest_round"]
+        assert len(snapshots) == 2
+        assert len(chainlink) == 1
+        assert store.verify_chain()
 
 
 def test_subgraph_bet_backfill_is_idempotent(tmp_path) -> None:
