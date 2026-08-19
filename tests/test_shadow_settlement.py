@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from pancake_prediction_ai.event_store import EventRecord, EventStore
 from pancake_prediction_ai.pancake_contract import PredictionRoundState
 from pancake_prediction_ai.rpc_snapshot import BlockAnchor
@@ -225,13 +227,7 @@ def test_abstain_settles_to_zero_pnl_while_preserving_observed_outcome(tmp_path)
 def test_reward_mismatch_is_anomaly_and_not_persisted_as_settlement(tmp_path) -> None:
     with EventStore(tmp_path / "observed.sqlite") as store:
         _decision(store)
-        state = _round()
-        invalid = PredictionRoundState(
-            **{
-                **state.__dict__,
-                "reward_amount_wei": state.total_amount_wei + 1,
-            }
-        )
+        invalid = replace(_round(), reward_amount_wei=400 * WEI + 1)
         result = reconcile_shadow_economic_round(
             store,
             FakeClient(),  # type: ignore[arg-type]
