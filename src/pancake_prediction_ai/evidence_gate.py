@@ -8,6 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Mapping
 
+from .pancake_contract import BNB_PREDICTION_CONTRACT
 from .runtime_fingerprint import (
     capture_runtime_fingerprint,
     fingerprint_sha256,
@@ -29,7 +30,7 @@ class EvidenceOrigin(StrEnum):
 
 
 STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v2"
-STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v1"
+STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v2"
 SHADOW_GATE_SCHEMA = "shadow_gate_evidence_v1"
 
 
@@ -96,6 +97,8 @@ class Evidence:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSafetyState:
+    prediction_contract: str
+    chainlink_oracle: str
     kill_switch_armed: bool
     wallet_binding_ok: bool
     per_round_cap_ok: bool
@@ -150,6 +153,16 @@ def _valid_sha256(value: object) -> bool:
     return True
 
 
+def _valid_address(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 42 or not value.startswith("0x"):
+        return False
+    try:
+        int(value[2:], 16)
+    except ValueError:
+        return False
+    return True
+
+
 def _valid_block_hash(value: object) -> bool:
     if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
         return False
@@ -189,9 +202,6 @@ def _qualified_stage5a_pass(evidence: Evidence) -> bool:
         return False
     if fingerprint_sha256(runtime_payload) != runtime_sha:
         return False
-    # A Stage 5A drill from another Python/OS/architecture/SQLite stack cannot
-    # clear preflight on this process. The official gate therefore re-captures
-    # the current runtime rather than trusting a caller-supplied environment ID.
     if capture_runtime_fingerprint().sha256 != runtime_sha:
         return False
 
@@ -216,8 +226,13 @@ def _qualified_stage5a_pass(evidence: Evidence) -> bool:
     return True
 
 
-def _qualified_stage5b_pass(evidence: Evidence) -> bool:
-    """Accept only a local BSC fork probe independently matched to upstream BSC."""
+def _qualified_stage5b_pass(
+    evidence: Evidence,
+    *,
+    expected_prediction_contract: str,
+    expected_chainlink_oracle: str,
+) -> bool:
+    """Accept only an upstream-verified fork of the currently bound protocol."""
 
     if evidence.kind is not EvidenceKind.STAGE5B_FORK:
         return False
@@ -233,6 +248,17 @@ def _qualified_stage5b_pass(evidence: Evidence) -> bool:
     if payload.get("transaction_signed") is not False:
         return False
     if payload.get("mainnet_transaction_broadcast") is not False:
+        return False
+
+    prediction_contract = payload.get("prediction_contract")
+    chainlink_contract = payload.get("chainlink_contract")
+    if not _valid_address(prediction_contract) or not _valid_address(chainlink_contract):
+        return False
+    if not _valid_address(expected_prediction_contract) or not _valid_address(expected_chainlink_oracle):
+        return False
+    if str(prediction_contract).lower() != expected_prediction_contract.lower():
+        return False
+    if str(chainlink_contract).lower() != expected_chainlink_oracle.lower():
         return False
 
     chain_id = _strict_int(payload, "chain_id")
@@ -318,7 +344,6 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
     if not isinstance(policy, dict) or not isinstance(metrics, dict):
         return False
 
-    # These may not be weakened by a caller-provided acceptance policy.
     if policy.get("require_all_decisions_settled") is not True:
         return False
     if policy.get("require_fully_costed_claim_or_refund_gas") is not True:
@@ -380,9 +405,23 @@ def evaluate_stage6a_readiness(
     if not _qualified_stage5a_pass(stage5a):
         blockers.append("stage5a_qualified_observed_pass_missing")
 
+    prediction_binding_ok = (
+        _valid_address(safety.prediction_contract)
+        and safety.prediction_contract.lower() == BNB_PREDICTION_CONTRACT.lower()
+    )
+    chainlink_binding_ok = _valid_address(safety.chainlink_oracle)
+    if not prediction_binding_ok:
+        blockers.append("prediction_contract_binding_failed")
+    if not chainlink_binding_ok:
+        blockers.append("chainlink_oracle_binding_failed")
+
     if stage5b.kind is not EvidenceKind.STAGE5B_FORK:
         blockers.append("stage5b_wrong_evidence_kind")
-    if not _qualified_stage5b_pass(stage5b):
+    if not _qualified_stage5b_pass(
+        stage5b,
+        expected_prediction_contract=safety.prediction_contract,
+        expected_chainlink_oracle=safety.chainlink_oracle,
+    ):
         blockers.append("stage5b_qualified_observed_pass_missing")
 
     if shadow.kind is not EvidenceKind.SHADOW_ECONOMICS:
@@ -403,7 +442,6 @@ def evaluate_stage6a_readiness(
     if not safety.decision_window_open:
         blockers.append("decision_window_closed")
 
-    # Stage 6A is a preflight only. A signer/broadcaster becoming active here is itself a failure.
     if safety.signing_enabled:
         blockers.append("signing_enabled_during_preflight")
     if safety.mainnet_broadcast_enabled:
