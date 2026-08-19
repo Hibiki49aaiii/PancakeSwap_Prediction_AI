@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .binance_public_rest import BinancePublicRestClient
 from .dataset_artifact import HistoricalDatasetArtifact, build_historical_dataset_artifact
@@ -14,7 +14,12 @@ from .historical_dataset import (
     backfill_round_decision_snapshots,
     build_portable_round_examples,
 )
-from .historical_store import bind_reconstruction_dataset, verify_reconstruction_dataset_binding
+from .historical_store import (
+    bind_reconstruction_dataset,
+    bind_reconstruction_prediction_interval_seconds,
+    reconstruction_prediction_interval_seconds,
+    verify_reconstruction_dataset_binding,
+)
 from .pancake_contract import BNB_PREDICTION_CONTRACT
 from .portable_features import PortableFeaturePolicy
 from .read_only_rpc import ReadOnlyJsonRpcClient
@@ -36,6 +41,7 @@ class HistoricalPipelineConfig:
     assumed_binance_latency_ns: int
     assumed_onchain_latency_ns: int
     feature_policy: PortableFeaturePolicy = PortableFeaturePolicy()
+    prediction_interval_seconds: int | None = None
 
     def validate(self) -> None:
         if not self.dataset_id:
@@ -46,15 +52,18 @@ class HistoricalPipelineConfig:
             raise ValueError("assumed_binance_latency_ns must be non-negative")
         if self.assumed_onchain_latency_ns < 0:
             raise ValueError("assumed_onchain_latency_ns must be non-negative")
+        if self.prediction_interval_seconds is not None and self.prediction_interval_seconds <= 0:
+            raise ValueError("prediction_interval_seconds must be positive when supplied")
         self.feature_policy.validate()
 
 
 class HistoricalPipeline:
     """High-level, namespace-locked entrypoint for reconstructed research.
 
-    Binding occurs at construction time and persists as a SQLite INSERT trigger.
-    Every stage therefore operates inside one reconstruction namespace instead
-    of relying on callers to remember which dataset ID was used by each backfill.
+    Binding occurs at construction time and persists as SQLite metadata/trigger
+    state. When a scheduled Prediction interval has been established by an
+    acquisition path, reopening the same store automatically recovers it so
+    artifact generation cannot fall back to the later LockRound transaction.
     """
 
     def __init__(
@@ -70,8 +79,23 @@ class HistoricalPipeline:
         bind_reconstruction_dataset(store, config.dataset_id)
         if not verify_reconstruction_dataset_binding(store):
             raise ValueError("reconstructed dataset namespace binding verification failed")
+
+        persisted_interval = reconstruction_prediction_interval_seconds(store)
+        if config.prediction_interval_seconds is not None:
+            bind_reconstruction_prediction_interval_seconds(
+                store,
+                config.prediction_interval_seconds,
+            )
+            persisted_interval = config.prediction_interval_seconds
+        effective_config = config
+        if config.prediction_interval_seconds is None and persisted_interval is not None:
+            effective_config = replace(
+                config,
+                prediction_interval_seconds=persisted_interval,
+            )
+
         self.store = store
-        self.config = config
+        self.config = effective_config
         self.clock_ns = clock_ns
 
     def backfill_binance(
@@ -118,7 +142,8 @@ class HistoricalPipeline:
 
     def timelines(self) -> RoundTimelineBuildResult:
         return build_round_timelines(
-            stored.event for stored in self.store.read_all_ingest_order()
+            (stored.event for stored in self.store.read_all_ingest_order()),
+            interval_seconds=self.config.prediction_interval_seconds,
         )
 
     def backfill_decision_protocol(
@@ -172,4 +197,5 @@ class HistoricalPipeline:
             assumed_binance_latency_ns=self.config.assumed_binance_latency_ns,
             assumed_onchain_latency_ns=self.config.assumed_onchain_latency_ns,
             feature_policy=self.config.feature_policy,
+            prediction_interval_seconds=self.config.prediction_interval_seconds,
         )
