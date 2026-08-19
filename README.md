@@ -16,7 +16,7 @@ Primary target:
 
 `TIE` is a real protocol outcome: `closePrice == lockPrice` is a house-win round, not BEAR. Therefore `P(BEAR) = 1 - P(BULL)` is not a valid general assumption.
 
-Economic evaluation includes treasury fee, gas, own-bet payout dilution, post-decision pool movement, execution probability/latency, reconciliation uncertainty, and house-win tie probability. Prediction accuracy alone is not a profitability criterion.
+Economic evaluation includes treasury fee, gas, own-bet payout dilution, post-decision pool movement, execution probability/latency, reconciliation uncertainty, claim/refund gas, and house-win tie probability. Prediction accuracy alone is not a profitability criterion.
 
 ## Core architecture
 
@@ -32,7 +32,7 @@ Historical public sources ----------+--> Reconstructed Event Store
 Event Store -> deterministic replay -> data quality -> feature families
             -> BULL/BEAR/TIE model -> calibration -> cost/EV engine
             -> purged availability-safe OOS -> shadow ledger
-            -> evidence gates -> fork -> tiny-live readiness
+            -> schema-bound evidence gates -> verified local fork -> tiny-live readiness
 ```
 
 ## Validation stages
@@ -43,14 +43,14 @@ Event Store -> deterministic replay -> data quality -> feature families
 | 1 | Deterministic replay | **Observation-time replay and leakage cutoff implemented** |
 | 2 | Cost-aware evaluation | **3-outcome EV, metrics, feature family v0.1, baseline model implemented** |
 | 3 | Purged OOS | **Label-availability-safe folds, calibration split and train-only TIE prior implemented** |
-| 4 | Paper / Shadow | **Observed collection -> hash-tip-bound promoted-model inference and durable tie-aware ledger implemented; real multi-round economics evidence still required** |
-| 5A | Durable execution fault model | **Canonical implementation complete and CI tested** |
-| 5B | BSC fork execution | Harness implemented; **BLOCKED until actual local-fork evidence is recorded** |
-| 6A | Tiny-live safety preflight | Evidence gate implemented; assumed evidence cannot clear it |
+| 4 | Paper / Shadow | **Observed collection, promoted-model inference, EV decision, later settlement/reconcile/summary and hash-bound HYBRID evidence implemented; real multi-round evidence still required** |
+| 5A | Durable execution fault model | **SQLite restart/nonce/UNKNOWN/finalization drill, schema-bound evidence and CLI implemented; target-runtime evidence must be produced explicitly** |
+| 5B | BSC fork execution | **Upstream-verified local-fork harness and CLI implemented; BLOCKED until actual local BSC fork evidence is recorded** |
+| 6A | Tiny-live safety preflight | **Schema-bound Stage5 + qualified HYBRID shadow gate implemented; generic observed JSON cannot clear it** |
 | 6B | Funded validation | Not implemented |
 | 7 | Production | Not reached |
 
-Current code checkpoint before this documentation-only commit: **194/194 tests passed** on GitHub Actions for head `aa41196368fba40f513a01af2f7b41d80c58d78e`.
+Latest verified code checkpoint before this documentation update: **294/294 tests passed** on GitHub Actions for head `d783300c131ebd5555e4d0a3525256a18b977f99`.
 
 ## Protocol normalization
 
@@ -105,10 +105,28 @@ The observed head watcher also records block anchors, gaps and reorg anomalies. 
 1. collect public Binance observations;
 2. persist one pinned Pancake + Chainlink snapshot;
 3. run the promoted model against the resulting observed Event Store;
-4. write the shadow decision against the exact hash-chain tip used for inference;
-5. verify the Event Store hash chain before returning.
+4. write the shadow model decision against the exact hash-chain tip used for inference;
+5. optionally convert the model probabilities into a paper BULL/BEAR/ABSTAIN economic decision using decision-time pool state, gas, own-stake dilution, assumed post-decision flow and execution probability;
+6. verify the Event Store hash chain before returning.
 
 A reconstructed/historical store is rejected. The cycle does not contain wallet, signer, or transaction-broadcast functionality.
+
+### Shadow economics and settlement
+
+Paper economics are deliberately separated from live trading.
+
+A shadow economic decision records its decision-time assumptions and references the exact model decision/hash tip it consumed. Later, after the Pancake round has settled, the reconciler observes the final round state and computes paper PnL using the contract-compatible reward arithmetic. Winning/refund outcomes can include an explicit claim/refund gas assumption; loss/TIE/ABSTAIN paths do not invent a claim operation that would not occur.
+
+The settlement layer supports:
+
+- one-round settlement;
+- batch reconciliation of pending shadow decisions;
+- cumulative PnL and drawdown summaries;
+- unresolved-round tracking;
+- explicit claim/refund gas completeness;
+- SHA-256-bound shadow evidence artifacts with decision -> model -> settlement lineage.
+
+The resulting artifact is classified as `hybrid_shadow_not_live`: market state and final settlement are observed, while execution/stake behavior remains simulated. It is not live-profit evidence.
 
 ## Historical / reconstructed data path
 
@@ -128,7 +146,7 @@ The two modes cannot be mixed in one SQLite database. Reconstructed events inclu
 
 Each reconstructed SQLite store is persistently bound to one dataset namespace. That persisted binding is authoritative across restarts, and a database trigger rejects later inserts from a different reconstruction dataset.
 
-`historical_binance.py` can page public Binance aggregate trades into a reconstructed store. It validates aggregate-trade continuity and commits each validated page atomically. A sequence gap leaves the suspect page uncommitted.
+`historical_evidence_run.py` composes historical Pancake lifecycle reconstruction, sparse decision-window Binance backfill, decision-time on-chain snapshots and dataset production into a reproducible evidence run. Binance historical ingestion is idempotent across reruns while sequence-gap validation remains active.
 
 ## Feature Family v0.1
 
@@ -166,21 +184,62 @@ Additional leakage guards:
 
 Primary probability diagnostics include multiclass Brier score, multiclass log loss, top-label accuracy and calibration error. These are model-quality measurements, not evidence of economic profitability.
 
-## Shadow and evidence gates
+## Stage 5 execution-readiness evidence
 
-The shadow ledger stores decision-time state separately from later settlement state, prevents duplicate decision/settlement records, requires settlement after the decision cutoff, preserves TIE as a distinct house-win outcome, and computes simulated economics from later observed final pools.
+### Stage 5A durability drill
 
-Stage 6A can only become ready when:
+`execution_drill.py` runs against a fresh local SQLite database and verifies, by actual close/reopen cycles:
 
-- Stage 5A evidence is an observed pass
-- Stage 5B is an observed pass from an actual local BSC fork
-- shadow economics evidence is an observed pass
-- kill switch, wallet binding, per-round cap and balance cap pass
-- there are no unresolved execution intents
-- the decision window remains open
-- signing and mainnet broadcasting remain disabled during preflight
+- WAL journal mode and FULL synchronous durability policy;
+- unresolved intent recovery after restart;
+- duplicate active nonce rejection;
+- persistence of UNKNOWN after a missing/non-canonical receipt;
+- later transition to FINALIZED after the configured confirmation threshold;
+- terminal-state nonce release;
+- cleanup of the nonce-reuse intent;
+- zero unresolved intents at drill completion.
 
-`assumed` and `self_reported` evidence can never clear the gate.
+The drill uses synthetic nonces and transaction hashes. It creates, signs and broadcasts no blockchain transaction. Its evidence payload is SHA-256-bound with schema `stage5a_execution_drill_v1`.
+
+### Stage 5B verified local BSC fork
+
+A local node reporting `chainId=56` is not sufficient evidence of a BSC fork.
+
+`probe_verified_local_bsc_fork` requires an independent read-only upstream BSC RPC and verifies:
+
+- local and upstream chain IDs are 56;
+- the local fork-base block hash equals the upstream BSC hash at the same block number;
+- Prediction and Chainlink bytecode at the fork block match upstream;
+- local `evm_mine` advances the development fork;
+- `anvil_reset` returns to the same fork base;
+- post-reset block hash and bytecode still match upstream.
+
+Only that verified path can produce `passed=true` Stage 5B evidence. The legacy local-only mechanics probe may pass locally but its Stage 5B gate evidence remains failed because upstream provenance is missing.
+
+`LocalForkJsonRpcClient` has a narrow allowlist containing only chain/block/code inspection plus local `evm_mine` and `anvil_reset`. Account access, signing, `eth_sendTransaction` and `eth_sendRawTransaction` are rejected before transport.
+
+## Stage 6A evidence gate
+
+Stage 6A can only become ready when all three evidence families and runtime safety state independently pass.
+
+Required evidence:
+
+- Stage 5A: `origin=observed`, `passed=true`, correct `stage5a_execution_drill_v1` schema, all durability checks true, zero unresolved intents and no transaction/signing/broadcast activity;
+- Stage 5B: `origin=observed`, `passed=true`, correct `stage5b_verified_local_bsc_fork_v1` schema, upstream block-hash/bytecode provenance matches and no signing/mainnet broadcast activity;
+- Shadow economics: `origin=hybrid`, qualified `shadow_gate_evidence_v1`, minimum settled-round/PnL/expected-return criteria, drawdown bound, all represented decisions settled, and claim/refund gas fully modeled when required.
+
+Runtime preflight additionally requires:
+
+- kill switch armed;
+- wallet binding OK;
+- per-round cap OK;
+- balance cap OK;
+- zero unresolved execution intents;
+- decision window open;
+- signing disabled during preflight;
+- mainnet broadcasting disabled during preflight.
+
+The gate recomputes payload SHA-256 and revalidates the stage-specific schema. Generic `origin=observed, passed=true` JSON, `assumed`, `self_reported`, or misclassified shadow evidence cannot clear the gate.
 
 ## Collector CLI
 
@@ -201,11 +260,26 @@ ppai-collector --store data/observed.sqlite shadow-cycle-once \
   --rpc-url <BSC_RPC_URL> \
   --model-artifact <PROMOTED_MODEL_JSON>
 
-# Historical Binance reconstruction with an explicit availability-latency assumption
-ppai-collector --store data/historical.sqlite historical-binance \
+# The same cycle with paper economics enabled
+ppai-collector --store data/observed.sqlite shadow-cycle-once \
+  --rpc-url <BSC_RPC_URL> \
+  --model-artifact <PROMOTED_MODEL_JSON> \
+  --shadow-stake-wei <STAKE_WEI> \
+  --shadow-gas-cost-wei <BET_GAS_WEI> \
+  --shadow-claim-gas-cost-wei <CLAIM_OR_REFUND_GAS_WEI>
+
+# Reconcile pending paper decisions after their Pancake rounds settle
+ppai-collector --store data/observed.sqlite shadow-reconcile-pending --rpc-url <BSC_RPC_URL>
+
+# Summarize accumulated paper economics
+ppai-collector --store data/observed.sqlite shadow-economic-summary
+
+# Reproducible historical evidence run
+ppai-collector --store data/historical.sqlite historical-evidence-run \
   --dataset-id bnb-history-v1 \
-  --start-time-ms <START_MS> \
-  --end-time-ms <END_MS> \
+  --start-epoch <START_EPOCH> \
+  --end-epoch <END_EPOCH> \
+  --rpc-url <ARCHIVE_OR_HISTORICAL_BSC_RPC_URL> \
   --assumed-latency-ns <LATENCY_NS>
 
 # Verify stores
@@ -213,24 +287,78 @@ ppai-collector --store data/observed.sqlite verify-store
 ppai-collector --store data/historical.sqlite verify-store --mode reconstructed
 ```
 
+## Artifact CLI
+
+`ppai-artifact` freezes reconstructed datasets, evaluates OOS performance, trains promoted models, freezes shadow evidence, and derives a Stage 6A shadow gate artifact.
+
+```bash
+# Freeze the accumulated observed shadow ledger
+ppai-artifact build-shadow-evidence \
+  --store data/observed.sqlite \
+  --output artifacts/shadow-evidence.json
+
+# Evaluate the shadow artifact against an explicit acceptance policy
+ppai-artifact build-shadow-gate-evidence \
+  --shadow-evidence artifacts/shadow-evidence.json \
+  --min-settled-rounds <N> \
+  --min-conditional-net-pnl-wei <WEI> \
+  --max-conditional-drawdown-wei <WEI> \
+  --min-average-selected-expected-return <RETURN> \
+  --output artifacts/shadow-gate.json
+```
+
+## Readiness CLI
+
+`ppai-readiness` generates Stage 5 evidence without exposing a signer or broadcast path.
+
+```bash
+# Stage 5A: run the actual local SQLite restart/durability drill
+ppai-readiness stage5a-drill \
+  --database artifacts/stage5a-drill.sqlite3 \
+  --required-confirmations 3 \
+  --output artifacts/stage5a-evidence.json
+
+# Stage 5B: verify an actual local BSC fork against an independent upstream BSC RPC
+ppai-readiness stage5b-verify-fork \
+  --local-rpc-url http://127.0.0.1:8545 \
+  --upstream-rpc-url <READ_ONLY_BSC_RPC_URL> \
+  --prediction-contract <PANCAKE_PREDICTION_CONTRACT> \
+  --chainlink-contract <ACTIVE_CHAINLINK_ORACLE> \
+  --output artifacts/stage5b-evidence.json
+```
+
+Stage 5B remains **BLOCKED** until the second command is executed against a genuine local BSC fork and produces `passed=true` observed evidence. Mock/unit success is not Stage 5B evidence.
+
 ## Security boundary
 
 Research/model layers do not hold private keys or signing authority. AI/LLM components may assist with research, feature analysis, evaluation and explanation; they are not wallet controllers.
 
+The observed collector and upstream RPC client are read-only. The local-fork client permits only development-node mine/reset controls in addition to read calls. None of the current CLIs expose a private-key argument or a transaction-broadcast method. Stage 6B funded validation remains a separate implementation and operational gate.
+
 ## Evidence status
 
-Infrastructure readiness is not evidence of profitability. Real historical/OOS performance, real observed multi-round shadow economics, and actual local-fork Stage 5B evidence remain separate requirements. Funded Stage 6B validation is not implemented.
+Infrastructure readiness is not evidence of profitability.
+
+Still required before any Stage 6B funded-validation decision:
+
+- real reconstructed historical/OOS metrics from the current three-outcome pipeline;
+- real multi-round observed-market HYBRID shadow economics with all rounds settled and costs fully modeled;
+- explicit Stage 5A evidence from the intended validation runtime;
+- actual upstream-verified local BSC fork Stage 5B evidence;
+- a Stage 6A preflight pass with signing and mainnet broadcasting still disabled.
 
 ## Next development phase
 
-Phase 4.3 is evidence production rather than more infrastructure scaffolding:
+Phase 4.3 is now primarily evidence production:
 
-1. collect real observed Binance + pinned BSC streams;
-2. build a reconstructed historical dataset with explicit availability assumptions;
-3. generate hash-bound dataset and promoted-model artifacts;
-4. run baseline three-outcome OOS evaluation;
-5. accumulate multi-round observed shadow economics;
-6. keep Stage 5B blocked until an actual local BSC fork produces observed evidence.
+1. collect a sustained observed Binance + pinned BSC stream;
+2. execute a reconstructed historical evidence run with explicit availability assumptions;
+3. generate the bound dataset/evaluation/promoted-model manifest chain;
+4. establish baseline three-outcome OOS metrics;
+5. accumulate, settle and freeze enough observed-market HYBRID shadow rounds to evaluate economics;
+6. run `ppai-readiness stage5a-drill` on the intended validation runtime;
+7. run the Stage 5B verifier against a genuine local BSC fork;
+8. only then evaluate Stage 6A readiness.
 
 ## Development rule
 
