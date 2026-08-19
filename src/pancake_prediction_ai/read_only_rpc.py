@@ -158,6 +158,7 @@ def _looks_like_log_range_limit(error: object) -> bool:
         marker in message
         for marker in (
             "limited to",
+            "limit exceeded",
             "block range",
             "range limit",
             "too many results",
