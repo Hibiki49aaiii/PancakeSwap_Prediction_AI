@@ -91,10 +91,57 @@ jobs:
           }
           print(json.dumps(report, sort_keys=True, separators=(",", ":")))
           PY
+      - name: Probe official Pancake Prediction v2 subgraph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee artifacts/prediction-subgraph-capability.json
+          import json
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          URL = "https://api.thegraph.com/subgraphs/name/pancakeswap/prediction-v2"
+          QUERY = '''
+          query Capability {
+            _meta { block { number hash } hasIndexingErrors }
+            latest: rounds(first: 3, orderBy: epoch, orderDirection: desc) {
+              id epoch startAt startBlock lockAt lockBlock lockPrice lockRoundId
+              closeAt closeBlock closePrice closeRoundId
+              totalBets totalAmount bullBets bullAmount bearBets bearAmount position failed
+            }
+            old: rounds(first: 3, where: { epoch_lt: "100000" }, orderBy: epoch, orderDirection: desc) {
+              id epoch startAt startBlock lockAt lockBlock lockPrice
+              closeAt closeBlock closePrice totalBets totalAmount bullAmount bearAmount position failed
+            }
+          }
+          '''
+          request = Request(
+              URL,
+              data=json.dumps({"query": QUERY}).encode(),
+              headers={
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                  "User-Agent": "pancake-prediction-ai/0.7 subgraph-capability",
+              },
+              method="POST",
+          )
+          try:
+              with urlopen(request, timeout=15) as response:
+                  raw = response.read()
+              result = {"url": URL, "ok": True, "response": json.loads(raw)}
+          except HTTPError as exc:
+              body = exc.read().decode("utf-8", errors="replace")[:2000]
+              result = {"url": URL, "ok": False, "error": f"HTTP {exc.code}: {body}"}
+          except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+              result = {"url": URL, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+          print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+          PY
       - name: Upload capability report
         uses: actions/upload-artifact@v4
         with:
           name: historical-rpc-capability
-          path: artifacts/historical-rpc-capability.json
+          path: |
+            artifacts/historical-rpc-capability.json
+            artifacts/prediction-subgraph-capability.json
           if-no-files-found: error
           retention-days: 14
