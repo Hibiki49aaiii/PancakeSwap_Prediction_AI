@@ -41,7 +41,10 @@ def test_eth_getlogs_http_403_is_split_until_provider_accepts_range() -> None:
         seen_ranges.append((start, end))
         if end - start + 1 > 2:
             raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
-        rows = [{"blockNumber": hex(block)} for block in range(start, end + 1)]
+        rows = [
+            {"blockNumber": hex(block), "logIndex": "0x0", "transactionHash": f"0x{block:064x}"}
+            for block in range(start, end + 1)
+        ]
         return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": rows}).encode()
 
     client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
@@ -51,6 +54,43 @@ def test_eth_getlogs_http_403_is_split_until_provider_accepts_range() -> None:
     )
     assert [int(row["blockNumber"], 16) for row in result] == [10, 11, 12, 13]
     assert seen_ranges == [(10, 13), (10, 11), (12, 13)]
+
+
+def test_eth_getlogs_http_403_splits_topic_or_before_block_range() -> None:
+    seen: list[tuple[int, int, tuple[str, ...]]] = []
+
+    def transport(request: Request, timeout: float) -> bytes:
+        payload = json.loads(request.data or b"{}")
+        filter_ = payload["params"][0]
+        start = int(filter_["fromBlock"], 16)
+        end = int(filter_["toBlock"], 16)
+        alternatives = tuple(filter_["topics"][0])
+        seen.append((start, end, alternatives))
+        if len(alternatives) > 1:
+            raise HTTPError(request.full_url, 403, "Forbidden", hdrs=None, fp=None)
+        topic = alternatives[0]
+        log_index = {"0xa": "0x2", "0xb": "0x1", "0xc": "0x0"}[topic]
+        row = {
+            "blockNumber": "0x64",
+            "logIndex": log_index,
+            "transactionHash": "0x" + topic[2:].rjust(64, "0"),
+            "topics": [topic],
+        }
+        return json.dumps({"jsonrpc": "2.0", "id": payload["id"], "result": [row]}).encode()
+
+    client = ReadOnlyJsonRpcClient("https://example.invalid", transport=transport)
+    result = client.call(
+        "eth_getLogs",
+        [{"fromBlock": "0x1", "toBlock": "0x3e8", "topics": [["0xa", "0xb", "0xc"]]}],
+    )
+    assert [row["topics"][0] for row in result] == ["0xc", "0xb", "0xa"]
+    assert seen == [
+        (1, 1000, ("0xa", "0xb", "0xc")),
+        (1, 1000, ("0xa",)),
+        (1, 1000, ("0xb", "0xc")),
+        (1, 1000, ("0xb",)),
+        (1, 1000, ("0xc",)),
+    ]
 
 
 def test_eth_getlogs_rpc_range_limit_is_split_but_other_rpc_errors_are_not() -> None:
