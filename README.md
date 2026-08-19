@@ -43,14 +43,14 @@ Event Store -> deterministic replay -> data quality -> feature families
 | 1 | Deterministic replay | **Observation-time replay and leakage cutoff implemented** |
 | 2 | Cost-aware evaluation | **3-outcome EV, metrics, feature family v0.1, baseline model implemented** |
 | 3 | Purged OOS | **Label-availability-safe folds, calibration split and train-only TIE prior implemented** |
-| 4 | Paper / Shadow | **Durable tie-aware shadow ledger implemented; real multi-round evidence still required** |
+| 4 | Paper / Shadow | **Observed collection -> hash-tip-bound promoted-model inference and durable tie-aware ledger implemented; real multi-round economics evidence still required** |
 | 5A | Durable execution fault model | **Canonical implementation complete and CI tested** |
 | 5B | BSC fork execution | Harness implemented; **BLOCKED until actual local-fork evidence is recorded** |
 | 6A | Tiny-live safety preflight | Evidence gate implemented; assumed evidence cannot clear it |
 | 6B | Funded validation | Not implemented |
 | 7 | Production | Not reached |
 
-Current CI checkpoint: **132/132 tests passed** on the v0.7 branch before this documentation update.
+Current code checkpoint before this documentation-only commit: **194/194 tests passed** on GitHub Actions for head `aa41196368fba40f513a01af2f7b41d80c58d78e`.
 
 ## Protocol normalization
 
@@ -94,7 +94,21 @@ All related on-chain view calls are pinned to one concrete BSC block. A snapshot
 
 The three resulting canonical events (round, oracle reference, oracle price) share one conservative local observation timestamp sampled only after all RPC responses have arrived. They are committed atomically with `EventStore.append_many()` so a partial protocol snapshot cannot remain after a database failure.
 
+The observed head watcher also records block anchors, gaps and reorg anomalies. Normal new-head snapshots sample the observation clock only once through the pinned snapshot collector; same/lower-height reorg audit events receive their own observation time without pretending replacement state was the originally observed state.
+
 `ReadOnlyJsonRpcClient` is allowlist-based and rejects transaction-signing/broadcast or other mutating RPC methods before transport.
+
+### One-cycle observed shadow inference
+
+`observed_cycle.py` connects the existing read-only components into one auditable sequence:
+
+1. collect public Binance observations;
+2. persist one pinned Pancake + Chainlink snapshot;
+3. run the promoted model against the resulting observed Event Store;
+4. write the shadow decision against the exact hash-chain tip used for inference;
+5. verify the Event Store hash chain before returning.
+
+A reconstructed/historical store is rejected. The cycle does not contain wallet, signer, or transaction-broadcast functionality.
 
 ## Historical / reconstructed data path
 
@@ -111,6 +125,8 @@ The two modes cannot be mixed in one SQLite database. Reconstructed events inclu
 - assumed availability latency
 - actual backfill capture time
 - optional source-artifact SHA-256
+
+Each reconstructed SQLite store is persistently bound to one dataset namespace. That persisted binding is authoritative across restarts, and a database trigger rejects later inserts from a different reconstruction dataset.
 
 `historical_binance.py` can page public Binance aggregate trades into a reconstructed store. It validates aggregate-trade continuity and commits each validated page atomically. A sequence gap leaves the suspect page uncommitted.
 
@@ -180,6 +196,11 @@ ppai-collector --store data/observed.sqlite binance-ws
 # One pinned Pancake + Chainlink snapshot (user-supplied read-only BSC RPC)
 ppai-collector --store data/observed.sqlite protocol-once --rpc-url <BSC_RPC_URL>
 
+# One complete signer-free observation -> promoted-model shadow inference cycle
+ppai-collector --store data/observed.sqlite shadow-cycle-once \
+  --rpc-url <BSC_RPC_URL> \
+  --model-artifact <PROMOTED_MODEL_JSON>
+
 # Historical Binance reconstruction with an explicit availability-latency assumption
 ppai-collector --store data/historical.sqlite historical-binance \
   --dataset-id bnb-history-v1 \
@@ -198,7 +219,18 @@ Research/model layers do not hold private keys or signing authority. AI/LLM comp
 
 ## Evidence status
 
-Infrastructure readiness is not evidence of profitability. Real historical/OOS performance, real observed shadow economics, and actual local-fork Stage 5B evidence remain separate requirements. Funded Stage 6B validation is not implemented.
+Infrastructure readiness is not evidence of profitability. Real historical/OOS performance, real observed multi-round shadow economics, and actual local-fork Stage 5B evidence remain separate requirements. Funded Stage 6B validation is not implemented.
+
+## Next development phase
+
+Phase 4.3 is evidence production rather than more infrastructure scaffolding:
+
+1. collect real observed Binance + pinned BSC streams;
+2. build a reconstructed historical dataset with explicit availability assumptions;
+3. generate hash-bound dataset and promoted-model artifacts;
+4. run baseline three-outcome OOS evaluation;
+5. accumulate multi-round observed shadow economics;
+6. keep Stage 5B blocked until an actual local BSC fork produces observed evidence.
 
 ## Development rule
 
