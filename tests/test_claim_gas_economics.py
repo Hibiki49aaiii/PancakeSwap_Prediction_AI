@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pancake_prediction_ai.economics import ExecutionCost, PoolState, Side, evaluate_bet_ev
 from pancake_prediction_ai.event_store import EventRecord, EventStore
 from pancake_prediction_ai.pancake_contract import PredictionRoundState
@@ -38,7 +40,7 @@ def test_claim_cost_is_charged_only_on_win_in_ev() -> None:
     )
     assert with_claim.pnl_if_win_wei == without_claim.pnl_if_win_wei - 3
     assert with_claim.pnl_if_lose_wei == without_claim.pnl_if_lose_wei
-    assert with_claim.expected_pnl_if_executed_wei == (
+    assert with_claim.expected_pnl_if_executed_wei == pytest.approx(
         without_claim.expected_pnl_if_executed_wei - 0.8 * 3
     )
 
