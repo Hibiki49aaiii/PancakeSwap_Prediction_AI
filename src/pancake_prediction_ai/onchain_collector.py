@@ -97,6 +97,65 @@ def _address_call(
     return address
 
 
+def read_prediction_round_at_anchor(
+    client: ReadOnlyJsonRpcClient,
+    *,
+    anchor: BlockAnchor,
+    epoch: int,
+    prediction_contract: str = BNB_PREDICTION_CONTRACT,
+) -> PredictionRoundState:
+    """Read one explicit Prediction epoch at an already pinned BSC block."""
+
+    anchor.validate()
+    if epoch < 0:
+        raise ValueError("epoch must be non-negative")
+    round_raw = eth_call_at(
+        client,
+        to=prediction_contract,
+        data=encode_call(
+            "rounds(uint256)",
+            argument_types=("uint256",),
+            arguments=(epoch,),
+        ),
+        anchor=anchor,
+    )
+    values = decode_result(round_raw, ROUND_OUTPUT_TYPES)
+    state = PredictionRoundState(
+        epoch=int(values[0]),
+        start_timestamp=int(values[1]),
+        lock_timestamp=int(values[2]),
+        close_timestamp=int(values[3]),
+        lock_price=int(values[4]),
+        close_price=int(values[5]),
+        lock_oracle_id=int(values[6]),
+        close_oracle_id=int(values[7]),
+        total_amount_wei=int(values[8]),
+        bull_amount_wei=int(values[9]),
+        bear_amount_wei=int(values[10]),
+        reward_base_cal_amount_wei=int(values[11]),
+        reward_amount_wei=int(values[12]),
+        oracle_called=bool(values[13]),
+    )
+    state.validate()
+    if state.start_timestamp != 0 and state.epoch != epoch:
+        raise ValueError(f"rounds({epoch}) returned epoch {state.epoch}")
+    return state
+
+
+def read_prediction_buffer_seconds_at_anchor(
+    client: ReadOnlyJsonRpcClient,
+    *,
+    anchor: BlockAnchor,
+    prediction_contract: str = BNB_PREDICTION_CONTRACT,
+) -> int:
+    """Read the buffer used by the contract's current refundability condition."""
+
+    value = _single_uint(client, anchor, prediction_contract, "bufferSeconds()")
+    if value < 0:
+        raise AssertionError("bufferSeconds decoded negative")
+    return value
+
+
 def collect_protocol_snapshot_at_anchor(
     client: ReadOnlyJsonRpcClient,
     *,
@@ -114,35 +173,12 @@ def collect_protocol_snapshot_at_anchor(
     current_epoch = _single_uint(client, anchor, prediction_contract, "currentEpoch()")
     treasury_fee_units = _single_uint(client, anchor, prediction_contract, "treasuryFee()")
     oracle_address = _address_call(client, anchor, prediction_contract, "oracle()")
-
-    round_raw = eth_call_at(
+    round_state = read_prediction_round_at_anchor(
         client,
-        to=prediction_contract,
-        data=encode_call(
-            "rounds(uint256)",
-            argument_types=("uint256",),
-            arguments=(current_epoch,),
-        ),
         anchor=anchor,
+        epoch=current_epoch,
+        prediction_contract=prediction_contract,
     )
-    round_values = decode_result(round_raw, ROUND_OUTPUT_TYPES)
-    round_state = PredictionRoundState(
-        epoch=int(round_values[0]),
-        start_timestamp=int(round_values[1]),
-        lock_timestamp=int(round_values[2]),
-        close_timestamp=int(round_values[3]),
-        lock_price=int(round_values[4]),
-        close_price=int(round_values[5]),
-        lock_oracle_id=int(round_values[6]),
-        close_oracle_id=int(round_values[7]),
-        total_amount_wei=int(round_values[8]),
-        bull_amount_wei=int(round_values[9]),
-        bear_amount_wei=int(round_values[10]),
-        reward_base_cal_amount_wei=int(round_values[11]),
-        reward_amount_wei=int(round_values[12]),
-        oracle_called=bool(round_values[13]),
-    )
-    round_state.validate()
     if round_state.epoch != current_epoch:
         raise ValueError("rounds(currentEpoch) returned a different epoch")
 
