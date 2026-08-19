@@ -17,6 +17,9 @@ from pancake_prediction_ai.runtime_fingerprint import (
     capture_runtime_fingerprint,
     fingerprint_sha256,
 )
+from pancake_prediction_ai.stage5b_source_fingerprint import (
+    capture_stage5b_source_fingerprint,
+)
 
 
 CHAINLINK_ORACLE = "0x2222222222222222222222222222222222222222"
@@ -158,9 +161,10 @@ def qualified_stage5b(
     if execution_changes:
         execution.update(execution_changes)
     payload: dict[str, object] = {
-        "schema": "stage5b_verified_local_bsc_fork_execution_v3",
+        "schema": "stage5b_verified_local_bsc_fork_execution_v4",
         "probe_type": "verified_local_bsc_fork_prediction_execution",
         "execution_transport": "loopback_impersonated_eth_sendTransaction",
+        "generator_source_fingerprint": capture_stage5b_source_fingerprint(),
         "fork_provenance": fork,
         "prediction_execution": execution,
         "private_key_used": False,
@@ -277,6 +281,29 @@ def test_stage5b_v2_provenance_only_evidence_no_longer_clears_stage6a() -> None:
         "transaction_signed": False,
         "mainnet_transaction_broadcast": False,
     }
+    old = Evidence(
+        EvidenceKind.STAGE5B_FORK,
+        EvidenceOrigin.OBSERVED,
+        True,
+        _digest(payload),
+        "2026-08-19T00:00:00+09:00",
+        payload,
+    )
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(),
+        stage5b=old,
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
+
+
+def test_stage5b_v3_without_source_binding_no_longer_clears_stage6a() -> None:
+    current = qualified_stage5b()
+    payload = dict(current.payload)
+    payload["schema"] = "stage5b_verified_local_bsc_fork_execution_v3"
+    payload.pop("generator_source_fingerprint")
     old = Evidence(
         EvidenceKind.STAGE5B_FORK,
         EvidenceOrigin.OBSERVED,
@@ -441,15 +468,39 @@ def test_incomplete_or_unsafe_stage5b_execution_cannot_clear_gate(changes: dict[
     "changes",
     [
         {"execution_transport": "remote_rpc"},
+        {"generator_source_fingerprint": {}},
         {"private_key_used": True},
         {"raw_signed_transaction_used": True},
         {"mainnet_transaction_broadcast": True},
     ],
 )
-def test_unsafe_stage5b_top_level_claims_cannot_clear_gate(changes: dict[str, object]) -> None:
+def test_unsafe_or_unbound_stage5b_top_level_claims_cannot_clear_gate(changes: dict[str, object]) -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=qualified_stage5a(),
         stage5b=qualified_stage5b(top_changes=changes),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
+
+
+def test_stage5b_source_manifest_tamper_fails_even_when_artifact_hash_is_recomputed() -> None:
+    current = capture_stage5b_source_fingerprint()
+    tampered = {
+        "algorithm": current["algorithm"],
+        "files": dict(current["files"]),
+        "aggregate_sha256": current["aggregate_sha256"],
+    }
+    first_path = next(iter(tampered["files"]))
+    tampered["files"][first_path] = "0" * 64
+    tampered["aggregate_sha256"] = hashlib.sha256(
+        json.dumps(tampered["files"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    stage5b = qualified_stage5b(top_changes={"generator_source_fingerprint": tampered})
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(),
+        stage5b=stage5b,
         shadow=qualified_shadow(),
         safety=safety(),
     )
