@@ -139,12 +139,14 @@ def build_historical_dataset_artifact(
     assumed_binance_latency_ns: int,
     assumed_onchain_latency_ns: int,
     feature_policy: PortableFeaturePolicy = PortableFeaturePolicy(),
+    prediction_interval_seconds: int | None = None,
 ) -> HistoricalDatasetArtifact:
     """Freeze historical examples and source-store identity into one digest.
 
     This is a Stage-3 input artifact only. It deliberately requires a
-    reconstructed store and records all replay-latency assumptions so the file
-    cannot be mistaken for observed/shadow evidence.
+    reconstructed store and records replay assumptions. When a scheduled
+    Prediction interval is known it is digest-bound as well, because that value
+    determines the leakage-safe decision clock used to build each example.
     """
 
     if store.mode != "reconstructed":
@@ -159,6 +161,8 @@ def build_historical_dataset_artifact(
         raise ValueError("decision_lead_ns must be positive")
     if assumed_binance_latency_ns < 0 or assumed_onchain_latency_ns < 0:
         raise ValueError("availability latency assumptions must be non-negative")
+    if prediction_interval_seconds is not None and prediction_interval_seconds <= 0:
+        raise ValueError("prediction_interval_seconds must be positive when supplied")
     if not result.examples:
         raise ValueError("historical dataset artifact requires at least one example")
     if not result.feature_names:
@@ -181,6 +185,14 @@ def build_historical_dataset_artifact(
                 f"feature schema mismatch for round {row['round_id']}: {names} != {expected_names}"
             )
 
+    assumptions: dict[str, Any] = {
+        "decision_lead_ns": decision_lead_ns,
+        "binance_availability_latency_ns": assumed_binance_latency_ns,
+        "onchain_availability_latency_ns": assumed_onchain_latency_ns,
+    }
+    if prediction_interval_seconds is not None:
+        assumptions["prediction_interval_seconds"] = prediction_interval_seconds
+
     payload: dict[str, Any] = {
         "schema": DATASET_ARTIFACT_SCHEMA,
         "dataset_id": dataset_id,
@@ -190,11 +202,7 @@ def build_historical_dataset_artifact(
             "tip_hash": _store_tip(store),
             "event_count": len(store.read_all_ingest_order()),
         },
-        "assumptions": {
-            "decision_lead_ns": decision_lead_ns,
-            "binance_availability_latency_ns": assumed_binance_latency_ns,
-            "onchain_availability_latency_ns": assumed_onchain_latency_ns,
-        },
+        "assumptions": assumptions,
         "feature_policy": _feature_policy_payload(feature_policy),
         "feature_names": list(expected_names),
         "examples": examples,
@@ -214,6 +222,13 @@ def _validate_payload(payload: Mapping[str, Any]) -> None:
         raise ValueError("unsupported historical dataset artifact schema")
     if payload.get("source_event_store", {}).get("availability_mode") != "reconstructed":
         raise ValueError("dataset artifact source mode must be reconstructed")
+    assumptions = payload.get("assumptions")
+    if not isinstance(assumptions, Mapping):
+        raise ValueError("dataset artifact assumptions are invalid")
+    interval = assumptions.get("prediction_interval_seconds")
+    if interval is not None:
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
+            raise ValueError("dataset artifact Prediction interval is invalid")
     feature_names = payload.get("feature_names")
     if not isinstance(feature_names, list) or not feature_names:
         raise ValueError("dataset artifact feature_names are invalid")
