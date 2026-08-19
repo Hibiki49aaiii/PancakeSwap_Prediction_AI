@@ -45,12 +45,14 @@ Event Store -> deterministic replay -> data quality -> feature families
 | 3 | Purged OOS | **Label-availability-safe folds, calibration split and train-only TIE prior implemented** |
 | 4 | Paper / Shadow | **Observed collection, promoted-model inference, EV decision, later settlement/reconcile/summary and hash-bound HYBRID evidence implemented; real multi-round evidence still required** |
 | 5A | Durable execution fault model | **SQLite restart/nonce/UNKNOWN/finalization drill, runtime-bound schema evidence and CLI implemented; target-runtime evidence must be produced explicitly** |
-| 5B | BSC fork execution | **Upstream-verified, target-contract-bound local-fork harness and CLI implemented; BLOCKED until actual local BSC fork evidence is recorded** |
-| 6A | Tiny-live safety preflight | **Schema/runtime/protocol-bound Stage5 + qualified HYBRID shadow gate implemented; generic observed JSON cannot clear it** |
+| 5B | BSC fork execution | **Real upstream-verified BSC fork execution observed and passed with source-bound v4 evidence; BULL/BEAR/revert/restore paths verified** |
+| 6A | Tiny-live safety preflight | **Schema/runtime/protocol/source-bound Stage5 + qualified HYBRID shadow gate implemented; blocked until remaining Stage5A/shadow/OOS evidence is produced** |
 | 6B | Funded validation | Not implemented |
 | 7 | Production | Not reached |
 
-Latest verified code checkpoint: **316/316 tests passed** on GitHub Actions for head `5f4a56e457a8e044e830d6d6bd8a2ad1713f40de`.
+Latest verified unit checkpoint: **379/379 tests passed** on GitHub Actions for head `5dd1ad5aa18033a653d657973cf8d332f299d658`.
+
+Verified real Stage 5B v4 checkpoint: GitHub Actions run `32272624509` produced `passed=true` source-bound local-fork evidence at BSC fork block `116875488`. The canonical payload SHA-256 is `08909496e8f94375a52b9677fbe930a771276bf20e356b694b36d3ce0c58eedd`; its Stage 5B generator-source aggregate SHA-256 is `10796e82881242a44790db76861b0c3eb31073cf3fc8b138c1dd1b243875d949`.
 
 ## Protocol normalization
 
@@ -203,24 +205,41 @@ The drill uses synthetic nonces and transaction hashes. It creates, signs and br
 
 Stage 5A schema `stage5a_execution_drill_v2` additionally embeds a canonical `execution_runtime_fingerprint_v1` covering Python implementation/version, OS/release/architecture, SQLite library/source ID and sorted SQLite compile options. Hostname, username, machine ID and filesystem path are intentionally excluded. Stage 6A recomputes the current runtime fingerprint and rejects Stage 5A evidence from a different runtime stack.
 
-### Stage 5B verified local BSC fork
+### Stage 5B verified and executed local BSC fork
 
 A local node reporting `chainId=56` is not sufficient evidence of a BSC fork.
 
-`probe_verified_local_bsc_fork` requires an independent read-only upstream BSC RPC and verifies:
+The provenance layer `probe_verified_local_bsc_fork` requires an independent read-only upstream BSC RPC and verifies:
 
 - local and upstream chain IDs are 56;
 - the local fork-base block hash equals the upstream BSC hash at the same block number;
 - Prediction and Chainlink bytecode at the fork block match upstream;
 - local `evm_mine` advances the development fork;
-- `anvil_reset` returns to the same fork base;
-- post-reset block hash and bytecode still match upstream.
+- the public reset abstraction restores the exact pre-mutation fork base using `evm_snapshot` / `evm_revert` rather than re-forking from moving upstream `latest`;
+- post-restore block hash and bytecode still match upstream.
 
-Stage 5B schema `stage5b_verified_local_bsc_fork_v2` also records the exact Prediction contract and Chainlink oracle addresses used by the probe. Stage 6A requires the Prediction address to equal the canonical BNB Prediction target and the evidence Chainlink address to equal the oracle bound by the current preflight state.
+Provenance-only schema `stage5b_verified_local_bsc_fork_v2` records the exact Prediction contract and Chainlink oracle addresses used by the probe, but **cannot clear Stage 6A**.
 
-Only the verified path can produce `passed=true` Stage 5B evidence. The legacy local-only mechanics probe may pass locally but its Stage 5B gate evidence remains failed because upstream provenance is missing.
+The executed evidence schema is `stage5b_verified_local_bsc_fork_execution_v4`. It additionally requires real local-fork Prediction execution and records/verifies:
 
-`LocalForkJsonRpcClient` has a narrow allowlist containing only chain/block/code inspection plus local `evm_mine` and `anvil_reset`. Account access, signing, `eth_sendTransaction` and `eth_sendRawTransaction` are rejected before transport.
+- canonical BNB Prediction target and active `oracle()` Chainlink binding;
+- successful local `betBull(uint256)` and `betBear(uint256)` transactions from deterministic node-impersonated EOAs;
+- mined receipts and expected Bet events;
+- ledger position/amount and round-pool amount deltas;
+- duplicate same-wallet bet rejection;
+- below-`minBetAmount` rejection;
+- exact state restoration after BULL and BEAR mutation cycles;
+- `private_key_used=false`;
+- `raw_signed_transaction_used=false`;
+- `mainnet_transaction_broadcast=false`.
+
+v4 also embeds `generator_source_fingerprint`, a canonical SHA-256 manifest of the installed Python source files that implement the Stage 5B trust path. Stage 6A recomputes the manifest from its own installed source and rejects evidence generated by a byte-for-byte different Stage 5B implementation. This is a same-code binding, not remote build/runner attestation.
+
+The real v4 evidence produced by run `32272624509` passed at fork block `116875488` against Prediction `0x18b2a687610328590bc8f2e5fedde3b582a49cda` and active oracle `0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee`. Its canonical payload and source-manifest hashes were independently recomputed and matched the recorded values.
+
+`LocalForkJsonRpcClient` is loopback-only. It can submit `eth_sendTransaction` only to that local development node with node-impersonated accounts. It exposes no private-key input, rejects `eth_sendRawTransaction` and signing RPCs before transport, and uses a separate read-only client for upstream BSC.
+
+The expensive real-fork workflow `.github/workflows/stage5b-fork-evidence.yml` is manual-only through `workflow_dispatch` after the v4 checkpoint was established.
 
 ## Stage 6A evidence gate
 
@@ -229,7 +248,7 @@ Stage 6A can only become ready when all three evidence families and runtime safe
 Required evidence:
 
 - Stage 5A: `origin=observed`, `passed=true`, correct `stage5a_execution_drill_v2` schema, all durability checks true, zero unresolved intents, no transaction/signing/broadcast activity, and an execution runtime fingerprint equal to the runtime evaluating preflight;
-- Stage 5B: `origin=observed`, `passed=true`, correct `stage5b_verified_local_bsc_fork_v2` schema, upstream block-hash/bytecode provenance matches, exact target contract addresses match current protocol binding, and no signing/mainnet broadcast activity;
+- Stage 5B: `origin=observed`, `passed=true`, correct `stage5b_verified_local_bsc_fork_execution_v4` schema, current generator-source fingerprint, upstream block-hash/bytecode provenance, exact protocol binding, successful BULL/BEAR local execution/revert/restore checks, and no private-key/raw-signed/mainnet-broadcast activity;
 - Shadow economics: `origin=hybrid`, qualified `shadow_gate_evidence_v1`, minimum settled-round/PnL/expected-return criteria, drawdown bound, all represented decisions settled, and claim/refund gas fully modeled when required.
 
 Runtime preflight additionally requires:
@@ -245,7 +264,7 @@ Runtime preflight additionally requires:
 - signing disabled during preflight;
 - mainnet broadcasting disabled during preflight.
 
-The gate recomputes payload SHA-256 and revalidates the stage-specific schema. Generic `origin=observed, passed=true` JSON, `assumed`, `self_reported`, misclassified shadow evidence, evidence from another runtime stack, and fork evidence for another protocol address cannot clear the gate.
+The gate recomputes payload SHA-256 and revalidates the stage-specific schema. Generic `origin=observed, passed=true` JSON, `assumed`, `self_reported`, misclassified shadow evidence, evidence from another runtime stack, old Stage 5B v2/v3 evidence, source-manifest-tampered v4 evidence, and fork evidence for another protocol address cannot clear the gate.
 
 `Evidence.from_json_bytes` also requires strict JSON top-level types. In particular, `passed` must be a real JSON boolean; truthy strings such as `"false"` cannot be coerced into a pass.
 
@@ -319,7 +338,7 @@ ppai-artifact build-shadow-gate-evidence \
 
 ## Readiness CLI
 
-`ppai-readiness` generates Stage 5 evidence without exposing a signer or broadcast path.
+`ppai-readiness` generates Stage 5 evidence without exposing a mainnet signer or broadcast path.
 
 ```bash
 # Stage 5A: run the actual local SQLite restart/durability drill
@@ -328,34 +347,38 @@ ppai-readiness stage5a-drill \
   --required-confirmations 3 \
   --output artifacts/stage5a-evidence.json
 
-# Stage 5B: verify an actual local BSC fork against an independent upstream BSC RPC
+# Stage 5B diagnostic: verify local-fork provenance only (v2, not Stage6A-eligible)
 ppai-readiness stage5b-verify-fork \
   --local-rpc-url http://127.0.0.1:8545 \
   --upstream-rpc-url <READ_ONLY_BSC_RPC_URL> \
-  --prediction-contract <PANCAKE_PREDICTION_CONTRACT> \
-  --chainlink-contract <ACTIVE_CHAINLINK_ORACLE> \
-  --output artifacts/stage5b-evidence.json
+  --output artifacts/stage5b-provenance.json
+
+# Stage 5B gate evidence: verify provenance and execute local BULL/BEAR paths (v4)
+ppai-readiness stage5b-execute-fork \
+  --local-rpc-url http://127.0.0.1:8545 \
+  --upstream-rpc-url <READ_ONLY_BSC_RPC_URL> \
+  --min-window-margin-seconds 10 \
+  --output artifacts/stage5b-v4-evidence.json
 ```
 
-Stage 5B remains **BLOCKED** until the second command is executed against a genuine local BSC fork and produces `passed=true` observed evidence. Mock/unit success is not Stage 5B evidence.
+The active Chainlink oracle is discovered from canonical Prediction `oracle()` when `--chainlink-contract` is omitted. A successful Stage 5B v4 artifact is local-fork execution evidence only; it is not funded-live or profitability evidence.
 
 ## Security boundary
 
 Research/model layers do not hold private keys or signing authority. AI/LLM components may assist with research, feature analysis, evaluation and explanation; they are not wallet controllers.
 
-The observed collector and upstream RPC client are read-only. The local-fork client permits only development-node mine/reset controls in addition to read calls. None of the current CLIs expose a private-key argument or a transaction-broadcast method. Stage 6B funded validation remains a separate implementation and operational gate.
+The observed collector and upstream BSC RPC client are read-only. The local-fork execution client is restricted to loopback development nodes and deterministic node-impersonated accounts. It never accepts a private key or raw signed transaction, and it cannot submit local execution calls to the separate upstream client. Stage 6B funded validation remains a separate implementation and operational gate.
 
 ## Evidence status
 
 Infrastructure readiness is not evidence of profitability.
 
-Still required before any Stage 6B funded-validation decision:
+Stage 5B fork execution evidence is now established. Still required before any Stage 6B funded-validation decision:
 
 - real reconstructed historical/OOS metrics from the current three-outcome pipeline;
 - real multi-round observed-market HYBRID shadow economics with all rounds settled and costs fully modeled;
 - explicit Stage 5A v2 evidence generated on the runtime that will evaluate preflight;
-- actual upstream-verified and target-contract-bound local BSC fork Stage 5B v2 evidence;
-- a Stage 6A preflight pass with signing and mainnet broadcasting still disabled.
+- an actual Stage 6A preflight pass with signing and mainnet broadcasting still disabled.
 
 ## Next development phase
 
@@ -367,8 +390,8 @@ Phase 4.3 is now primarily evidence production:
 4. establish baseline three-outcome OOS metrics;
 5. accumulate, settle and freeze enough observed-market HYBRID shadow rounds to evaluate economics;
 6. run `ppai-readiness stage5a-drill` on the intended validation runtime;
-7. run the Stage 5B verifier against a genuine local BSC fork using the canonical Prediction target and active oracle;
-8. only then evaluate Stage 6A readiness.
+7. evaluate Stage 6A readiness only when the remaining evidence families pass;
+8. keep Stage 6B funded validation as a separate explicit operational/legal gate.
 
 ## Development rule
 
