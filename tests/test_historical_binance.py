@@ -68,6 +68,37 @@ def test_historical_backfill_uses_assumed_availability_and_separate_store(tmp_pa
     assert client.calls[1] == (12, None, None, 2)
 
 
+def test_historical_backfill_retry_is_idempotent_but_revalidates_sequence(tmp_path) -> None:
+    batches = [
+        [_trade(10, 1000, captured_at_ns=99_000), _trade(11, 1100, captured_at_ns=99_000)],
+        [_trade(12, 1200, captured_at_ns=100_000), _trade(13, 2100, captured_at_ns=100_000)],
+    ]
+    with EventStore(tmp_path / "historical.sqlite", mode="reconstructed") as store:
+        first = backfill_binance_aggregate_trades(
+            FakeClient(batches),
+            store,
+            dataset_id="retry-v1",
+            start_time_ms=1000,
+            end_time_ms=2000,
+            assumed_latency_ns=5_000_000,
+            batch_limit=2,
+        )
+        original_hashes = tuple(item.event_hash for item in store.read_all_ingest_order())
+        second = backfill_binance_aggregate_trades(
+            FakeClient(batches),
+            store,
+            dataset_id="retry-v1",
+            start_time_ms=1000,
+            end_time_ms=2000,
+            assumed_latency_ns=5_000_000,
+            batch_limit=2,
+        )
+        assert first.events_appended == 3
+        assert second.events_appended == 0
+        assert tuple(item.event_hash for item in store.read_all_ingest_order()) == original_hashes
+        assert store.verify_chain()
+
+
 def test_historical_backfill_refuses_observed_store(tmp_path) -> None:
     with EventStore(tmp_path / "observed.sqlite") as store:
         with pytest.raises(ValueError, match="reconstructed Event Store"):
