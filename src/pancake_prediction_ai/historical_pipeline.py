@@ -17,7 +17,9 @@ from .historical_dataset import (
 from .historical_store import (
     bind_reconstruction_dataset,
     bind_reconstruction_prediction_interval_seconds,
+    bind_reconstruction_subgraph_latency_ns,
     reconstruction_prediction_interval_seconds,
+    reconstruction_subgraph_latency_ns,
     verify_reconstruction_dataset_binding,
 )
 from .pancake_contract import BNB_PREDICTION_CONTRACT
@@ -75,6 +77,7 @@ class HistoricalPipelineConfig:
     assumed_onchain_latency_ns: int
     feature_policy: PortableFeaturePolicy = PortableFeaturePolicy()
     prediction_interval_seconds: int | None = None
+    assumed_subgraph_latency_ns: int | None = None
 
     def validate(self) -> None:
         if not self.dataset_id:
@@ -87,16 +90,17 @@ class HistoricalPipelineConfig:
             raise ValueError("assumed_onchain_latency_ns must be non-negative")
         if self.prediction_interval_seconds is not None and self.prediction_interval_seconds <= 0:
             raise ValueError("prediction_interval_seconds must be positive when supplied")
+        if self.assumed_subgraph_latency_ns is not None and self.assumed_subgraph_latency_ns < 0:
+            raise ValueError("assumed_subgraph_latency_ns must be non-negative when supplied")
         self.feature_policy.validate()
 
 
 class HistoricalPipeline:
     """High-level, namespace-locked entrypoint for reconstructed research.
 
-    Binding occurs at construction time and persists as SQLite metadata/trigger
-    state. When a scheduled Prediction interval has been established by an
-    acquisition path, reopening the same store automatically recovers it so
-    artifact generation cannot fall back to the later LockRound transaction.
+    Dataset identity, scheduled Prediction interval, and optional subgraph
+    availability latency persist in SQLite so later artifact generation cannot
+    silently reinterpret the original replay assumptions.
     """
 
     def __init__(
@@ -113,6 +117,8 @@ class HistoricalPipeline:
         if not verify_reconstruction_dataset_binding(store):
             raise ValueError("reconstructed dataset namespace binding verification failed")
 
+        effective_config = config
+
         persisted_interval = reconstruction_prediction_interval_seconds(store)
         if config.prediction_interval_seconds is not None:
             bind_reconstruction_prediction_interval_seconds(
@@ -120,11 +126,23 @@ class HistoricalPipeline:
                 config.prediction_interval_seconds,
             )
             persisted_interval = config.prediction_interval_seconds
-        effective_config = config
         if config.prediction_interval_seconds is None and persisted_interval is not None:
             effective_config = replace(
-                config,
+                effective_config,
                 prediction_interval_seconds=persisted_interval,
+            )
+
+        persisted_subgraph_latency = reconstruction_subgraph_latency_ns(store)
+        if config.assumed_subgraph_latency_ns is not None:
+            bind_reconstruction_subgraph_latency_ns(
+                store,
+                config.assumed_subgraph_latency_ns,
+            )
+            persisted_subgraph_latency = config.assumed_subgraph_latency_ns
+        if config.assumed_subgraph_latency_ns is None and persisted_subgraph_latency is not None:
+            effective_config = replace(
+                effective_config,
+                assumed_subgraph_latency_ns=persisted_subgraph_latency,
             )
 
         self.store = store
@@ -247,4 +265,5 @@ class HistoricalPipeline:
             assumed_onchain_latency_ns=self.config.assumed_onchain_latency_ns,
             feature_policy=self.config.feature_policy,
             prediction_interval_seconds=self.config.prediction_interval_seconds,
+            subgraph_availability_latency_ns=self.config.assumed_subgraph_latency_ns,
         )
