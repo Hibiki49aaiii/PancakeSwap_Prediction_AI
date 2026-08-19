@@ -7,6 +7,9 @@ on:
         description: Read-only BSC RPC URL
         required: false
         default: https://bsc-dataseed.bnbchain.org
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - v0.7/evidence-gates
@@ -36,10 +39,10 @@ jobs:
           mkdir -p artifacts
           python - <<'PY' | tee artifacts/historical-rpc-capability.json
           import json
+          import os
           from pancake_prediction_ai.abi_codec import decode_result, encode_call
           from pancake_prediction_ai.pancake_contract import BNB_PREDICTION_CONTRACT
           from pancake_prediction_ai.read_only_rpc import ReadOnlyJsonRpcClient
-          import os
 
           client = ReadOnlyJsonRpcClient(os.environ["RPC_URL"], timeout_seconds=15.0)
           head = int(client.call("eth_blockNumber", []), 16)
