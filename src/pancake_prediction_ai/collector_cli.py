@@ -15,6 +15,7 @@ from .observed_cycle import run_observed_shadow_cycle
 from .onchain_ingest import collect_and_persist_protocol_snapshot
 from .portable_features import PortableFeaturePolicy
 from .read_only_rpc import ReadOnlyJsonRpcClient
+from .shadow_economics import ShadowEconomicPolicy
 from .trained_model_artifact import load_promoted_model_artifact
 
 
@@ -29,6 +30,20 @@ def _non_negative_int(value: str) -> int:
     parsed = int(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def _unit_interval_float(value: str) -> float:
+    parsed = float(value)
+    if not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("must be in [0, 1]")
     return parsed
 
 
@@ -92,13 +107,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     cycle = sub.add_parser(
         "shadow-cycle-once",
-        help="Collect Binance + pinned BSC observations and run one promoted-model shadow inference",
+        help="Collect observations, run promoted-model inference, and optionally record a simulated EV action",
     )
     cycle.add_argument("--rpc-url", required=True)
     cycle.add_argument("--model-artifact", type=Path, required=True)
     cycle.add_argument("--symbol", default="BNBUSDT")
     cycle.add_argument("--trade-limit", type=_positive_int, default=1000)
     cycle.add_argument("--rpc-timeout-seconds", type=float, default=10.0)
+    cycle.add_argument(
+        "--shadow-stake-wei",
+        type=_positive_int,
+        help="Enable paper EV selection using this simulated fixed stake",
+    )
+    cycle.add_argument("--shadow-gas-cost-wei", type=_non_negative_int, default=0)
+    cycle.add_argument("--shadow-same-side-inflow-wei", type=_non_negative_int, default=0)
+    cycle.add_argument("--shadow-opposite-side-inflow-wei", type=_non_negative_int, default=0)
+    cycle.add_argument(
+        "--shadow-execution-success-probability",
+        type=_unit_interval_float,
+        default=1.0,
+    )
+    cycle.add_argument(
+        "--shadow-min-expected-return",
+        type=_non_negative_float,
+        default=0.0,
+    )
 
     verify = sub.add_parser("verify-store", help="Verify the Event Store hash chain")
     verify.add_argument(
@@ -238,6 +271,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise SystemExit("--trade-limit must be in [1, 1000]")
             if args.rpc_timeout_seconds <= 0:
                 raise SystemExit("--rpc-timeout-seconds must be positive")
+            economic_policy = None
+            if args.shadow_stake_wei is not None:
+                economic_policy = ShadowEconomicPolicy(
+                    stake_wei=args.shadow_stake_wei,
+                    gas_cost_wei=args.shadow_gas_cost_wei,
+                    same_side_inflow_wei=args.shadow_same_side_inflow_wei,
+                    opposite_side_inflow_wei=args.shadow_opposite_side_inflow_wei,
+                    execution_success_probability=args.shadow_execution_success_probability,
+                    min_expected_return=args.shadow_min_expected_return,
+                )
             artifact = load_promoted_model_artifact(args.model_artifact)
             cycle = run_observed_shadow_cycle(
                 store,
@@ -249,12 +292,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 symbol=args.symbol,
                 trade_limit=args.trade_limit,
+                economic_policy=economic_policy,
             )
             inference = cycle.inference
+            economic_text = "economic=-"
+            if cycle.economic is not None:
+                selected = "-" if cycle.economic.selected_side is None else cycle.economic.selected_side.value
+                best_ev = max(cycle.economic.bull.expected_return_on_stake, cycle.economic.bear.expected_return_on_stake)
+                economic_text = (
+                    f"economic={cycle.economic.action.value} side={selected} "
+                    f"best_expected_return={best_ev:.8f}"
+                )
             print(
                 f"shadow-cycle epoch={cycle.protocol.snapshot.current_epoch} "
                 f"accepted={inference.accepted} blockers={','.join(inference.blockers) or '-'} "
-                f"outcome={inference.predicted_outcome or '-'} "
+                f"outcome={inference.predicted_outcome or '-'} {economic_text} "
                 f"events={cycle.store_event_count} tip={cycle.store_tip_hash}"
             )
             return 0 if inference.accepted else 3
