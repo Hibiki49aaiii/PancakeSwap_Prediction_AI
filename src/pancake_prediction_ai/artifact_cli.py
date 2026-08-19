@@ -14,6 +14,7 @@ from .evaluation_artifact import (
 from .event_store import EventStore
 from .historical_pipeline import HistoricalPipeline, HistoricalPipelineConfig
 from .research_manifest import build_research_run_manifest
+from .shadow_evidence_artifact import build_shadow_economic_evidence_artifact
 from .tie_prior import TiePriorPolicy
 from .trained_model_artifact import (
     PromotedModelConfig,
@@ -113,6 +114,13 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--evaluation", type=Path, required=True)
     manifest.add_argument("--model", type=Path, required=True)
     manifest.add_argument("--output", type=Path, required=True)
+
+    shadow = sub.add_parser(
+        "build-shadow-evidence",
+        help="Freeze observed-store paper economics into a lineage-bound hybrid shadow artifact",
+    )
+    shadow.add_argument("--store", type=Path, required=True)
+    shadow.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -210,6 +218,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"manifest sha256={manifest.artifact_sha256} "
             f"dataset={manifest.payload['dataset_artifact_sha256']} "
             f"oos_count={metrics['count']} output={args.output}"
+        )
+        return 0
+
+    if args.command == "build-shadow-evidence":
+        with EventStore(args.store, mode="observed") as store:
+            artifact = build_shadow_economic_evidence_artifact(
+                store,
+                generated_at_ns=generated_at_ns,
+            )
+        artifact.write(args.output)
+        summary = artifact.payload["summary"]
+        completeness = artifact.payload["completeness"]
+        print(
+            f"shadow-evidence sha256={artifact.artifact_sha256} "
+            f"decisions={summary['decision_rounds']} settled={summary['settled_rounds']} "
+            f"unresolved={completeness['unresolved_rounds']} "
+            f"class={artifact.payload['evidence_classification']['artifact_class']} "
+            f"output={args.output}"
         )
         return 0
 
