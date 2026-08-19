@@ -49,8 +49,12 @@ def backfill_binance_aggregate_trades(
     The first REST page is anchored by `startTime`; continuation pages use the
     last aggregate trade ID + 1. The API response-arrival time remains recorded
     in reconstruction metadata, while replay availability is explicitly set to
-    `trade_time + assumed_latency`. This function requires a reconstructed-mode
-    Event Store and cannot write into the observed/shadow store.
+    `trade_time + assumed_latency`.
+
+    The requested interval is safe to replay after interruption: deterministic
+    reconstructed event IDs already present in the store are skipped rather than
+    inserted again. Sequence validation still runs over every fetched page, so an
+    idempotent retry cannot hide a Binance aggregate-trade gap.
     """
 
     if store.mode != "reconstructed":
@@ -66,6 +70,9 @@ def backfill_binance_aggregate_trades(
     if max_batches <= 0:
         raise ValueError("max_batches must be positive")
 
+    existing_event_ids = {
+        stored.event.event_id for stored in store.read_all_ingest_order()
+    }
     appended = 0
     first_id: int | None = None
     last_id: int | None = None
@@ -73,7 +80,7 @@ def backfill_binance_aggregate_trades(
     last_time: int | None = None
     next_from_id: int | None = None
 
-    for batch_index in range(max_batches):
+    for _batch_index in range(max_batches):
         if next_from_id is None:
             rows = client.collect_aggregate_trades(
                 symbol,
@@ -114,7 +121,9 @@ def backfill_binance_aggregate_trades(
                 captured_at_ns=row.observed_at_ns,
             )
             reconstructed = reconstruct_event(row, policy=policy)
-            reconstructed_batch.append(reconstructed)
+            if reconstructed.event_id not in existing_event_ids:
+                reconstructed_batch.append(reconstructed)
+                existing_event_ids.add(reconstructed.event_id)
             if first_id is None:
                 first_id = trade_id
                 first_time = trade_time
