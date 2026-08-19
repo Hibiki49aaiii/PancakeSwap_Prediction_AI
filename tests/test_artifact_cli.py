@@ -11,6 +11,8 @@ def test_artifact_cli_exposes_reproducible_pipeline_commands() -> None:
     assert "build-dataset" in help_text
     assert "evaluate-oos" in help_text
     assert "promote-model" in help_text
+    assert "build-manifest" in help_text
+    assert "build-shadow-evidence" in help_text
 
 
 def test_artifact_cli_has_no_wallet_signing_or_broadcast_arguments() -> None:
@@ -37,6 +39,20 @@ def test_build_dataset_requires_explicit_latency_assumptions() -> None:
                 "--output", "dataset.json",
             ]
         )
+
+
+def test_build_shadow_evidence_requires_observed_store_and_output_paths() -> None:
+    args = build_parser().parse_args(
+        [
+            "build-shadow-evidence",
+            "--store",
+            "observed.sqlite",
+            "--output",
+            "shadow-evidence.json",
+        ]
+    )
+    assert str(args.store).endswith("observed.sqlite")
+    assert str(args.output).endswith("shadow-evidence.json")
 
 
 @pytest.mark.parametrize("command", ["evaluate-oos", "promote-model"])
