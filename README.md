@@ -266,21 +266,23 @@ ppai-collector --store data/observed.sqlite shadow-cycle-once \
   --model-artifact <PROMOTED_MODEL_JSON> \
   --shadow-stake-wei <STAKE_WEI> \
   --shadow-gas-cost-wei <BET_GAS_WEI> \
-  --shadow-claim-gas-cost-wei <CLAIM_OR_REFUND_GAS_WEI>
+  --shadow-claim-or-refund-gas-cost-wei <CLAIM_OR_REFUND_GAS_WEI>
 
 # Reconcile pending paper decisions after their Pancake rounds settle
-ppai-collector --store data/observed.sqlite shadow-reconcile-pending --rpc-url <BSC_RPC_URL>
+ppai-collector --store data/observed.sqlite shadow-settle-pending --rpc-url <BSC_RPC_URL>
 
 # Summarize accumulated paper economics
-ppai-collector --store data/observed.sqlite shadow-economic-summary
+ppai-collector --store data/observed.sqlite shadow-summary
 
 # Reproducible historical evidence run
 ppai-collector --store data/historical.sqlite historical-evidence-run \
   --dataset-id bnb-history-v1 \
-  --start-epoch <START_EPOCH> \
-  --end-epoch <END_EPOCH> \
   --rpc-url <ARCHIVE_OR_HISTORICAL_BSC_RPC_URL> \
-  --assumed-latency-ns <LATENCY_NS>
+  --from-block <START_BLOCK> \
+  --to-block <END_BLOCK> \
+  --decision-lead-ns <DECISION_LEAD_NS> \
+  --binance-latency-ns <BINANCE_AVAILABILITY_LATENCY_NS> \
+  --onchain-latency-ns <ONCHAIN_AVAILABILITY_LATENCY_NS>
 
 # Verify stores
 ppai-collector --store data/observed.sqlite verify-store
