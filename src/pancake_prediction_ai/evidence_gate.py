@@ -30,7 +30,7 @@ class EvidenceOrigin(StrEnum):
 
 
 STAGE5A_DRILL_SCHEMA = "stage5a_execution_drill_v2"
-STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v2"
+STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_execution_v3"
 SHADOW_GATE_SCHEMA = "shadow_gate_evidence_v1"
 
 
@@ -174,8 +174,6 @@ def _valid_block_hash(value: object) -> bool:
 
 
 def _qualified_stage5a_pass(evidence: Evidence) -> bool:
-    """Accept only current-runtime evidence emitted by the Stage 5A drill schema."""
-
     if evidence.kind is not EvidenceKind.STAGE5A_DRILL:
         return False
     if evidence.origin is not EvidenceOrigin.OBSERVED or not evidence.passed:
@@ -232,7 +230,7 @@ def _qualified_stage5b_pass(
     expected_prediction_contract: str,
     expected_chainlink_oracle: str,
 ) -> bool:
-    """Accept only an upstream-verified fork of the currently bound protocol."""
+    """Accept only upstream-verified and executed local-fork evidence."""
 
     if evidence.kind is not EvidenceKind.STAGE5B_FORK:
         return False
@@ -243,15 +241,24 @@ def _qualified_stage5b_pass(
     payload = evidence.payload
     if payload.get("schema") != STAGE5B_FORK_SCHEMA:
         return False
-    if payload.get("probe_type") != "verified_local_bsc_fork":
+    if payload.get("probe_type") != "verified_local_bsc_fork_prediction_execution":
         return False
-    if payload.get("transaction_signed") is not False:
+    if payload.get("execution_transport") != "loopback_impersonated_eth_sendTransaction":
+        return False
+    if payload.get("private_key_used") is not False:
+        return False
+    if payload.get("raw_signed_transaction_used") is not False:
         return False
     if payload.get("mainnet_transaction_broadcast") is not False:
         return False
 
-    prediction_contract = payload.get("prediction_contract")
-    chainlink_contract = payload.get("chainlink_contract")
+    fork = payload.get("fork_provenance")
+    execution = payload.get("prediction_execution")
+    if not isinstance(fork, dict) or not isinstance(execution, dict):
+        return False
+
+    prediction_contract = fork.get("prediction_contract")
+    chainlink_contract = fork.get("chainlink_contract")
     if not _valid_address(prediction_contract) or not _valid_address(chainlink_contract):
         return False
     if not _valid_address(expected_prediction_contract) or not _valid_address(expected_chainlink_oracle):
@@ -261,11 +268,11 @@ def _qualified_stage5b_pass(
     if str(chainlink_contract).lower() != expected_chainlink_oracle.lower():
         return False
 
-    chain_id = _strict_int(payload, "chain_id")
-    upstream_chain_id = _strict_int(payload, "upstream_chain_id")
-    initial_block = _strict_int(payload, "initial_block")
-    mined_block = _strict_int(payload, "mined_block")
-    reset_block = _strict_int(payload, "reset_block")
+    chain_id = _strict_int(fork, "chain_id")
+    upstream_chain_id = _strict_int(fork, "upstream_chain_id")
+    initial_block = _strict_int(fork, "initial_block")
+    mined_block = _strict_int(fork, "mined_block")
+    reset_block = _strict_int(fork, "reset_block")
     if chain_id != 56 or upstream_chain_id != 56:
         return False
     if initial_block is None or initial_block <= 0:
@@ -275,7 +282,7 @@ def _qualified_stage5b_pass(
     if reset_block != initial_block:
         return False
 
-    required_true = (
+    required_fork_true = (
         "prediction_contract_code_present",
         "chainlink_contract_code_present",
         "prediction_code_present_after_reset",
@@ -290,33 +297,100 @@ def _qualified_stage5b_pass(
         "chainlink_code_matches_upstream_after_reset",
         "upstream_verified",
     )
-    if any(payload.get(key) is not True for key in required_true):
+    if any(fork.get(key) is not True for key in required_fork_true):
         return False
 
-    local_initial_hash = payload.get("local_initial_block_hash")
-    upstream_hash = payload.get("upstream_fork_block_hash")
-    local_reset_hash = payload.get("local_reset_block_hash")
-    if not all(_valid_block_hash(value) for value in (local_initial_hash, upstream_hash, local_reset_hash)):
+    local_initial_hash = fork.get("local_initial_block_hash")
+    upstream_hash = fork.get("upstream_fork_block_hash")
+    local_reset_hash = fork.get("local_reset_block_hash")
+    if not all(
+        _valid_block_hash(value)
+        for value in (local_initial_hash, upstream_hash, local_reset_hash)
+    ):
         return False
     if not (local_initial_hash == upstream_hash == local_reset_hash):
+        return False
+
+    execution_contract = execution.get("prediction_contract")
+    if not _valid_address(execution_contract):
+        return False
+    if str(execution_contract).lower() != str(prediction_contract).lower():
+        return False
+    fork_base_block = _strict_int(execution, "fork_base_block")
+    if fork_base_block != initial_block:
+        return False
+    execution_base_hash = execution.get("fork_base_block_hash")
+    if not _valid_block_hash(execution_base_hash) or execution_base_hash != upstream_hash:
+        return False
+
+    epoch = _strict_int(execution, "epoch")
+    block_timestamp = _strict_int(execution, "block_timestamp_s")
+    start_timestamp = _strict_int(execution, "round_start_timestamp_s")
+    lock_timestamp = _strict_int(execution, "round_lock_timestamp_s")
+    min_bet = _strict_int(execution, "min_bet_amount_wei")
+    stake = _strict_int(execution, "stake_wei")
+    if epoch is None or epoch < 0:
+        return False
+    if (
+        block_timestamp is None
+        or start_timestamp is None
+        or lock_timestamp is None
+        or not (start_timestamp < block_timestamp < lock_timestamp)
+    ):
+        return False
+    if min_bet is None or min_bet <= 0 or stake is None or stake < min_bet:
+        return False
+
+    bull_account = execution.get("bull_test_account")
+    bear_account = execution.get("bear_test_account")
+    if not _valid_address(bull_account) or not _valid_address(bear_account):
+        return False
+    if str(bull_account).lower() == str(bear_account).lower():
+        return False
+
+    bull_tx_hash = execution.get("bull_tx_hash")
+    bear_tx_hash = execution.get("bear_tx_hash")
+    if not _valid_block_hash(bull_tx_hash) or not _valid_block_hash(bear_tx_hash):
+        return False
+    if bull_tx_hash == bear_tx_hash:
+        return False
+    bull_receipt_block = _strict_int(execution, "bull_receipt_block")
+    bear_receipt_block = _strict_int(execution, "bear_receipt_block")
+    if (
+        bull_receipt_block is None
+        or bull_receipt_block < initial_block + 1
+        or bear_receipt_block is None
+        or bear_receipt_block < initial_block + 1
+    ):
+        return False
+
+    required_execution_true = (
+        "bettable_window_observed",
+        "bull_tx_mined_success",
+        "bull_event_observed",
+        "bull_ledger_matches",
+        "bull_pool_delta_matches",
+        "duplicate_bull_reverted",
+        "state_restored_after_bull_reset",
+        "below_minimum_bear_reverted",
+        "bear_tx_mined_success",
+        "bear_event_observed",
+        "bear_ledger_matches",
+        "bear_pool_delta_matches",
+        "state_restored_after_bear_reset",
+    )
+    if any(execution.get(key) is not True for key in required_execution_true):
+        return False
+    if execution.get("private_key_used") is not False:
+        return False
+    if execution.get("raw_signed_transaction_used") is not False:
+        return False
+    if execution.get("mainnet_transaction_broadcast") is not False:
         return False
     return True
 
 
 def _qualified_shadow_pass(evidence: Evidence) -> bool:
-    """Accept only explicitly qualified hybrid paper/shadow economics evidence.
-
-    Shadow economics combines observed market/settlement state with simulated
-    execution. Treating an arbitrary `origin=observed, passed=true` JSON as a
-    Stage-6 prerequisite would erase that distinction. The gate therefore
-    requires a dedicated schema whose policy/metrics can be rechecked locally.
-
-    Two completeness requirements are non-negotiable at Stage 6A: every paper
-    decision represented by the evidence must be settled, and claim/refund gas
-    must be modeled whenever that operation is required. A supplied policy may
-    tighten thresholds, but it cannot turn either requirement off.
-    """
-
     if evidence.kind is not EvidenceKind.SHADOW_ECONOMICS:
         return False
     if evidence.origin is not EvidenceOrigin.HYBRID or not evidence.passed:
