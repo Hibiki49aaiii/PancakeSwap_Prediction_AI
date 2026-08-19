@@ -46,12 +46,23 @@ jobs:
         with:
           cache: false
 
-      - name: Verify upstream protocol binding
+      - name: Diagnose and verify upstream protocol binding
+        shell: bash
         run: |
+          set -o pipefail
           mkdir -p artifacts
-          ppai-readiness discover-binding \
-            --upstream-rpc-url "$UPSTREAM_RPC_URL" \
-            | tee artifacts/protocol-binding.json
+          {
+            echo "=== cast chain-id ==="
+            cast chain-id --rpc-url "$UPSTREAM_RPC_URL"
+            echo "=== canonical Prediction bytecode length ==="
+            cast code 0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA --rpc-url "$UPSTREAM_RPC_URL" | wc -c
+            echo "=== Prediction oracle() via cast ==="
+            cast call 0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA "oracle()(address)" --rpc-url "$UPSTREAM_RPC_URL"
+            echo "=== Prediction oracle() via ppai-readiness ==="
+            ppai-readiness discover-binding --upstream-rpc-url "$UPSTREAM_RPC_URL"
+          } 2>&1 | tee artifacts/protocol-binding-debug.log
+          binding_line=$(tail -n 1 artifacts/protocol-binding-debug.log)
+          printf '%s\n' "$binding_line" > artifacts/protocol-binding.json
           python - <<'PY'
           import json
           from pathlib import Path
@@ -107,7 +118,7 @@ jobs:
               --upstream-rpc-url "$UPSTREAM_RPC_URL" \
               --min-window-margin-seconds 10 \
               --output artifacts/stage5b-v3-evidence.json \
-              | tee artifacts/stage5b-attempt-${attempt}.log
+              2>&1 | tee artifacts/stage5b-attempt-${attempt}.log
             rc=${PIPESTATUS[0]}
             set -e
 
@@ -164,6 +175,8 @@ jobs:
         with:
           name: stage5b-fork-diagnostics-${{ github.run_id }}
           path: |
+            artifacts/protocol-binding-debug.log
+            artifacts/protocol-binding.json
             artifacts/anvil.log
             artifacts/stage5b-attempt-*.log
           if-no-files-found: warn
