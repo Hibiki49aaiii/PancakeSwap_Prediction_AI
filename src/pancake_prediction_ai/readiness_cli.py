@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Sequence
 
@@ -10,7 +11,7 @@ from .execution_drill import (
     run_stage5a_execution_drill,
     write_stage5a_evidence,
 )
-from .fork_execution import run_stage5b_prediction_execution_probe
+from .fork_execution import Stage5BExecutionBlocked, run_stage5b_prediction_execution_probe
 from .fork_harness import (
     RpcCall,
     make_stage5b_evidence,
@@ -18,6 +19,8 @@ from .fork_harness import (
     write_stage5b_evidence,
 )
 from .local_fork_rpc import LocalForkJsonRpcClient
+from .pancake_contract import BNB_PREDICTION_CONTRACT
+from .protocol_binding import ProtocolBinding, discover_bnb_prediction_binding
 from .read_only_rpc import ReadOnlyJsonRpcClient
 from .stage5b_evidence import make_stage5b_execution_evidence
 
@@ -39,6 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    binding = sub.add_parser(
+        "discover-binding",
+        help="Discover canonical BNB Prediction chain/oracle binding from a read-only BSC RPC",
+    )
+    binding.add_argument("--upstream-rpc-url", required=True)
+    binding.add_argument("--timeout-seconds", type=float, default=10.0)
+
     drill = sub.add_parser(
         "stage5a-drill",
         help="Run the local SQLite execution durability drill and write observed evidence",
@@ -56,8 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_argument("--local-rpc-url", required=True)
     verify.add_argument("--upstream-rpc-url", required=True)
-    verify.add_argument("--prediction-contract", required=True)
-    verify.add_argument("--chainlink-contract", required=True)
+    verify.add_argument("--prediction-contract", default=BNB_PREDICTION_CONTRACT)
+    verify.add_argument(
+        "--chainlink-contract",
+        help="Active oracle address; omitted means discover Prediction oracle() from upstream RPC",
+    )
     verify.add_argument("--output", type=Path, required=True)
     verify.add_argument("--timeout-seconds", type=float, default=10.0)
 
@@ -70,8 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     execute.add_argument("--local-rpc-url", required=True)
     execute.add_argument("--upstream-rpc-url", required=True)
-    execute.add_argument("--prediction-contract", required=True)
-    execute.add_argument("--chainlink-contract", required=True)
+    execute.add_argument("--prediction-contract", default=BNB_PREDICTION_CONTRACT)
+    execute.add_argument(
+        "--chainlink-contract",
+        help="Active oracle address; omitted means discover Prediction oracle() from upstream RPC",
+    )
     execute.add_argument("--output", type=Path, required=True)
     execute.add_argument("--stake-wei", type=_positive_int)
     execute.add_argument("--gas-limit", type=_positive_int, default=500_000)
@@ -145,16 +161,57 @@ def run_stage5b_execution_command(
     return evidence
 
 
-def _clients(local_url: str, upstream_url: str, timeout_seconds: float) -> tuple[LocalForkJsonRpcClient, ReadOnlyJsonRpcClient]:
+def _upstream_client(upstream_url: str, timeout_seconds: float) -> ReadOnlyJsonRpcClient:
     if timeout_seconds <= 0:
         raise SystemExit("--timeout-seconds must be positive")
+    return ReadOnlyJsonRpcClient(upstream_url, timeout_seconds=timeout_seconds)
+
+
+def _clients(
+    local_url: str,
+    upstream_url: str,
+    timeout_seconds: float,
+) -> tuple[LocalForkJsonRpcClient, ReadOnlyJsonRpcClient]:
+    upstream = _upstream_client(upstream_url, timeout_seconds)
     local = LocalForkJsonRpcClient(local_url, timeout_seconds=timeout_seconds)
-    upstream = ReadOnlyJsonRpcClient(upstream_url, timeout_seconds=timeout_seconds)
     return local, upstream
+
+
+def _resolve_binding(
+    upstream: ReadOnlyJsonRpcClient,
+    *,
+    prediction_contract: str,
+    chainlink_contract: str | None,
+) -> ProtocolBinding:
+    discovered = discover_bnb_prediction_binding(
+        upstream.call,
+        prediction_contract=prediction_contract,
+    )
+    if chainlink_contract is not None and chainlink_contract.lower() != discovered.chainlink_oracle.lower():
+        raise ValueError(
+            "--chainlink-contract does not match Prediction oracle() discovered from upstream RPC"
+        )
+    return discovered
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "discover-binding":
+        upstream = _upstream_client(args.upstream_rpc_url, args.timeout_seconds)
+        binding = discover_bnb_prediction_binding(upstream.call)
+        print(
+            json.dumps(
+                {
+                    "chain_id": binding.chain_id,
+                    "prediction_contract": binding.prediction_contract,
+                    "chainlink_oracle": binding.chainlink_oracle,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
 
     if args.command == "stage5a-drill":
         evidence = run_stage5a_command(
@@ -174,11 +231,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.upstream_rpc_url,
             args.timeout_seconds,
         )
+        binding = _resolve_binding(
+            upstream,
+            prediction_contract=args.prediction_contract,
+            chainlink_contract=args.chainlink_contract,
+        )
         evidence = run_stage5b_command(
             local_rpc=local.call,
             upstream_rpc=upstream.call,
-            prediction_contract=args.prediction_contract,
-            chainlink_contract=args.chainlink_contract,
+            prediction_contract=binding.prediction_contract,
+            chainlink_contract=binding.chainlink_oracle,
             output=args.output,
         )
         print(
@@ -194,16 +256,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.upstream_rpc_url,
             args.timeout_seconds,
         )
-        evidence = run_stage5b_execution_command(
-            local_rpc=local.call,
-            upstream_rpc=upstream.call,
+        binding = _resolve_binding(
+            upstream,
             prediction_contract=args.prediction_contract,
             chainlink_contract=args.chainlink_contract,
-            output=args.output,
-            stake_wei=args.stake_wei,
-            gas_limit=args.gas_limit,
-            min_window_margin_seconds=args.min_window_margin_seconds,
         )
+        try:
+            evidence = run_stage5b_execution_command(
+                local_rpc=local.call,
+                upstream_rpc=upstream.call,
+                prediction_contract=binding.prediction_contract,
+                chainlink_contract=binding.chainlink_oracle,
+                output=args.output,
+                stake_wei=args.stake_wei,
+                gas_limit=args.gas_limit,
+                min_window_margin_seconds=args.min_window_margin_seconds,
+            )
+        except Stage5BExecutionBlocked as exc:
+            print(f"stage5b-execution blocked: {exc}")
+            return 3
         print(
             f"stage5b-execution sha256={evidence.artifact_sha256} "
             f"passed={evidence.passed} stage6a_eligible={evidence.passed} "
