@@ -37,6 +37,87 @@ def evidence(
     )
 
 
+def qualified_stage5a(
+    *,
+    origin: EvidenceOrigin = EvidenceOrigin.OBSERVED,
+    passed: bool = True,
+    changes: dict[str, object] | None = None,
+) -> Evidence:
+    payload: dict[str, object] = {
+        "schema": "stage5a_execution_drill_v1",
+        "drill_type": "local_sqlite_execution_state_durability",
+        "blockchain_transaction_created": False,
+        "transaction_signed": False,
+        "transaction_broadcast": False,
+        "journal_mode_wal": True,
+        "synchronous_full": True,
+        "unresolved_recovered_after_restart": True,
+        "duplicate_active_nonce_rejected": True,
+        "unknown_state_persisted_after_missing_receipt": True,
+        "finalized_state_persisted_after_confirmations": True,
+        "terminal_nonce_released": True,
+        "terminal_reuse_cleanup_persisted": True,
+        "unresolved_count_final": 0,
+        "required_confirmations": 3,
+    }
+    if changes:
+        payload.update(changes)
+    return Evidence(
+        EvidenceKind.STAGE5A_DRILL,
+        origin,
+        passed,
+        _digest(payload),
+        "2026-08-19T00:00:00+09:00",
+        payload,
+    )
+
+
+def qualified_stage5b(
+    *,
+    origin: EvidenceOrigin = EvidenceOrigin.OBSERVED,
+    passed: bool = True,
+    changes: dict[str, object] | None = None,
+) -> Evidence:
+    block_hash = "0x" + "ab" * 32
+    payload: dict[str, object] = {
+        "schema": "stage5b_verified_local_bsc_fork_v1",
+        "probe_type": "verified_local_bsc_fork",
+        "transaction_signed": False,
+        "mainnet_transaction_broadcast": False,
+        "chain_id": 56,
+        "initial_block": 123,
+        "mined_block": 124,
+        "reset_block": 123,
+        "prediction_contract_code_present": True,
+        "chainlink_contract_code_present": True,
+        "prediction_code_present_after_reset": True,
+        "chainlink_code_present_after_reset": True,
+        "fork_reset_supported": True,
+        "fork_mine_observed": True,
+        "upstream_chain_id": 56,
+        "local_initial_block_hash": block_hash,
+        "upstream_fork_block_hash": block_hash,
+        "local_reset_block_hash": block_hash,
+        "fork_block_hash_matches_upstream": True,
+        "reset_block_hash_matches_upstream": True,
+        "prediction_code_matches_upstream": True,
+        "chainlink_code_matches_upstream": True,
+        "prediction_code_matches_upstream_after_reset": True,
+        "chainlink_code_matches_upstream_after_reset": True,
+        "upstream_verified": True,
+    }
+    if changes:
+        payload.update(changes)
+    return Evidence(
+        EvidenceKind.STAGE5B_FORK,
+        origin,
+        passed,
+        _digest(payload),
+        "2026-08-19T00:00:00+09:00",
+        payload,
+    )
+
+
 def qualified_shadow(
     *,
     passed: bool = True,
@@ -103,10 +184,10 @@ def safety(**changes: object) -> RuntimeSafetyState:
     return RuntimeSafetyState(**values)  # type: ignore[arg-type]
 
 
-def test_observed_stage5_evidence_plus_qualified_hybrid_shadow_can_clear_stage6a() -> None:
+def test_qualified_stage5_evidence_plus_qualified_hybrid_shadow_can_clear_stage6a() -> None:
     decision = evaluate_stage6a_readiness(
-        stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
-        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(),
         shadow=qualified_shadow(),
         safety=safety(),
     )
@@ -114,22 +195,87 @@ def test_observed_stage5_evidence_plus_qualified_hybrid_shadow_can_clear_stage6a
     assert decision.blockers == ()
 
 
-@pytest.mark.parametrize("origin", [EvidenceOrigin.ASSUMED, EvidenceOrigin.SELF_REPORTED])
-def test_non_observed_stage5b_never_clears_gate(origin: EvidenceOrigin) -> None:
+def test_generic_observed_stage5_json_cannot_clear_gate_anymore() -> None:
     decision = evaluate_stage6a_readiness(
         stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
-        stage5b=evidence(EvidenceKind.STAGE5B_FORK, origin=origin),
+        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
         shadow=qualified_shadow(),
         safety=safety(),
     )
     assert not decision.ready
-    assert "stage5b_observed_pass_missing" in decision.blockers
+    assert "stage5a_qualified_observed_pass_missing" in decision.blockers
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
+
+
+@pytest.mark.parametrize("origin", [EvidenceOrigin.ASSUMED, EvidenceOrigin.SELF_REPORTED])
+def test_non_observed_stage5b_never_clears_gate(origin: EvidenceOrigin) -> None:
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(origin=origin),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"journal_mode_wal": False},
+        {"synchronous_full": False},
+        {"duplicate_active_nonce_rejected": False},
+        {"unknown_state_persisted_after_missing_receipt": False},
+        {"finalized_state_persisted_after_confirmations": False},
+        {"terminal_nonce_released": False},
+        {"unresolved_count_final": 1},
+        {"required_confirmations": 0},
+        {"transaction_signed": True},
+        {"transaction_broadcast": True},
+    ],
+)
+def test_incomplete_or_unsafe_stage5a_payload_cannot_clear_gate(changes: dict[str, object]) -> None:
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(changes=changes),
+        stage5b=qualified_stage5b(),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5a_qualified_observed_pass_missing" in decision.blockers
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"chain_id": 1},
+        {"upstream_chain_id": 1},
+        {"reset_block": 122},
+        {"fork_mine_observed": False},
+        {"upstream_verified": False},
+        {"fork_block_hash_matches_upstream": False},
+        {"prediction_code_matches_upstream": False},
+        {"chainlink_code_matches_upstream_after_reset": False},
+        {"upstream_fork_block_hash": "0x" + "cd" * 32},
+        {"transaction_signed": True},
+        {"mainnet_transaction_broadcast": True},
+    ],
+)
+def test_unverified_or_unsafe_stage5b_payload_cannot_clear_gate(changes: dict[str, object]) -> None:
+    decision = evaluate_stage6a_readiness(
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(changes=changes),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5b_qualified_observed_pass_missing" in decision.blockers
 
 
 def test_generic_observed_shadow_json_cannot_clear_gate_anymore() -> None:
     decision = evaluate_stage6a_readiness(
-        stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
-        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(),
         shadow=evidence(EvidenceKind.SHADOW_ECONOMICS),
         safety=safety(),
     )
@@ -154,8 +300,8 @@ def test_incomplete_misclassified_or_weakened_shadow_evidence_cannot_clear_gate(
     shadow: Evidence,
 ) -> None:
     decision = evaluate_stage6a_readiness(
-        stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
-        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(),
         shadow=shadow,
         safety=safety(),
     )
@@ -178,13 +324,35 @@ def test_incomplete_misclassified_or_weakened_shadow_evidence_cannot_clear_gate(
 )
 def test_each_runtime_safety_failure_blocks(changes: dict[str, object], blocker: str) -> None:
     decision = evaluate_stage6a_readiness(
-        stage5a=evidence(EvidenceKind.STAGE5A_DRILL),
-        stage5b=evidence(EvidenceKind.STAGE5B_FORK),
+        stage5a=qualified_stage5a(),
+        stage5b=qualified_stage5b(),
         shadow=qualified_shadow(),
         safety=safety(**changes),
     )
     assert not decision.ready
     assert blocker in decision.blockers
+
+
+def test_gate_rechecks_payload_hash_even_for_in_memory_evidence() -> None:
+    valid = qualified_stage5a()
+    tampered_payload = dict(valid.payload)
+    tampered_payload["unresolved_count_final"] = 1
+    tampered = Evidence(
+        valid.kind,
+        valid.origin,
+        valid.passed,
+        valid.artifact_sha256,
+        valid.recorded_at,
+        tampered_payload,
+    )
+    decision = evaluate_stage6a_readiness(
+        stage5a=tampered,
+        stage5b=qualified_stage5b(),
+        shadow=qualified_shadow(),
+        safety=safety(),
+    )
+    assert not decision.ready
+    assert "stage5a_qualified_observed_pass_missing" in decision.blockers
 
 
 def test_evidence_json_requires_payload_hash_match() -> None:
