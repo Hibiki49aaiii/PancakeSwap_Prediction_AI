@@ -95,6 +95,11 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
     execution. Treating an arbitrary `origin=observed, passed=true` JSON as a
     Stage-6 prerequisite would erase that distinction. The gate therefore
     requires a dedicated schema whose policy/metrics can be rechecked locally.
+
+    Two completeness requirements are non-negotiable at Stage 6A: every paper
+    decision represented by the evidence must be settled, and claim/refund gas
+    must be modeled whenever that operation is required. A supplied policy may
+    tighten thresholds, but it cannot turn either requirement off.
     """
 
     if evidence.kind is not EvidenceKind.SHADOW_ECONOMICS:
@@ -112,6 +117,8 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
         return False
     if payload.get("funded_live_profitability_evidence") is not False:
         return False
+    if payload.get("stage6b_funded_validation_evidence") is not False:
+        return False
     blockers = payload.get("blockers")
     if not isinstance(blockers, list) or blockers:
         return False
@@ -120,15 +127,19 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
     if not isinstance(policy, dict) or not isinstance(metrics, dict):
         return False
 
+    # These may not be weakened by a caller-provided acceptance policy.
+    if policy.get("require_all_decisions_settled") is not True:
+        return False
+    if policy.get("require_fully_costed_claim_or_refund_gas") is not True:
+        return False
+
     min_rounds = policy.get("min_settled_rounds")
     settled = metrics.get("settled_rounds")
     unresolved = metrics.get("unresolved_rounds")
     conditional_pnl = metrics.get("conditional_net_pnl_wei")
     conditional_dd = metrics.get("conditional_max_drawdown_wei")
-    average_expected = metrics.get("average_selected_expected_return")
     min_pnl = policy.get("min_conditional_net_pnl_wei")
     max_dd = policy.get("max_conditional_drawdown_wei")
-    min_expected = policy.get("min_average_selected_expected_return")
     if (
         isinstance(min_rounds, bool)
         or not isinstance(min_rounds, int)
@@ -138,7 +149,7 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
         or settled < min_rounds
         or isinstance(unresolved, bool)
         or not isinstance(unresolved, int)
-        or unresolved < 0
+        or unresolved != 0
         or isinstance(conditional_pnl, bool)
         or not isinstance(conditional_pnl, int)
         or isinstance(conditional_dd, bool)
@@ -159,12 +170,7 @@ def _qualified_shadow_pass(evidence: Evidence) -> bool:
         return False
     if average_expected_num < min_expected_num:
         return False
-    if policy.get("require_all_decisions_settled") is True and unresolved != 0:
-        return False
-    if (
-        policy.get("require_fully_costed_claim_or_refund_gas") is True
-        and metrics.get("claim_or_refund_gas_fully_modeled") is not True
-    ):
+    if metrics.get("claim_or_refund_gas_fully_modeled") is not True:
         return False
     return True
 
