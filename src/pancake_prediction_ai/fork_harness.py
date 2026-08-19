@@ -12,11 +12,13 @@ from .evidence_gate import Evidence, EvidenceKind, EvidenceOrigin
 
 
 RpcCall = Callable[[str, list[Any]], Any]
-STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v1"
+STAGE5B_FORK_SCHEMA = "stage5b_verified_local_bsc_fork_v2"
 
 
 @dataclass(frozen=True, slots=True)
 class ForkProbeResult:
+    prediction_contract: str
+    chainlink_contract: str
     chain_id: int
     initial_block: int
     mined_block: int
@@ -60,7 +62,7 @@ class ForkProbeResult:
 
         `passed` only means the local Anvil-style mechanics behaved correctly.
         Stage 5B evidence uses `verified_passed`, which additionally requires
-        independent upstream BSC provenance checks.
+        independent upstream BSC provenance checks and concrete target addresses.
         """
 
         return self.local_probe_passed
@@ -69,6 +71,8 @@ class ForkProbeResult:
     def verified_passed(self) -> bool:
         return (
             self.local_probe_passed
+            and _is_address(self.prediction_contract)
+            and _is_address(self.chainlink_contract)
             and self.upstream_verified
             and self.upstream_chain_id == 56
             and self.fork_block_hash_matches_upstream
@@ -88,6 +92,16 @@ def _hex_int(value: object) -> int:
 
 def _has_code(value: object) -> bool:
     return isinstance(value, str) and value not in {"0x", "0x0", ""}
+
+
+def _is_address(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 42 or not value.startswith("0x"):
+        return False
+    try:
+        int(value[2:], 16)
+    except ValueError:
+        return False
+    return True
 
 
 def _normalize_hex(value: object, *, field: str) -> str:
@@ -156,6 +170,8 @@ def _probe_local_core(
     fork_reset_supported = reset_result is None or reset_result is True
 
     core = {
+        "prediction_contract": prediction_contract.lower(),
+        "chainlink_contract": chainlink_contract.lower(),
         "chain_id": chain_id,
         "initial_block": initial_block,
         "mined_block": mined_block,
