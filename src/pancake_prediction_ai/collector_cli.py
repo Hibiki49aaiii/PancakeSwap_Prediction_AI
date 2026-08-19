@@ -123,6 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable paper EV selection using this simulated fixed stake",
     )
     cycle.add_argument("--shadow-gas-cost-wei", type=_non_negative_int, default=0)
+    cycle.add_argument(
+        "--shadow-claim-or-refund-gas-cost-wei",
+        type=_non_negative_int,
+        help=(
+            "Optional decision-time paper estimate for later claim/refund gas. "
+            "When omitted, winning/refund settlements remain explicitly not fully costed."
+        ),
+    )
     cycle.add_argument("--shadow-same-side-inflow-wei", type=_non_negative_int, default=0)
     cycle.add_argument("--shadow-opposite-side-inflow-wei", type=_non_negative_int, default=0)
     cycle.add_argument(
@@ -294,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 economic_policy = ShadowEconomicPolicy(
                     stake_wei=args.shadow_stake_wei,
                     gas_cost_wei=args.shadow_gas_cost_wei,
+                    claim_or_refund_gas_cost_wei=args.shadow_claim_or_refund_gas_cost_wei,
                     same_side_inflow_wei=args.shadow_same_side_inflow_wei,
                     opposite_side_inflow_wei=args.shadow_opposite_side_inflow_wei,
                     execution_success_probability=args.shadow_execution_success_probability,
@@ -312,8 +321,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             inference = cycle.inference
             economic_text = "economic=-"
             if cycle.economic is not None:
-                selected = "-" if cycle.economic.selected_side is None else cycle.economic.selected_side.value
-                best_ev = max(cycle.economic.bull.expected_return_on_stake, cycle.economic.bear.expected_return_on_stake)
+                selected = (
+                    "-"
+                    if cycle.economic.selected_side is None
+                    else cycle.economic.selected_side.value
+                )
+                best_ev = max(
+                    cycle.economic.bull.expected_return_on_stake,
+                    cycle.economic.bear.expected_return_on_stake,
+                )
                 economic_text = (
                     f"economic={cycle.economic.action.value} side={selected} "
                     f"best_expected_return={best_ev:.8f}"
@@ -348,11 +364,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_rounds=args.max_rounds,
             )
             settled = sum(
-                result.status in {ShadowSettlementStatus.SETTLED, ShadowSettlementStatus.ALREADY_SETTLED}
+                result.status
+                in {ShadowSettlementStatus.SETTLED, ShadowSettlementStatus.ALREADY_SETTLED}
                 for result in batch.results
             )
-            pending = sum(result.status is ShadowSettlementStatus.PENDING for result in batch.results)
-            anomalies = sum(result.status is ShadowSettlementStatus.ANOMALY for result in batch.results)
+            pending = sum(
+                result.status is ShadowSettlementStatus.PENDING
+                for result in batch.results
+            )
+            anomalies = sum(
+                result.status is ShadowSettlementStatus.ANOMALY
+                for result in batch.results
+            )
             print(
                 f"shadow-settle-pending attempted={len(batch.attempted_round_ids)} "
                 f"settled={settled} pending={pending} anomalies={anomalies} "
@@ -363,7 +386,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "shadow-summary":
             summary = summarize_shadow_economics(store)
             avg_expected = (
-                "-" if summary.average_selected_expected_return is None
+                "-"
+                if summary.average_selected_expected_return is None
                 else f"{summary.average_selected_expected_return:.8f}"
             )
             print(
