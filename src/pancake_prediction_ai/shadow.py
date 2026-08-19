@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .economics import PoolState, Side
+from .economics import Outcome, PoolState, Side
 from .evidence_gate import Evidence, EvidenceKind, EvidenceOrigin
 
 
@@ -16,6 +16,7 @@ class ShadowDecision:
     round_id: int
     decision_cutoff_ns: int
     probability_bull: float
+    probability_tie: float
     side: Side
     stake_wei: int
     snapshot_bull_wei: int
@@ -25,11 +26,19 @@ class ShadowDecision:
     expected_pnl_wei: float
     model_version: str
 
+    @property
+    def probability_bear(self) -> float:
+        return 1.0 - self.probability_bull - self.probability_tie
+
     def validate(self) -> None:
         if self.round_id < 0 or self.decision_cutoff_ns < 0:
             raise ValueError("round/timestamp must be non-negative")
         if not 0.0 <= self.probability_bull <= 1.0:
             raise ValueError("probability_bull must be in [0, 1]")
+        if not 0.0 <= self.probability_tie <= 1.0:
+            raise ValueError("probability_tie must be in [0, 1]")
+        if self.probability_bull + self.probability_tie > 1.0:
+            raise ValueError("probability_bull + probability_tie must be <= 1")
         if self.stake_wei <= 0:
             raise ValueError("stake_wei must be positive")
         if self.snapshot_bull_wei < 0 or self.snapshot_bear_wei < 0:
@@ -45,7 +54,7 @@ class ShadowDecision:
 @dataclass(frozen=True, slots=True)
 class ShadowSettlement:
     round_id: int
-    outcome: Side
+    outcome: Outcome
     final_bull_wei: int
     final_bear_wei: int
     settled_at_ns: int
@@ -58,7 +67,8 @@ class ShadowSummary:
     net_pnl_wei: float
     max_drawdown_wei: float
     brier_score: float
-    accuracy: float
+    directional_accuracy: float
+    tie_rate: float
     average_expected_pnl_wei: float
 
 
@@ -90,6 +100,7 @@ class ShadowLedger:
                 round_id INTEGER PRIMARY KEY,
                 decision_cutoff_ns INTEGER NOT NULL,
                 probability_bull REAL NOT NULL,
+                probability_tie REAL NOT NULL,
                 side TEXT NOT NULL,
                 stake_wei INTEGER NOT NULL,
                 snapshot_bull_wei INTEGER NOT NULL,
@@ -129,13 +140,12 @@ class ShadowLedger:
         decision.validate()
         try:
             self._conn.execute(
-                """
-                INSERT INTO shadow_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                "INSERT INTO shadow_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     decision.round_id,
                     decision.decision_cutoff_ns,
                     decision.probability_bull,
+                    decision.probability_tie,
                     decision.side.value,
                     decision.stake_wei,
                     decision.snapshot_bull_wei,
@@ -154,7 +164,7 @@ class ShadowLedger:
         self,
         *,
         round_id: int,
-        outcome: Side,
+        outcome: Outcome,
         final_bull_wei: int,
         final_bear_wei: int,
         settled_at_ns: int,
@@ -178,19 +188,22 @@ class ShadowLedger:
         stake = int(stake_wei)
         gas = int(gas_cost_wei)
         fee = int(fee_ppm)
-        base_pool = PoolState(final_bull_wei, final_bear_wei, fee)
-        base_pool.validate()
+        PoolState(final_bull_wei, final_bear_wei, fee).validate()
 
         simulated_bull = final_bull_wei + (stake if side is Side.BULL else 0)
         simulated_bear = final_bear_wei + (stake if side is Side.BEAR else 0)
         total = simulated_bull + simulated_bear
-        winning_pool = simulated_bull if outcome is Side.BULL else simulated_bear
-        won = side is outcome
+
+        won = (side is Side.BULL and outcome is Outcome.BULL) or (
+            side is Side.BEAR and outcome is Outcome.BEAR
+        )
         if won:
+            winning_pool = simulated_bull if outcome is Outcome.BULL else simulated_bear
             distributable = total * (1_000_000 - fee) / 1_000_000
             gross = stake / winning_pool * distributable
             pnl = gross - stake - gas
         else:
+            # Includes the official closePrice == lockPrice house-win outcome.
             pnl = -stake - gas
 
         settlement = ShadowSettlement(
@@ -221,7 +234,7 @@ class ShadowLedger:
     def summary(self) -> ShadowSummary:
         rows = self._conn.execute(
             """
-            SELECT d.probability_bull, d.side, d.expected_pnl_wei,
+            SELECT d.probability_bull, d.probability_tie, d.side, d.expected_pnl_wei,
                    s.outcome, s.simulated_pnl_wei
             FROM shadow_decisions d
             JOIN shadow_settlements s USING(round_id)
@@ -229,25 +242,40 @@ class ShadowLedger:
             """
         ).fetchall()
         if not rows:
-            return ShadowSummary(0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            return ShadowSummary(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-        pnl_values = [float(row[4]) for row in rows]
-        net = sum(pnl_values)
         equity = 0.0
         peak = 0.0
         max_drawdown = 0.0
         correct = 0
+        tie_count = 0
         brier_sum = 0.0
         expected_sum = 0.0
-        for probability_bull, side_text, expected_pnl, outcome_text, pnl in rows:
-            equity += float(pnl)
+        net = 0.0
+        for probability_bull, probability_tie, side_text, expected_pnl, outcome_text, pnl in rows:
+            pnl_value = float(pnl)
+            net += pnl_value
+            equity += pnl_value
             peak = max(peak, equity)
             max_drawdown = max(max_drawdown, peak - equity)
-            y = 1.0 if Side(str(outcome_text)) is Side.BULL else 0.0
-            p = float(probability_bull)
-            brier_sum += (p - y) ** 2
-            if Side(str(side_text)) is Side(str(outcome_text)):
+
+            p_bull = float(probability_bull)
+            p_tie = float(probability_tie)
+            p_bear = 1.0 - p_bull - p_tie
+            outcome = Outcome(str(outcome_text))
+            targets = (
+                1.0 if outcome is Outcome.BULL else 0.0,
+                1.0 if outcome is Outcome.BEAR else 0.0,
+                1.0 if outcome is Outcome.TIE else 0.0,
+            )
+            probs = (p_bull, p_bear, p_tie)
+            brier_sum += sum((p - y) ** 2 for p, y in zip(probs, targets, strict=True)) / 3.0
+            if (Side(str(side_text)) is Side.BULL and outcome is Outcome.BULL) or (
+                Side(str(side_text)) is Side.BEAR and outcome is Outcome.BEAR
+            ):
                 correct += 1
+            if outcome is Outcome.TIE:
+                tie_count += 1
             expected_sum += float(expected_pnl)
 
         n = len(rows)
@@ -256,7 +284,8 @@ class ShadowLedger:
             net_pnl_wei=net,
             max_drawdown_wei=max_drawdown,
             brier_score=brier_sum / n,
-            accuracy=correct / n,
+            directional_accuracy=correct / n,
+            tie_rate=tie_count / n,
             average_expected_pnl_wei=expected_sum / n,
         )
 
@@ -281,7 +310,8 @@ def make_shadow_evidence(
             "net_pnl_wei": summary.net_pnl_wei,
             "max_drawdown_wei": summary.max_drawdown_wei,
             "brier_score": summary.brier_score,
-            "accuracy": summary.accuracy,
+            "directional_accuracy": summary.directional_accuracy,
+            "tie_rate": summary.tie_rate,
             "average_expected_pnl_wei": summary.average_expected_pnl_wei,
         },
         "policy": {
