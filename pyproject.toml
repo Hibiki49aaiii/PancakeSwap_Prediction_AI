@@ -13,5 +13,8 @@ dependencies = [
     "eth-hash[pycryptodome]>=0.8,<1",
 ]
 
+[project.scripts]
+ppai-collector = "pancake_prediction_ai.collector_cli:main"
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
