@@ -8,7 +8,13 @@ from .abi_codec import decode_result, encode_call
 from .event_store import EventRecord
 from .pancake_contract import BNB_CHAIN_ID, BNB_PREDICTION_CONTRACT, PredictionRoundState
 from .read_only_rpc import ReadOnlyJsonRpcClient
-from .rpc_snapshot import BlockAnchor, eth_call_at, fetch_block_anchor, get_code_at
+from .rpc_snapshot import (
+    BlockAnchor,
+    eth_call_at,
+    fetch_block_anchor,
+    fetch_block_anchor_by_number,
+    get_code_at,
+)
 from .sources.chainlink import normalize_latest_round_data
 from .sources.pancake import normalize_oracle_reference, normalize_round_snapshot
 
@@ -60,13 +66,29 @@ class PinnedProtocolSnapshot:
             raise ValueError("protocol snapshot events must share one observation timestamp")
 
 
-def _single_uint(client: ReadOnlyJsonRpcClient, anchor: BlockAnchor, contract: str, signature: str) -> int:
+def _validate_chain(client: ReadOnlyJsonRpcClient) -> None:
+    chain_id = client.chain_id()
+    if chain_id != BNB_CHAIN_ID:
+        raise ValueError(f"expected BNB chain id {BNB_CHAIN_ID}, got {chain_id}")
+
+
+def _single_uint(
+    client: ReadOnlyJsonRpcClient,
+    anchor: BlockAnchor,
+    contract: str,
+    signature: str,
+) -> int:
     raw = eth_call_at(client, to=contract, data=encode_call(signature), anchor=anchor)
     values = decode_result(raw, ("uint256",))
     return int(values[0])
 
 
-def _address_call(client: ReadOnlyJsonRpcClient, anchor: BlockAnchor, contract: str, signature: str) -> str:
+def _address_call(
+    client: ReadOnlyJsonRpcClient,
+    anchor: BlockAnchor,
+    contract: str,
+    signature: str,
+) -> str:
     raw = eth_call_at(client, to=contract, data=encode_call(signature), anchor=anchor)
     values = decode_result(raw, ("address",))
     address = str(values[0]).lower()
@@ -75,24 +97,16 @@ def _address_call(client: ReadOnlyJsonRpcClient, anchor: BlockAnchor, contract: 
     return address
 
 
-def collect_pinned_protocol_snapshot(
+def collect_protocol_snapshot_at_anchor(
     client: ReadOnlyJsonRpcClient,
     *,
+    anchor: BlockAnchor,
     prediction_contract: str = BNB_PREDICTION_CONTRACT,
     clock_ns: ClockNs = time.time_ns,
 ) -> PinnedProtocolSnapshot:
-    """Read Pancake Prediction + active Chainlink feed at one concrete BSC block.
+    """Read Pancake Prediction and its active Chainlink feed at one anchor."""
 
-    All view calls use the same numeric block tag. `observed_at_ns` is sampled
-    only after every required RPC response is available, making the resulting
-    canonical events conservative with respect to information availability.
-    """
-
-    chain_id = client.chain_id()
-    if chain_id != BNB_CHAIN_ID:
-        raise ValueError(f"expected BNB chain id {BNB_CHAIN_ID}, got {chain_id}")
-
-    anchor = fetch_block_anchor(client)
+    anchor.validate()
     prediction_code = get_code_at(client, address=prediction_contract, anchor=anchor)
     if prediction_code in {"0x", "0x0", ""}:
         raise ValueError("Prediction contract has no code at pinned block")
@@ -202,3 +216,40 @@ def collect_pinned_protocol_snapshot(
     )
     snapshot.validate()
     return snapshot
+
+
+def collect_pinned_protocol_snapshot(
+    client: ReadOnlyJsonRpcClient,
+    *,
+    prediction_contract: str = BNB_PREDICTION_CONTRACT,
+    clock_ns: ClockNs = time.time_ns,
+) -> PinnedProtocolSnapshot:
+    """Read the current protocol state at one concrete BSC block."""
+
+    _validate_chain(client)
+    anchor = fetch_block_anchor(client)
+    return collect_protocol_snapshot_at_anchor(
+        client,
+        anchor=anchor,
+        prediction_contract=prediction_contract,
+        clock_ns=clock_ns,
+    )
+
+
+def collect_protocol_snapshot_at_block(
+    client: ReadOnlyJsonRpcClient,
+    *,
+    block_number: int,
+    prediction_contract: str = BNB_PREDICTION_CONTRACT,
+    clock_ns: ClockNs = time.time_ns,
+) -> PinnedProtocolSnapshot:
+    """Read historical protocol state at an explicit BSC block number."""
+
+    _validate_chain(client)
+    anchor = fetch_block_anchor_by_number(client, block_number)
+    return collect_protocol_snapshot_at_anchor(
+        client,
+        anchor=anchor,
+        prediction_contract=prediction_contract,
+        clock_ns=clock_ns,
+    )
