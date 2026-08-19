@@ -11,6 +11,69 @@ def test_cli_has_no_wallet_key_or_transaction_arguments() -> None:
     assert all(term not in help_text for term in forbidden)
 
 
+def test_shadow_cycle_parser_accepts_only_simulated_economic_policy_fields() -> None:
+    args = build_parser().parse_args(
+        [
+            "--store",
+            "observed.sqlite",
+            "shadow-cycle-once",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--model-artifact",
+            "model.json",
+            "--shadow-stake-wei",
+            "100",
+            "--shadow-gas-cost-wei",
+            "2",
+            "--shadow-execution-success-probability",
+            "0.75",
+            "--shadow-min-expected-return",
+            "0.01",
+        ]
+    )
+    assert args.shadow_stake_wei == 100
+    assert args.shadow_gas_cost_wei == 2
+    assert args.shadow_execution_success_probability == 0.75
+    assert args.shadow_min_expected_return == 0.01
+
+
+def test_shadow_settlement_commands_parse_as_observed_workflows() -> None:
+    parser = build_parser()
+    single = parser.parse_args(
+        [
+            "--store",
+            "observed.sqlite",
+            "shadow-settle-round",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--round-id",
+            "123",
+        ]
+    )
+    batch = parser.parse_args(
+        [
+            "--store",
+            "observed.sqlite",
+            "shadow-settle-pending",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--max-rounds",
+            "20",
+        ]
+    )
+    assert single.round_id == 123
+    assert batch.max_rounds == 20
+
+
+def test_shadow_summary_command_handles_empty_observed_store(tmp_path, capsys) -> None:
+    path = tmp_path / "empty.sqlite"
+    result = main(["--store", str(path), "shadow-summary"])
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "decisions=0" in output
+    assert "settled=0" in output
+
+
 def test_verify_store_command_returns_zero_for_valid_chain(tmp_path, capsys) -> None:
     path = tmp_path / "events.sqlite"
     with EventStore(path) as store:
