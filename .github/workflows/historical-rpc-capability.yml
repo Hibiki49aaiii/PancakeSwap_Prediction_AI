@@ -50,8 +50,24 @@ jobs:
               topic("LockRound(uint256,uint256,int256)"),
               topic("EndRound(uint256,uint256,int256)"),
           ]
+          config_topics = {
+              "buffer_interval": topic("NewBufferAndIntervalSeconds(uint256,uint256)"),
+              "treasury_fee": topic("NewTreasuryFee(uint256,uint256)"),
+              "oracle": topic("NewOracle(address)"),
+          }
 
           current_data = encode_call("currentEpoch()")
+
+          def log_call(client, head, topics, width=1000):
+              return client.call(
+                  "eth_getLogs",
+                  [{
+                      "address": BNB_PREDICTION_CONTRACT,
+                      "fromBlock": hex(max(1, head - width)),
+                      "toBlock": hex(head),
+                      "topics": [topics],
+                  }],
+              )
 
           def probe(url):
               result = {"rpc_url": url}
@@ -92,20 +108,26 @@ jobs:
               for width in [10, 100, 1_000, 5_000, 20_000]:
                   item = {"width_blocks": width}
                   try:
-                      values = client.call(
-                          "eth_getLogs",
-                          [{
-                              "address": BNB_PREDICTION_CONTRACT,
-                              "fromBlock": hex(max(1, head - width)),
-                              "toBlock": hex(head),
-                              "topics": [lifecycle_topics],
-                          }],
-                      )
+                      values = log_call(client, head, lifecycle_topics, width)
                       item.update({"ok": True, "count": len(values)})
                   except Exception as exc:
                       item.update({"ok": False, "error": str(exc)[:500]})
                   logs.append(item)
               result["lifecycle_logs"] = logs
+
+              config = {}
+              for name, value in config_topics.items():
+                  try:
+                      values = log_call(client, head, [value], 1000)
+                      config[name] = {"ok": True, "count": len(values)}
+                  except Exception as exc:
+                      config[name] = {"ok": False, "error": str(exc)[:500]}
+              try:
+                  values = log_call(client, head, list(config_topics.values()), 1000)
+                  config["or_filter"] = {"ok": True, "count": len(values)}
+              except Exception as exc:
+                  config["or_filter"] = {"ok": False, "error": str(exc)[:500]}
+              result["config_logs"] = config
               return result
 
           report = {
