@@ -189,6 +189,90 @@ class PublicHistoricalCollector(HistoricalCollector):
             raise RpcError("Chainlink proxy returned the zero aggregator address")
         return aggregator
 
+    def _new_oracle_spec(self) -> EventSpec:
+        new_oracle_spec = next(
+            (spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"),
+            None,
+        )
+        if new_oracle_spec is None:
+            raise RuntimeError("NewOracle event specification is unavailable")
+        return new_oracle_spec
+
+    def prove_oracle_stable_in_range(
+        self,
+        market: Market,
+        *,
+        from_block: int,
+        through_block: int,
+    ) -> dict[str, object]:
+        """Prove the Chainlink route for one fixed recent source window.
+
+        The route is read at ``through_block`` and then both the Prediction
+        ``NewOracle`` and Chainlink proxy ``AggregatorConfirmed`` events are
+        scanned only inside ``[from_block, through_block]``. This keeps a fixed
+        historical/recent campaign deterministic: re-running it days later does
+        not expand the proof through the new chain head.
+
+        The RPC must therefore support state reads at the recent window-end
+        block. If it does not, the proof fails closed rather than silently
+        substituting today's route for the historical window.
+        """
+
+        if from_block < 0 or through_block < from_block:
+            raise ValueError("invalid oracle stability proof range")
+        self.validate_chain()
+        oracle_proxy = self.oracle_at(market, through_block).lower()
+        if oracle_proxy == "0x" + "00" * 20:
+            raise RpcError("Prediction returned the zero oracle address")
+        chainlink_aggregator = self._chainlink_aggregator_at(
+            oracle_proxy,
+            through_block,
+        )
+
+        new_oracle_spec = self._new_oracle_spec()
+        prediction_changes, _ = self._fetch_consistent_range(
+            address=market.address,
+            start=from_block,
+            end=through_block,
+            topic0s=(new_oracle_spec.topic0,),
+        )
+        if prediction_changes:
+            raise RpcError(
+                "window-end oracle cannot prove a stable source window: NewOracle was observed "
+                f"between blocks {from_block} and {through_block}"
+            )
+
+        aggregator_changes, _ = self._fetch_consistent_range(
+            address=oracle_proxy,
+            start=from_block,
+            end=through_block,
+            topic0s=(_CHAINLINK_AGGREGATOR_CONFIRMED.topic0,),
+        )
+        if aggregator_changes:
+            raise RpcError(
+                "window-end Chainlink aggregator cannot prove a stable source window: "
+                "AggregatorConfirmed was observed between blocks "
+                f"{from_block} and {through_block}"
+            )
+
+        self.store.record_metadata(
+            f"{market.symbol}.recent_oracle_stability_proof",
+            f"{from_block}:{through_block}:{oracle_proxy}:{chainlink_aggregator}",
+        )
+        return {
+            "oracle": oracle_proxy,
+            "chainlink_aggregator": chainlink_aggregator,
+            "from_block": from_block,
+            "through_block": through_block,
+            "state_block": through_block,
+            "new_oracle_events": 0,
+            "aggregator_confirmed_events": 0,
+            "method": (
+                "window_end_prediction_oracle_and_chainlink_aggregator_then_"
+                "stateless_change_scan_within_source_window"
+            ),
+        }
+
     def prove_latest_oracle_stable_since(
         self,
         market: Market,
@@ -213,12 +297,7 @@ class PublicHistoricalCollector(HistoricalCollector):
         observed_head = self.rpc.block_number()
         proof_through_block = max(through_block, observed_head)
 
-        new_oracle_spec = next(
-            (spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"),
-            None,
-        )
-        if new_oracle_spec is None:
-            raise RuntimeError("NewOracle event specification is unavailable")
+        new_oracle_spec = self._new_oracle_spec()
         prediction_changes, _ = self._fetch_consistent_range(
             address=market.address,
             start=from_block,
