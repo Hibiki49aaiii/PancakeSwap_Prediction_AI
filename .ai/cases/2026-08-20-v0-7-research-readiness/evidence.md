@@ -26,7 +26,7 @@
 
 ## Quality evidence
 
-`evidence/quality-gate.json` at the observed head records:
+`evidence/quality-gate.json` at the observed pre-External-Intelligence head records:
 
 - mypy: success
 - pytest: success, 294 passed
@@ -35,7 +35,24 @@
 - Ruff: failure
 - ready: false
 
-This case deliberately records no Ruff root cause because the persisted evidence only establishes the outcome.
+GitHub Actions CI run `788` on the External Intelligence head independently reproduced the same quality shape:
+
+- Gitleaks: success
+- legacy 144k-round audit: success
+- ClickHouse integration: success
+- installed CLI smoke checks: success
+- mypy strict: success (`140 source files` reported by the job)
+- pytest: success (`294 passed`, total coverage `87%`)
+- Bandit: success (`0 issues identified`)
+- pip-audit: success (no known dependency vulnerabilities reported)
+- Ruff: failure
+
+The CI job log establishes the Ruff root cause precisely, so it is no longer left as an inference:
+
+- `src/pancake_prediction/execution_intent.py:9:1`: `UP035` — import `Mapping` from `collections.abc`
+- `src/pancake_prediction/stage5_evidence.py:11:1`: `UP035` — import `Mapping` from `collections.abc`
+
+The final quality-gate step fails only because Ruff is unsuccessful. These two diagnostics are in pre-existing Stage 5 Python files; the External Intelligence commit itself adds Markdown/control metadata and does not introduce either lint location. This is case evidence, not a generalized rule: the import cleanup is directly recoverable from the current CI log and does not justify a separate Observation or Failure Memory entry.
 
 ## Repository-level invariants
 
