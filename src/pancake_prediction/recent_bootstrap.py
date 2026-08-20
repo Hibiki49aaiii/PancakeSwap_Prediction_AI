@@ -228,10 +228,10 @@ def run_recent_prediction_bootstrap(
             store=store,
             chunk_size=max(chunk_size, 50_000),
         )
-        oracle_stability_proof = proof_collector.prove_latest_oracle_stable_since(
+        oracle_stability_proof = proof_collector.prove_oracle_stable_in_range(
             market,
             from_block=block_range.from_block,
-            through_block=block_range.head_block,
+            through_block=block_range.to_block,
         )
 
     collector = PublicHistoricalCollector(
