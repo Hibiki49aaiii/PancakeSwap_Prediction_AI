@@ -63,7 +63,7 @@ def main() -> int:
     attempts: list[dict[str, object]] = []
     success: dict[str, object] | None = None
 
-    rpc_policy = {
+    rpc_policy: dict[str, object] = {
         "timeout_s": PUBLIC_RPC_TIMEOUT_S,
         "retries": PUBLIC_RPC_RETRIES,
         "backoff_s": PUBLIC_RPC_BACKOFF_S,
@@ -75,7 +75,13 @@ def main() -> int:
             args.database.unlink()
         try:
             report = run_recent_prediction_bootstrap(
-                JsonRpcClient(endpoint, **rpc_policy),
+                JsonRpcClient(
+                    endpoint,
+                    timeout_s=PUBLIC_RPC_TIMEOUT_S,
+                    retries=PUBLIC_RPC_RETRIES,
+                    backoff_s=PUBLIC_RPC_BACKOFF_S,
+                    min_interval_s=PUBLIC_RPC_MIN_INTERVAL_S,
+                ),
                 MARKETS[str(args.market)],
                 args.database,
                 start_timestamp=args.start_timestamp,
