@@ -81,7 +81,7 @@ class PublicHistoricalCollector(HistoricalCollector):
             left_blocks,
             right_logs,
             right_blocks,
-            mismatch_message=f"canonical block mismatch across topic partitions at block {{block}}",
+            mismatch_message="canonical block mismatch across topic partitions at block {block}",
         )
 
     @staticmethod
@@ -158,7 +158,7 @@ class PublicHistoricalCollector(HistoricalCollector):
             left_blocks,
             right_logs,
             right_blocks,
-            mismatch_message=f"canonical block mismatch across range partitions at block {{block}}",
+            mismatch_message="canonical block mismatch across range partitions at block {block}",
         )
 
     def prove_latest_oracle_stable_since(
