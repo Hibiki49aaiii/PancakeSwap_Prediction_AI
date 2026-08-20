@@ -198,6 +198,117 @@ class PublicHistoricalCollector(HistoricalCollector):
             raise RuntimeError("NewOracle event specification is unavailable")
         return new_oracle_spec
 
+    @staticmethod
+    def _validated_anchor_address(value: str, *, field: str) -> str:
+        normalized = value.lower()
+        if not normalized.startswith("0x") or len(normalized) != 42:
+            raise ValueError(f"{field} must be a 20-byte hex address")
+        try:
+            int(normalized[2:], 16)
+        except ValueError as exc:
+            raise ValueError(f"{field} must be a 20-byte hex address") from exc
+        if normalized == "0x" + "00" * 20:
+            raise ValueError(f"{field} must not be the zero address")
+        return normalized
+
+    @staticmethod
+    def _validated_anchor_digest(value: str) -> str:
+        normalized = value.lower()
+        if len(normalized) != 64:
+            raise ValueError("anchor_evidence_sha256 must be a SHA-256 hex digest")
+        try:
+            int(normalized, 16)
+        except ValueError as exc:
+            raise ValueError("anchor_evidence_sha256 must be a SHA-256 hex digest") from exc
+        return normalized
+
+    def prove_oracle_stable_from_anchor(
+        self,
+        market: Market,
+        *,
+        from_block: int,
+        through_block: int,
+        anchor_block: int,
+        oracle_proxy: str,
+        chainlink_aggregator: str,
+        anchor_evidence_sha256: str,
+    ) -> dict[str, object]:
+        """Extend a later proven Chainlink route backward using only change logs.
+
+        A separately persisted source evidence item has already established the
+        proxy/aggregator identity at ``anchor_block``. This method proves that
+        the same route also covered an earlier fixed source window by scanning
+        ``NewOracle`` and ``AggregatorConfirmed`` from ``from_block`` through
+        that fixed anchor. It performs no historical state call and therefore
+        works with recent-log providers that cannot serve old trie state.
+
+        The anchor must be at or after the requested source-window end. Any
+        route change between the source start and the anchor fails closed,
+        including changes in the gap between the source end and the anchor.
+        """
+
+        if from_block < 0 or through_block < from_block:
+            raise ValueError("invalid oracle stability proof range")
+        if anchor_block < through_block:
+            raise ValueError("route anchor must be at or after the source window end")
+        oracle = self._validated_anchor_address(oracle_proxy, field="oracle_proxy")
+        aggregator = self._validated_anchor_address(
+            chainlink_aggregator,
+            field="chainlink_aggregator",
+        )
+        anchor_digest = self._validated_anchor_digest(anchor_evidence_sha256)
+        self.validate_chain()
+
+        new_oracle_spec = self._new_oracle_spec()
+        prediction_changes, _ = self._fetch_consistent_range(
+            address=market.address,
+            start=from_block,
+            end=anchor_block,
+            topic0s=(new_oracle_spec.topic0,),
+        )
+        if prediction_changes:
+            raise RpcError(
+                "anchored oracle route cannot prove the source window: NewOracle was observed "
+                f"between blocks {from_block} and {anchor_block}"
+            )
+
+        aggregator_changes, _ = self._fetch_consistent_range(
+            address=oracle,
+            start=from_block,
+            end=anchor_block,
+            topic0s=(_CHAINLINK_AGGREGATOR_CONFIRMED.topic0,),
+        )
+        if aggregator_changes:
+            raise RpcError(
+                "anchored Chainlink route cannot prove the source window: "
+                "AggregatorConfirmed was observed between blocks "
+                f"{from_block} and {anchor_block}"
+            )
+
+        self.store.record_metadata(
+            f"{market.symbol}.recent_oracle_stability_proof",
+            (
+                f"{from_block}:{through_block}:{anchor_block}:{oracle}:"
+                f"{aggregator}:{anchor_digest}"
+            ),
+        )
+        return {
+            "oracle": oracle,
+            "chainlink_aggregator": aggregator,
+            "from_block": from_block,
+            "through_block": through_block,
+            "proof_through_block": anchor_block,
+            "anchor_block": anchor_block,
+            "anchor_evidence_sha256": anchor_digest,
+            "new_oracle_events": 0,
+            "aggregator_confirmed_events": 0,
+            "historical_state_required": False,
+            "method": (
+                "persisted_route_anchor_then_stateless_change_scan_"
+                "backward_over_fixed_source_range"
+            ),
+        }
+
     def prove_oracle_stable_in_range(
         self,
         market: Market,
