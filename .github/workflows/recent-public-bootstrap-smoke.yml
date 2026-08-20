@@ -6,6 +6,10 @@ on:
       - agent/v0.7-alpha-research
     paths:
       - .github/workflows/recent-public-bootstrap-smoke.yml
+      - scripts/run_recent_public_bootstrap.py
+      - src/pancake_prediction/public_collector.py
+      - src/pancake_prediction/recent_bootstrap.py
+      - src/pancake_prediction/rpc.py
   workflow_dispatch:
 
 permissions:
