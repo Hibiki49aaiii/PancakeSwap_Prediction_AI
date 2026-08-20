@@ -6,6 +6,7 @@ on:
       - agent/v0.7-alpha-research
     paths:
       - ops/historical-bootstrap-trigger.txt
+      - .github/workflows/historical-bootstrap.yml
   workflow_dispatch:
     inputs:
       market:
@@ -55,6 +56,11 @@ jobs:
             echo 'configured=true' >> "$GITHUB_OUTPUT"
             echo 'Archive RPC secret is configured.'
           fi
+      - name: Enforce archive RPC configuration
+        if: steps.secret.outputs.configured != 'true'
+        run: |
+          echo 'Historical bootstrap is blocked until BSC_ARCHIVE_RPC_URL is configured.' >&2
+          exit 2
       - name: Install project
         if: steps.secret.outputs.configured == 'true'
         run: pip install -e .
