@@ -214,9 +214,37 @@ def run_recent_prediction_bootstrap(
         market,
         block_range.from_block,
         block_range.to_block,
-        include_chainlink=include_chainlink,
+        include_chainlink=False,
         prediction_analytic_only=False,
     )
+
+    chainlink_collected = False
+    if oracle_stability_proof is not None:
+        aggregator = oracle_stability_proof.get("chainlink_aggregator")
+        oracle_proxy = oracle_stability_proof.get("oracle")
+        if not isinstance(aggregator, str) or not isinstance(oracle_proxy, str):
+            raise RuntimeError("oracle stability proof is missing Chainlink route addresses")
+        chainlink_report = collector.collect_chainlink_feed(
+            market,
+            aggregator_address=aggregator,
+            from_block=block_range.from_block,
+            to_block=block_range.to_block,
+        )
+        chainlink_count = chainlink_report.get("chainlink_events_inserted")
+        if not isinstance(chainlink_count, int):
+            raise RuntimeError("Chainlink collector did not return an event count")
+        collection = dict(collection)
+        collection.update(
+            {
+                "include_chainlink": True,
+                "chainlink_events_inserted": chainlink_count,
+                "oracle_addresses": [oracle_proxy],
+                "chainlink_event_addresses": [aggregator],
+                "chainlink_collector_run_id": chainlink_report["collector_run_id"],
+            }
+        )
+        chainlink_collected = chainlink_count > 0
+
     quality = build_quality_report(database, market.symbol)
     replay: ReplaySnapshot = build_replay_snapshot(database, market.symbol)
     return RecentBootstrapResult(
@@ -228,7 +256,7 @@ def run_recent_prediction_bootstrap(
         replay_rounds=len(replay.rounds),
         replay_input_digest=replay.input_digest,
         replay_output_digest=replay.output_digest,
-        chainlink_collected=include_chainlink,
+        chainlink_collected=chainlink_collected,
         authoritative_prediction_events=True,
         oracle_stability_proof=oracle_stability_proof,
     )
