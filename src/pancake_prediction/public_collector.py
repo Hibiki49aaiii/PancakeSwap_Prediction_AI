@@ -2,10 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from .abi import PREDICTION_EVENTS, EventSpec
+from .abi import (
+    CHAINLINK_EVENTS,
+    PREDICTION_EVENTS,
+    EventSpec,
+    decode_address_result,
+    function_selector,
+)
 from .collector import HistoricalCollector
 from .contracts import Market
 from .rpc import RpcError
+
+_CHAINLINK_AGGREGATOR_CONFIRMED = EventSpec(
+    "AggregatorConfirmed",
+    "AggregatorConfirmed(address,address)",
+    (("previous", "address"), ("latest", "address")),
+    (),
+)
 
 
 class PublicHistoricalCollector(HistoricalCollector):
@@ -161,6 +174,21 @@ class PublicHistoricalCollector(HistoricalCollector):
             mismatch_message="canonical block mismatch across range partitions at block {block}",
         )
 
+    def _chainlink_aggregator_at(
+        self,
+        oracle_proxy: str,
+        block: int | str = "latest",
+    ) -> str:
+        result = self.rpc.eth_call(
+            oracle_proxy,
+            function_selector("aggregator()"),
+            block,
+        )
+        aggregator = decode_address_result(result).lower()
+        if aggregator == "0x" + "00" * 20:
+            raise RpcError("Chainlink proxy returned the zero aggregator address")
+        return aggregator
+
     def prove_latest_oracle_stable_since(
         self,
         market: Market,
@@ -168,46 +196,121 @@ class PublicHistoricalCollector(HistoricalCollector):
         from_block: int,
         through_block: int,
     ) -> dict[str, object]:
-        """Fail closed unless one latest-oracle snapshot is stable since the window start.
+        """Prove both the Prediction oracle proxy and its Chainlink aggregator are stable.
 
-        Read ``oracle()`` first, then capture a head block and scan ``NewOracle``
-        through that head. The proof scan intentionally bypasses collector
-        checkpoints so a repeated failed proof cannot later pass just because a
-        previous attempt advanced a resume cursor.
+        The proof is intentionally stateless. It reads the latest Prediction
+        oracle proxy and that proxy's current ``aggregator()`` first, captures a
+        post-read head, then rejects any Prediction ``NewOracle`` or Chainlink
+        proxy ``AggregatorConfirmed`` event from the requested window start
+        through that head.
         """
 
         if from_block < 0 or through_block < from_block:
             raise ValueError("invalid oracle stability proof range")
         self.validate_chain()
-        oracle = self.oracle_at(market, "latest").lower()
+        oracle_proxy = self.oracle_at(market, "latest").lower()
+        chainlink_aggregator = self._chainlink_aggregator_at(oracle_proxy, "latest")
         observed_head = self.rpc.block_number()
         proof_through_block = max(through_block, observed_head)
 
-        new_oracle_specs = tuple(
-            spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
+        new_oracle_spec = next(
+            (spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"),
+            None,
         )
-        if len(new_oracle_specs) != 1:
-            raise RuntimeError("expected exactly one NewOracle event specification")
-        spec = new_oracle_specs[0]
-        logs, _ = self._fetch_consistent_range(
+        if new_oracle_spec is None:
+            raise RuntimeError("NewOracle event specification is unavailable")
+        prediction_changes, _ = self._fetch_consistent_range(
             address=market.address,
             start=from_block,
             end=proof_through_block,
-            topic0s=(spec.topic0,),
+            topic0s=(new_oracle_spec.topic0,),
         )
-        if logs:
+        if prediction_changes:
             raise RpcError(
                 "latest oracle cannot prove the window start: NewOracle was observed "
                 f"between blocks {from_block} and {proof_through_block}"
             )
+
+        aggregator_changes, _ = self._fetch_consistent_range(
+            address=oracle_proxy,
+            start=from_block,
+            end=proof_through_block,
+            topic0s=(_CHAINLINK_AGGREGATOR_CONFIRMED.topic0,),
+        )
+        if aggregator_changes:
+            raise RpcError(
+                "latest Chainlink aggregator cannot prove the window start: "
+                "AggregatorConfirmed was observed between blocks "
+                f"{from_block} and {proof_through_block}"
+            )
+
         self.store.record_metadata(
             f"{market.symbol}.recent_oracle_stability_proof",
-            f"{from_block}:{proof_through_block}:{oracle}",
+            f"{from_block}:{proof_through_block}:{oracle_proxy}:{chainlink_aggregator}",
         )
         return {
-            "oracle": oracle,
+            "oracle": oracle_proxy,
+            "chainlink_aggregator": chainlink_aggregator,
             "from_block": from_block,
             "through_block": proof_through_block,
             "new_oracle_events": 0,
-            "method": "latest_oracle_then_stateless_no_NewOracle_through_post_read_head",
+            "aggregator_confirmed_events": 0,
+            "method": (
+                "latest_prediction_oracle_and_chainlink_aggregator_then_"
+                "stateless_change_scan_through_post_read_head"
+            ),
         }
+
+    def collect_chainlink_feed(
+        self,
+        market: Market,
+        *,
+        aggregator_address: str,
+        from_block: int,
+        to_block: int,
+    ) -> dict[str, object]:
+        """Collect AnswerUpdated from a separately proven Chainlink aggregator address."""
+
+        if from_block < 0 or to_block < from_block:
+            raise ValueError("invalid Chainlink collection range")
+        chain_id = self.validate_chain()
+        run_id = self.store.begin_collector_run(
+            chain_id=chain_id,
+            market=market.symbol,
+            contract_address=aggregator_address.lower(),
+            from_block=from_block,
+            to_block=to_block,
+            details={
+                "source": "chainlink",
+                "chunk_size": self.chunk_size,
+                "reorg_lookback": self.reorg_lookback,
+                "consistency_retries": self.consistency_retries,
+            },
+        )
+        try:
+            count, _ = self._collect_address_logs(
+                chain_id=chain_id,
+                address=aggregator_address,
+                market=market.symbol,
+                source="chainlink",
+                specs=CHAINLINK_EVENTS,
+                from_block=from_block,
+                to_block=to_block,
+            )
+        except Exception as exc:
+            self.store.finish_collector_run(
+                run_id,
+                status="failed",
+                details={"error_type": type(exc).__name__, "error": str(exc)[:500]},
+            )
+            raise
+        report: dict[str, object] = {
+            "market": market.symbol,
+            "from_block": from_block,
+            "to_block": to_block,
+            "aggregator_address": aggregator_address.lower(),
+            "chainlink_events_inserted": count,
+            "collector_run_id": run_id,
+        }
+        self.store.finish_collector_run(run_id, status="success", details=report)
+        return report
