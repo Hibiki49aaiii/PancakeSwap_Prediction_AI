@@ -10,10 +10,11 @@ from pancake_prediction.rpc import JsonRpcClient
 
 # BNB Chain documents that eth_getLogs is disabled on its public Mainnet
 # dataseed endpoints and recommends third-party providers for log workloads.
-# Keep the official seeds as diagnostic fallbacks, but prefer endpoints that
-# current repository evidence has actually shown can return confirmed recent
-# Prediction logs from the GitHub runner.
+# 48 Club currently advertises fast.bsc-rpc.com as its public RPC; keep the
+# previously proven rpc-bsc.48.club route immediately behind it, then fall back
+# through other public candidates before the official diagnostic seeds.
 PUBLIC_BSC_ENDPOINTS = (
+    "https://fast.bsc-rpc.com",
     "https://rpc-bsc.48.club",
     "https://bsc-pokt.nodies.app",
     "https://bsc.blockpi.network/v1/rpc/public",
