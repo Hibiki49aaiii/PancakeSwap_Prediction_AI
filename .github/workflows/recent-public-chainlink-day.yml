@@ -9,6 +9,7 @@ on:
       - scripts/run_recent_public_bootstrap.py
       - src/pancake_prediction/public_collector.py
       - src/pancake_prediction/recent_bootstrap.py
+      - src/pancake_prediction/collector.py
       - src/pancake_prediction/rpc.py
   workflow_dispatch:
 
