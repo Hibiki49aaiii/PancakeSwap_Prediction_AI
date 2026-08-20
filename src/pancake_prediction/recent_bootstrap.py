@@ -172,6 +172,35 @@ def resolve_timestamp_block_range(
     )
 
 
+def _record_recent_chainlink_anchor(
+    store: EventStore,
+    market: Market,
+    *,
+    from_block: int,
+    oracle_proxy: str,
+    chainlink_aggregator: str,
+) -> None:
+    """Anchor recent active-Chainlink history to the proven event emitter.
+
+    ``Prediction.oracle()`` is a proxy address on the current BNBUSD contract,
+    while ``AnswerUpdated`` is emitted by the proxy's underlying aggregator.
+    ``oracle_history`` compares its anchor address to the event contract address,
+    so the research anchor must be the proven aggregator, not the proxy.  The
+    anchor block represents state immediately before the recent collection
+    window, making the synthetic activation effective at ``from_block``.
+    """
+
+    if from_block <= 0:
+        raise ValueError("recent Chainlink anchor requires a positive from_block")
+    store.record_metadata(f"{market.symbol}.oracle_anchor_block", str(from_block - 1))
+    store.record_metadata(
+        f"{market.symbol}.oracle_anchor_address", chainlink_aggregator.lower()
+    )
+    store.record_metadata(
+        f"{market.symbol}.oracle_proxy_anchor_address", oracle_proxy.lower()
+    )
+
+
 def run_recent_prediction_bootstrap(
     rpc: RecentBootstrapRpc,
     market: Market,
@@ -224,6 +253,13 @@ def run_recent_prediction_bootstrap(
         oracle_proxy = oracle_stability_proof.get("oracle")
         if not isinstance(aggregator, str) or not isinstance(oracle_proxy, str):
             raise RuntimeError("oracle stability proof is missing Chainlink route addresses")
+        _record_recent_chainlink_anchor(
+            store,
+            market,
+            from_block=block_range.from_block,
+            oracle_proxy=oracle_proxy,
+            chainlink_aggregator=aggregator,
+        )
         chainlink_report = collector.collect_chainlink_feed(
             market,
             aggregator_address=aggregator,
