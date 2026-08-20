@@ -1,0 +1,97 @@
+{
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "endpoint": "https://bsc-pokt.nodies.app",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.drpc.org",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bnb.api.onfinality.io/public",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.meowrpc.com",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": "RpcError: block not found: 58489512",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-mainnet.public.blastapi.io",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 521: <none>",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.bnbchain.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed-public.bnbchain.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.nariox.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.defibit.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.ninicoin.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.nodereal.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-rpc.publicnode.com",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://public.1rpc.io/bnb",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    }
+  ],
+  "chainlink_collected": false,
+  "evidence_version": 2,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "profitability_gate_eligible": false,
+  "purpose": "public_rpc_collector_smoke_only",
+  "requested_end_timestamp": 1787148000,
+  "requested_start_timestamp": 1787140800,
+  "selected": null,
+  "signing_enabled": false,
+  "success": false,
+  "workflow_outcome": "failure"
+}
