@@ -42,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-timestamp", type=int, required=True)
     parser.add_argument("--confirmations", type=int, default=64)
     parser.add_argument("--chunk-size", type=int, default=2_000)
+    parser.add_argument(
+        "--include-chainlink",
+        action="store_true",
+        help=(
+            "collect recent Chainlink events only after proving the latest oracle "
+            "was unchanged from the requested window start through observed head"
+        ),
+    )
     return parser
 
 
@@ -62,6 +70,7 @@ def main() -> int:
                 end_timestamp=args.end_timestamp,
                 confirmations=args.confirmations,
                 chunk_size=args.chunk_size,
+                include_chainlink=args.include_chainlink,
             )
             success = {
                 "endpoint": endpoint,
@@ -84,8 +93,13 @@ def main() -> int:
                 }
             )
 
+    chainlink_collected = bool(
+        success is not None
+        and isinstance(success.get("report"), dict)
+        and success["report"].get("chainlink_collected") is True
+    )
     payload = {
-        "evidence_version": 2,
+        "evidence_version": 3,
         "market": str(args.market),
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
@@ -93,7 +107,8 @@ def main() -> int:
         "attempts": attempts,
         "selected": success,
         "archive_state_required": False,
-        "chainlink_collected": False,
+        "chainlink_requested": bool(args.include_chainlink),
+        "chainlink_collected": chainlink_collected,
         "signing_enabled": False,
         "live_broadcast": False,
     }
