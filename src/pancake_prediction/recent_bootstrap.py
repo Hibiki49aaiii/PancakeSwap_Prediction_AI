@@ -32,34 +32,6 @@ class TimestampBlockRange:
         return asdict(self)
 
 
-@dataclass(frozen=True, slots=True)
-class RecentBootstrapResult:
-    market: str
-    database: str
-    block_range: TimestampBlockRange
-    collection: dict[str, object]
-    quality: QualityReport
-    replay_rounds: int
-    replay_input_digest: str
-    replay_output_digest: str
-    chainlink_collected: bool
-    authoritative_prediction_events: bool
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "market": self.market,
-            "database": self.database,
-            "block_range": self.block_range.as_dict(),
-            "collection": self.collection,
-            "quality": self.quality.as_dict(),
-            "replay_rounds": self.replay_rounds,
-            "replay_input_digest": self.replay_input_digest,
-            "replay_output_digest": self.replay_output_digest,
-            "chainlink_collected": self.chainlink_collected,
-            "authoritative_prediction_events": self.authoritative_prediction_events,
-        }
-
-
 def _block_timestamp(rpc: RecentBootstrapRpc, block_number: int) -> int:
     block = rpc.block(block_number)
     raw = block.get("timestamp")
@@ -76,13 +48,16 @@ def first_block_at_or_after(
     timestamp: int,
     *,
     upper_block: int,
+    lower_block: int = 0,
 ) -> int:
-    if timestamp < 0 or upper_block < 0:
-        raise ValueError("timestamp and upper_block must be non-negative")
+    if timestamp < 0 or lower_block < 0 or upper_block < 0:
+        raise ValueError("timestamp and block bounds must be non-negative")
+    if lower_block > upper_block:
+        raise ValueError("lower_block must not exceed upper_block")
     upper_timestamp = _block_timestamp(rpc, upper_block)
     if timestamp > upper_timestamp:
         raise ValueError("requested timestamp is later than the upper block")
-    low = 0
+    low = lower_block
     high = upper_block
     while low < high:
         mid = (low + high) // 2
@@ -91,6 +66,38 @@ def first_block_at_or_after(
         else:
             low = mid + 1
     return low
+
+
+def recent_search_lower_bound(
+    rpc: RecentBootstrapRpc,
+    timestamp: int,
+    *,
+    upper_block: int,
+) -> int:
+    """Find a nearby lower bound without probing arbitrary old block headers.
+
+    Public BSC nodes may serve current headers/logs while pruning or restricting
+    much older block headers. A genesis-to-head binary search therefore creates
+    an accidental archive-history dependency even for a recent timestamp.
+    Exponential backoff from the confirmed head keeps probes near the requested
+    recent window, then the normal binary search can operate inside that bound.
+    """
+
+    if timestamp < 0 or upper_block < 0:
+        raise ValueError("timestamp and upper_block must be non-negative")
+    upper_timestamp = _block_timestamp(rpc, upper_block)
+    if timestamp > upper_timestamp:
+        raise ValueError("requested timestamp is later than the upper block")
+    if upper_block == 0:
+        return 0
+
+    distance = 1
+    while True:
+        candidate = max(0, upper_block - distance)
+        candidate_timestamp = _block_timestamp(rpc, candidate)
+        if candidate == 0 or candidate_timestamp < timestamp:
+            return candidate
+        distance *= 2
 
 
 def resolve_timestamp_block_range(
@@ -112,14 +119,21 @@ def resolve_timestamp_block_range(
     if end_timestamp > safe_head_timestamp:
         raise ValueError("requested end timestamp is later than the confirmed head")
 
+    search_lower = recent_search_lower_bound(
+        rpc,
+        start_timestamp,
+        upper_block=safe_head,
+    )
     from_block = first_block_at_or_after(
         rpc,
         start_timestamp,
+        lower_block=search_lower,
         upper_block=safe_head,
     )
     end_boundary = first_block_at_or_after(
         rpc,
         end_timestamp,
+        lower_block=from_block,
         upper_block=safe_head,
     )
     to_block = max(from_block, end_boundary - 1)
@@ -179,3 +193,31 @@ def run_recent_prediction_bootstrap(
         chainlink_collected=False,
         authoritative_prediction_events=True,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RecentBootstrapResult:
+    market: str
+    database: str
+    block_range: TimestampBlockRange
+    collection: dict[str, object]
+    quality: QualityReport
+    replay_rounds: int
+    replay_input_digest: str
+    replay_output_digest: str
+    chainlink_collected: bool
+    authoritative_prediction_events: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": self.market,
+            "database": self.database,
+            "block_range": self.block_range.as_dict(),
+            "collection": self.collection,
+            "quality": self.quality.as_dict(),
+            "replay_rounds": self.replay_rounds,
+            "replay_input_digest": self.replay_input_digest,
+            "replay_output_digest": self.replay_output_digest,
+            "chainlink_collected": self.chainlink_collected,
+            "authoritative_prediction_events": self.authoritative_prediction_events,
+        }
