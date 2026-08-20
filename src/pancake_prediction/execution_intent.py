@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Protocol, cast
+from typing import Any, Protocol, cast
 
 from .rpc import RpcError, RpcResponseError
 
