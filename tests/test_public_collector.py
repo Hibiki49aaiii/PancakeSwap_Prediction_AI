@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from pancake_prediction.abi import PREDICTION_EVENTS
+from pancake_prediction.contracts import MARKETS
 from pancake_prediction.public_collector import PublicHistoricalCollector
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
@@ -127,6 +128,42 @@ class ExplicitFilterRpc(TopicLimitRpc):
         return []
 
 
+class StableOracleProofRpc(TopicLimitRpc):
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert address.lower() == MARKETS["BNBUSD"].address.lower()
+        assert from_block == to_block == 100
+        self.calls.append(topic0s)
+        return []
+
+
+class ChangingOracleProofRpc(StableOracleProofRpc):
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert address.lower() == MARKETS["BNBUSD"].address.lower()
+        assert from_block == to_block == 100
+        self.calls.append(topic0s)
+        new_oracle_spec = next(
+            spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
+        )
+        log = _log(new_oracle_spec.topic0, 0)
+        log["address"] = MARKETS["BNBUSD"].address
+        log["data"] = "0x" + "00" * 12 + "44" * 20
+        return [log]
+
+
 def _collector(tmp_path: Path, rpc: TopicLimitRpc) -> PublicHistoricalCollector:
     store = EventStore(tmp_path / "events.sqlite3")
     store.initialize()
@@ -196,3 +233,36 @@ def test_public_collector_turns_unfiltered_request_into_known_topics(tmp_path: P
     assert inserted == 0
     assert oracles == set()
     assert rpc.calls == [tuple(spec.topic0 for spec in PREDICTION_EVENTS)]
+
+
+def test_public_collector_proves_stable_latest_oracle_without_archive_state(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, StableOracleProofRpc())
+
+    proof = collector.prove_latest_oracle_stable_since(
+        MARKETS["BNBUSD"],
+        from_block=100,
+        through_block=100,
+    )
+
+    assert proof == {
+        "oracle": "0x" + "33" * 20,
+        "from_block": 100,
+        "through_block": 100,
+        "new_oracle_events": 0,
+        "method": "latest_oracle_plus_no_NewOracle_since_window_start",
+    }
+
+
+def test_public_collector_rejects_latest_oracle_proof_after_oracle_change(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, ChangingOracleProofRpc())
+
+    with pytest.raises(RpcError, match="NewOracle"):
+        collector.prove_latest_oracle_stable_since(
+            MARKETS["BNBUSD"],
+            from_block=100,
+            through_block=100,
+        )
