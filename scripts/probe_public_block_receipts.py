@@ -12,6 +12,7 @@ from scripts.run_recent_public_bootstrap import PUBLIC_BSC_ENDPOINTS
 ADDITIONAL_PUBLIC_BSC_ENDPOINTS = (
     "https://bnb.api.onfinality.io/public",
     "https://bsc.drpc.org",
+    "https://bsc-mainnet.public.blastapi.io",
 )
 PUBLIC_BLOCK_RECEIPT_ENDPOINTS = tuple(
     dict.fromkeys((*PUBLIC_BSC_ENDPOINTS, *ADDITIONAL_PUBLIC_BSC_ENDPOINTS))
