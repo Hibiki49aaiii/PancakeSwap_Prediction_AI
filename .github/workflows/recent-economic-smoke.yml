@@ -5,6 +5,7 @@ on:
     branches:
       - agent/v0.7-alpha-research
     paths:
+      - .github/workflows/recent-economic-smoke.yml
       - evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json
   workflow_dispatch:
     inputs:
@@ -49,12 +50,15 @@ jobs:
           python-version: '3.12'
       - name: Install project
         run: pip install -e .
+
       - name: Resolve successful one-day Chainlink source run
         id: source
+        continue-on-error: true
         env:
           MANUAL_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           mkdir -p artifacts/source evidence
+          exec 2> >(tee artifacts/recent-economic-smoke-source.err >&2)
           python - <<'PY'
           import json
           import os
@@ -121,10 +125,15 @@ jobs:
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"source_sha={source_sha}\n")
           PY
+
       - name: Download exact one-day Chainlink artifact
+        id: source_artifact
+        if: steps.source.outcome == 'success'
+        continue-on-error: true
         env:
           SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
         run: |
+          exec 2> >(tee artifacts/recent-economic-smoke-source-artifact.err >&2)
           gh run download "$SOURCE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "recent-public-chainlink-day-${SOURCE_RUN_ID}" \
@@ -152,8 +161,13 @@ jobs:
           if int(report.get("replay_rounds", 0)) < 280:
               raise SystemExit("downloaded source artifact has fewer replay rounds than expected")
           PY
+
       - name: Apply ClickHouse schema
+        id: schema
+        if: steps.source_artifact.outcome == 'success'
+        continue-on-error: true
         run: |
+          exec 2> >(tee artifacts/recent-economic-smoke-schema.err >&2)
           python - <<'PY'
           from pathlib import Path
           from pancake_prediction.clickhouse import ClickHouseHttpClient
@@ -167,10 +181,15 @@ jobs:
               if statement.strip():
                   client.execute(statement)
           PY
-          pcs-clickhouse schema-check
+          pcs-clickhouse schema-check > artifacts/recent-economic-smoke-schema.json
+
       - name: Download official Binance Aug 18 Spot and USD-M Perp archives
+        id: binance_download
+        if: steps.schema.outcome == 'success'
+        continue-on-error: true
         run: |
           set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-smoke-binance-download.err >&2)
           mkdir -p /tmp/binance/spot /tmp/binance/perp
           name=BNBUSDT-aggTrades-2026-08-18.zip
           spot_base="https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/$name"
@@ -183,9 +202,14 @@ jobs:
             -o "/tmp/binance/perp/$name"
           curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$perp_base.CHECKSUM" \
             -o "/tmp/binance/perp/$name.CHECKSUM"
+
       - name: Verify and ingest Binance archives with positive availability lag
+        id: binance_ingest
+        if: steps.binance_download.outcome == 'success'
+        continue-on-error: true
         run: |
           set -o pipefail
+          exec 2> >(tee artifacts/recent-economic-smoke-binance-ingest.err >&2)
           name=BNBUSDT-aggTrades-2026-08-18.zip
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
@@ -203,8 +227,10 @@ jobs:
             --timestamp-unit milliseconds \
             --availability-lag-ms 250 \
             | tee artifacts/recent-economic-smoke-perp-ingest.json
+
       - name: Run source-bound recent economic pipeline smoke
         id: campaign
+        if: steps.binance_ingest.outcome == 'success'
         continue-on-error: true
         run: |
           set -o pipefail
@@ -230,14 +256,21 @@ jobs:
             --calibration-rounds 20 \
             --pool-min-train-rounds 50 \
             --pool-window-rounds 200 \
-            2> artifacts/recent-economic-smoke-campaign.err \
+            2> >(tee artifacts/recent-economic-smoke-campaign.err >&2) \
             | tee artifacts/recent-economic-smoke-campaign.json
+
       - name: Build bounded smoke evidence
-        if: always() && !cancelled() && steps.campaign.outcome != 'skipped'
+        if: always() && !cancelled()
         env:
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
+          SOURCE_ARTIFACT_OUTCOME: ${{ steps.source_artifact.outcome }}
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          BINANCE_DOWNLOAD_OUTCOME: ${{ steps.binance_download.outcome }}
+          BINANCE_INGEST_OUTCOME: ${{ steps.binance_ingest.outcome }}
           CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
           SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
           import hashlib
@@ -245,9 +278,6 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
-
-          def load_json(path: str):
-              return json.loads(Path(path).read_text(encoding="utf-8"))
 
           def load_optional_json(path: str):
               source = Path(path)
@@ -265,24 +295,43 @@ jobs:
               text = source.read_text(encoding="utf-8", errors="replace").strip()
               return text[-4000:] if text else None
 
-          def sha256(path: str) -> str:
+          def optional_sha256(path: str):
+              source = Path(path)
+              if not source.is_file():
+                  return None
               digest = hashlib.sha256()
-              with Path(path).open("rb") as handle:
+              with source.open("rb") as handle:
                   while chunk := handle.read(1024 * 1024):
                       digest.update(chunk)
               return digest.hexdigest()
 
+          outcomes = {
+              "source": os.environ.get("SOURCE_OUTCOME", "skipped"),
+              "source_artifact": os.environ.get("SOURCE_ARTIFACT_OUTCOME", "skipped"),
+              "schema": os.environ.get("SCHEMA_OUTCOME", "skipped"),
+              "binance_download": os.environ.get("BINANCE_DOWNLOAD_OUTCOME", "skipped"),
+              "binance_ingest": os.environ.get("BINANCE_INGEST_OUTCOME", "skipped"),
+              "campaign": os.environ.get("CAMPAIGN_OUTCOME", "skipped"),
+          }
+          smoke_ready = all(value == "success" for value in outcomes.values())
+          source_run_raw = os.environ.get("SOURCE_RUN_ID", "").strip()
+          source_run_id = int(source_run_raw) if source_run_raw.isdigit() else None
+          source_sha = os.environ.get("SOURCE_SHA", "").strip() or None
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "evidence_role": "latest_attempt",
               "purpose": "recent_source_bound_economic_pipeline_smoke",
+              "success": smoke_ready,
               "profitability_gate_eligible": False,
               "full_historical_gate_satisfied": False,
               "signing_enabled": False,
               "live_broadcast": False,
-              "workflow_outcome": os.environ["CAMPAIGN_OUTCOME"],
-              "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
-              "source_sha": os.environ["SOURCE_SHA"],
+              "workflow_outcome": "success" if smoke_ready else "failure",
+              "step_outcomes": outcomes,
+              "source_run_id": source_run_id,
+              "source_sha": source_sha,
+              "source_run": load_optional_json("artifacts/source-run.json"),
+              "trigger_sha": os.environ.get("TRIGGER_SHA"),
               "economic_source_sha": subprocess.check_output(
                   ["git", "rev-parse", "HEAD"], text=True
               ).strip(),
@@ -312,24 +361,35 @@ jobs:
                   "pool_min_train_rounds": 50,
                   "pool_window_rounds": 200,
               },
-              "chainlink_artifact_sha256": sha256(
+              "chainlink_artifact_sha256": optional_sha256(
                   "artifacts/source/recent-public-chainlink-2026-08-18-to-19.json"
               ),
-              "chainlink_database_sha256": sha256(
+              "chainlink_database_sha256": optional_sha256(
                   "artifacts/source/bnbusd-public-chainlink-2026-08-18-to-19.sqlite"
               ),
-              "binance_spot_ingest": load_json(
+              "binance_spot_ingest": load_optional_json(
                   "artifacts/recent-economic-smoke-spot-ingest.json"
               ),
-              "binance_perp_ingest": load_json(
+              "binance_perp_ingest": load_optional_json(
                   "artifacts/recent-economic-smoke-perp-ingest.json"
               ),
               "campaign": load_optional_json(
                   "artifacts/recent-economic-smoke-campaign.json"
               ),
-              "campaign_error": load_error(
-                  "artifacts/recent-economic-smoke-campaign.err"
-              ),
+              "errors": {
+                  "source": load_error("artifacts/recent-economic-smoke-source.err"),
+                  "source_artifact": load_error(
+                      "artifacts/recent-economic-smoke-source-artifact.err"
+                  ),
+                  "schema": load_error("artifacts/recent-economic-smoke-schema.err"),
+                  "binance_download": load_error(
+                      "artifacts/recent-economic-smoke-binance-download.err"
+                  ),
+                  "binance_ingest": load_error(
+                      "artifacts/recent-economic-smoke-binance-ingest.err"
+                  ),
+                  "campaign": load_error("artifacts/recent-economic-smoke-campaign.err"),
+              },
               "interpretation": (
                   "Pipeline smoke only: validates exact-source binding, positive availability lags, "
                   "purged/embargoed OOS plumbing, and explicit costs on a one-day sample. It is not "
@@ -339,15 +399,22 @@ jobs:
           out = Path("evidence/recent-economic-smoke-2026-08-18-to-19-latest.json")
           out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
+
       - name: Persist smoke evidence
-        if: always() && !cancelled() && steps.campaign.outcome != 'skipped'
-        env:
-          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+        if: always() && !cancelled()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-economic-smoke-2026-08-18-to-19-latest.json
-          if [ "$CAMPAIGN_OUTCOME" = success ]; then
+          if python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(
+              Path("evidence/recent-economic-smoke-2026-08-18-to-19-latest.json").read_text()
+          )
+          raise SystemExit(0 if payload.get("success") is True else 1)
+          PY
+          then
             cp evidence/recent-economic-smoke-2026-08-18-to-19-latest.json \
               evidence/recent-economic-smoke-2026-08-18-to-19-last-success.json
             python - <<'PY'
@@ -368,6 +435,7 @@ jobs:
             git pull --rebase origin agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
+
       - name: Upload smoke artifacts
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
@@ -376,18 +444,23 @@ jobs:
           path: |
             artifacts/source-run.json
             artifacts/source/recent-public-chainlink-2026-08-18-to-19.json
-            artifacts/recent-economic-smoke-spot-ingest.json
-            artifacts/recent-economic-smoke-perp-ingest.json
-            artifacts/recent-economic-smoke-campaign.json
-            artifacts/recent-economic-smoke-campaign.err
+            artifacts/recent-economic-smoke-*.json
+            artifacts/recent-economic-smoke-*.err
           if-no-files-found: warn
           retention-days: 30
+
       - name: Enforce economic smoke result
         if: always() && !cancelled()
-        env:
-          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
         run: |
-          if [ "$CAMPAIGN_OUTCOME" != success ]; then
-            echo 'Recent source-bound economic pipeline smoke failed; inspect persisted latest evidence.' >&2
-            exit 2
-          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("evidence/recent-economic-smoke-2026-08-18-to-19-latest.json").read_text()
+          )
+          if payload.get("success") is not True:
+              raise SystemExit(
+                  "Recent source-bound economic pipeline smoke failed; inspect persisted latest evidence."
+              )
+          PY
