@@ -124,19 +124,22 @@ class PublicHistoricalCollector(HistoricalCollector):
         from_block: int,
         through_block: int,
     ) -> dict[str, object]:
-        """Fail closed unless the latest oracle is proven stable since ``from_block``.
+        """Fail closed unless one latest-oracle snapshot is stable since the window start.
 
-        A public full node may not support historical ``oracle()`` state reads.
-        For a recent window, the latest oracle is still valid for the complete
-        window if no ``NewOracle`` event occurred from the window start through
-        the observed head. Any observed change makes the pre-change oracle
-        ambiguous without additional historical evidence, so this method
-        rejects rather than guessing.
+        Read ``oracle()`` first, then capture a head block and scan ``NewOracle``
+        through that head. A change before the latest-state read or between that
+        read and the head snapshot is therefore observed and rejected. A change
+        after the captured head cannot invalidate the oracle that was active for
+        the historical window being collected.
         """
 
         if from_block < 0 or through_block < from_block:
             raise ValueError("invalid oracle stability proof range")
         chain_id = self.validate_chain()
+        oracle = self.oracle_at(market, "latest").lower()
+        observed_head = self.rpc.block_number()
+        proof_through_block = max(through_block, observed_head)
+
         new_oracle_specs = tuple(
             spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
         )
@@ -150,23 +153,22 @@ class PublicHistoricalCollector(HistoricalCollector):
             source="oracle_proof",
             specs=new_oracle_specs,
             from_block=from_block,
-            to_block=through_block,
+            to_block=proof_through_block,
             topic0s=(spec.topic0,),
         )
         if event_count != 0 or observed_oracles:
             raise RpcError(
                 "latest oracle cannot prove the window start: NewOracle was observed "
-                f"between blocks {from_block} and {through_block}"
+                f"between blocks {from_block} and {proof_through_block}"
             )
-        oracle = self.oracle_at(market, "latest").lower()
         self.store.record_metadata(
             f"{market.symbol}.recent_oracle_stability_proof",
-            f"{from_block}:{through_block}:{oracle}",
+            f"{from_block}:{proof_through_block}:{oracle}",
         )
         return {
             "oracle": oracle,
             "from_block": from_block,
-            "through_block": through_block,
+            "through_block": proof_through_block,
             "new_oracle_events": event_count,
-            "method": "latest_oracle_plus_no_NewOracle_since_window_start",
+            "method": "latest_oracle_then_no_NewOracle_through_post_read_head",
         }
