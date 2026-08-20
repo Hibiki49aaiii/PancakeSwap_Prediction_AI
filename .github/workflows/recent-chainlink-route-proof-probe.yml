@@ -18,7 +18,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,21 +45,22 @@ jobs:
           from pancake_prediction.public_collector import PublicHistoricalCollector
           from pancake_prediction.rpc import JsonRpcClient
           from pancake_prediction.store import EventStore
-          from scripts.run_recent_public_bootstrap import (
-              PUBLIC_BSC_ENDPOINTS,
-              PUBLIC_RPC_BACKOFF_S,
-              PUBLIC_RPC_MIN_INTERVAL_S,
-              PUBLIC_RPC_RETRIES,
-              PUBLIC_RPC_TIMEOUT_S,
-          )
 
           FROM_BLOCK = 116556542
           TO_BLOCK = 116748497
           MARKET = MARKETS["BNBUSD"]
+          # Deliberately bounded capability probe, not the production fallback list.
+          # These three endpoints represent the already-observed capability classes:
+          # recent logs, historical/recent state, and official public dataseed.
+          ENDPOINTS = (
+              "https://rpc-bsc.48.club",
+              "https://bsc-mainnet.public.blastapi.io",
+              "https://bsc-dataseed.bnbchain.org",
+          )
           attempts = []
           selected = None
 
-          for index, endpoint in enumerate(PUBLIC_BSC_ENDPOINTS, start=1):
+          for index, endpoint in enumerate(ENDPOINTS, start=1):
               db = Path(f"artifacts/route-proof-probe-{index}.sqlite")
               if db.exists():
                   db.unlink()
@@ -67,10 +68,10 @@ jobs:
               try:
                   rpc = JsonRpcClient(
                       endpoint,
-                      timeout_s=PUBLIC_RPC_TIMEOUT_S,
-                      retries=PUBLIC_RPC_RETRIES,
-                      backoff_s=PUBLIC_RPC_BACKOFF_S,
-                      min_interval_s=PUBLIC_RPC_MIN_INTERVAL_S,
+                      timeout_s=10.0,
+                      retries=2,
+                      backoff_s=0.5,
+                      min_interval_s=0.15,
                   )
                   store = EventStore(db)
                   store.initialize()
@@ -113,7 +114,7 @@ jobs:
                   )
 
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "evidence_role": "latest_attempt",
               "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
               "market": "BNBUSD",
@@ -121,6 +122,13 @@ jobs:
               "to_block": TO_BLOCK,
               "requested_start_timestamp": 1787011200,
               "requested_end_timestamp": 1787097600,
+              "rpc_policy": {
+                  "timeout_s": 10.0,
+                  "retries": 2,
+                  "backoff_s": 0.5,
+                  "min_interval_s": 0.15,
+              },
+              "candidate_endpoints": list(ENDPOINTS),
               "success": selected is not None,
               "selected": selected,
               "attempts": attempts,
@@ -167,7 +175,7 @@ jobs:
               payload = json.loads(source.read_text(encoding="utf-8"))
           else:
               payload = {
-                  "evidence_version": 1,
+                  "evidence_version": 2,
                   "evidence_role": "latest_attempt",
                   "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
                   "market": "BNBUSD",
