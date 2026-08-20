@@ -230,6 +230,7 @@ jobs:
             --calibration-rounds 20 \
             --pool-min-train-rounds 50 \
             --pool-window-rounds 200 \
+            2> artifacts/recent-economic-smoke-campaign.err \
             | tee artifacts/recent-economic-smoke-campaign.json
       - name: Build bounded smoke evidence
         if: always() && !cancelled() && steps.campaign.outcome != 'skipped'
@@ -248,6 +249,22 @@ jobs:
           def load_json(path: str):
               return json.loads(Path(path).read_text(encoding="utf-8"))
 
+          def load_optional_json(path: str):
+              source = Path(path)
+              if not source.exists() or not source.read_text(encoding="utf-8").strip():
+                  return None
+              try:
+                  return json.loads(source.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  return {"json_error": str(exc)}
+
+          def load_error(path: str):
+              source = Path(path)
+              if not source.exists():
+                  return None
+              text = source.read_text(encoding="utf-8", errors="replace").strip()
+              return text[-4000:] if text else None
+
           def sha256(path: str) -> str:
               digest = hashlib.sha256()
               with Path(path).open("rb") as handle:
@@ -255,8 +272,6 @@ jobs:
                       digest.update(chunk)
               return digest.hexdigest()
 
-          campaign_path = Path("artifacts/recent-economic-smoke-campaign.json")
-          campaign = load_json(str(campaign_path)) if campaign_path.exists() else None
           payload = {
               "evidence_version": 1,
               "evidence_role": "latest_attempt",
@@ -309,7 +324,12 @@ jobs:
               "binance_perp_ingest": load_json(
                   "artifacts/recent-economic-smoke-perp-ingest.json"
               ),
-              "campaign": campaign,
+              "campaign": load_optional_json(
+                  "artifacts/recent-economic-smoke-campaign.json"
+              ),
+              "campaign_error": load_error(
+                  "artifacts/recent-economic-smoke-campaign.err"
+              ),
               "interpretation": (
                   "Pipeline smoke only: validates exact-source binding, positive availability lags, "
                   "purged/embargoed OOS plumbing, and explicit costs on a one-day sample. It is not "
@@ -359,6 +379,7 @@ jobs:
             artifacts/recent-economic-smoke-spot-ingest.json
             artifacts/recent-economic-smoke-perp-ingest.json
             artifacts/recent-economic-smoke-campaign.json
+            artifacts/recent-economic-smoke-campaign.err
           if-no-files-found: warn
           retention-days: 30
       - name: Enforce economic smoke result
