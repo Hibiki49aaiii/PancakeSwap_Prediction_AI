@@ -77,10 +77,12 @@ jobs:
               if payload.get("requested_end_timestamp") != 1787097600:
                   raise SystemExit("unexpected one-day Chainlink end timestamp")
               run_id = int(payload["source_run_id"])
+          Path("artifacts/source-run-id.txt").write_text(f"{run_id}\n", encoding="utf-8")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"source_run_id={run_id}\n")
           PY
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ steps.source.outputs.source_run_id }}" \
+          SOURCE_RUN_ID="$(cat artifacts/source-run-id.txt)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
             > artifacts/source-run.json
           python - <<'PY'
           import json
