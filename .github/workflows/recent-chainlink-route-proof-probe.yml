@@ -29,6 +29,44 @@ jobs:
       - name: Install project
         run: pip install -e .
 
+      - name: Publish probe run identity
+        run: |
+          mkdir -p evidence
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          payload = {
+              "evidence_version": 1,
+              "state": "running",
+              "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
+              "source_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "source_event_sha": os.environ["GITHUB_SHA"],
+              "source_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "signing_enabled": False,
+              "live_broadcast": False,
+          }
+          Path("evidence/recent-chainlink-route-proof-probe-running.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-chainlink-route-proof-probe-running.json
+          if git diff --cached --quiet; then
+            echo 'Probe run identity unchanged.'
+          else
+            git commit -m 'chore: record fixed-window route probe run'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
       - name: Probe exact Aug18-19 Chainlink route proof
         id: probe
         continue-on-error: true
