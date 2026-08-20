@@ -33,6 +33,17 @@ class TimestampBlockRange:
 
 
 @dataclass(frozen=True, slots=True)
+class ChainlinkRouteAnchor:
+    oracle_proxy: str
+    chainlink_aggregator: str
+    anchor_block: int
+    evidence_sha256: str
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class RecentBootstrapResult:
     market: str
     database: str
@@ -211,7 +222,11 @@ def run_recent_prediction_bootstrap(
     confirmations: int = 64,
     chunk_size: int = 2_000,
     include_chainlink: bool = False,
+    chainlink_route_anchor: ChainlinkRouteAnchor | None = None,
 ) -> RecentBootstrapResult:
+    if chainlink_route_anchor is not None and not include_chainlink:
+        raise ValueError("Chainlink route anchor requires include_chainlink=True")
+
     block_range = resolve_timestamp_block_range(
         rpc,
         start_timestamp=start_timestamp,
@@ -228,11 +243,22 @@ def run_recent_prediction_bootstrap(
             store=store,
             chunk_size=max(chunk_size, 50_000),
         )
-        oracle_stability_proof = proof_collector.prove_oracle_stable_in_range(
-            market,
-            from_block=block_range.from_block,
-            through_block=block_range.to_block,
-        )
+        if chainlink_route_anchor is None:
+            oracle_stability_proof = proof_collector.prove_oracle_stable_in_range(
+                market,
+                from_block=block_range.from_block,
+                through_block=block_range.to_block,
+            )
+        else:
+            oracle_stability_proof = proof_collector.prove_oracle_stable_from_anchor(
+                market,
+                from_block=block_range.from_block,
+                through_block=block_range.to_block,
+                anchor_block=chainlink_route_anchor.anchor_block,
+                oracle_proxy=chainlink_route_anchor.oracle_proxy,
+                chainlink_aggregator=chainlink_route_anchor.chainlink_aggregator,
+                anchor_evidence_sha256=chainlink_route_anchor.evidence_sha256,
+            )
 
     collector = PublicHistoricalCollector(
         rpc=rpc,
