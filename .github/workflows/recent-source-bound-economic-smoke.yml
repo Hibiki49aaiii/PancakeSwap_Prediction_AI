@@ -1,0 +1,257 @@
+name: recent-source-bound-economic-smoke
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/recent-source-bound-economic-smoke.yml
+      - scripts/run_recent_public_bootstrap.py
+      - src/pancake_prediction/public_collector.py
+      - src/pancake_prediction/recent_bootstrap.py
+      - src/pancake_prediction/collector.py
+      - src/pancake_prediction/rpc.py
+      - src/pancake_prediction/binance_archive.py
+      - src/pancake_prediction/clickhouse.py
+      - src/pancake_prediction/clickhouse_dataset.py
+      - src/pancake_prediction/clickhouse_manifest.py
+      - src/pancake_prediction/clickhouse_cli.py
+      - src/pancake_prediction/campaign_evaluation.py
+      - src/pancake_prediction/baseline.py
+      - src/pancake_prediction/pool_projection.py
+      - src/pancake_prediction/economic_oos.py
+      - sql/clickhouse/v0_7_core.sql
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recent-source-bound-economic-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: pip install -e .
+      - name: Apply ClickHouse schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+          pcs-clickhouse schema-check
+      - name: Collect one-day canonical Prediction plus Chainlink source
+        id: chain
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts evidence /tmp/binance-2026-08-18
+          python scripts/run_recent_public_bootstrap.py \
+            --market BNBUSD \
+            --database artifacts/bnbusd-source-bound-2026-08-18.sqlite \
+            --output artifacts/recent-source-chain-2026-08-18.json \
+            --start-timestamp 1787011200 \
+            --end-timestamp 1787097600 \
+            --confirmations 64 \
+            --chunk-size 2000 \
+            --include-chainlink
+      - name: Download official Binance Aug18 daily archives
+        id: download
+        if: steps.chain.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          root=/tmp/binance-2026-08-18
+          spot=https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-18.zip
+          perp=https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-18.zip
+          curl -fsSL "$spot" -o "$root/spot.zip"
+          curl -fsSL "$spot.CHECKSUM" -o "$root/spot.zip.CHECKSUM"
+          curl -fsSL "$perp" -o "$root/perp.zip"
+          curl -fsSL "$perp.CHECKSUM" -o "$root/perp.zip.CHECKSUM"
+          sed -i 's/BNBUSDT-aggTrades-2026-08-18.zip/spot.zip/' "$root/spot.zip.CHECKSUM"
+          sed -i 's/BNBUSDT-aggTrades-2026-08-18.zip/perp.zip/' "$root/perp.zip.CHECKSUM"
+      - name: Ingest checksum-verified Binance sources with positive availability lag
+        id: ingest
+        if: steps.chain.outcome == 'success' && steps.download.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          root=/tmp/binance-2026-08-18
+          pcs-clickhouse binance-ingest \
+            --market BNBUSD \
+            --archive "$root/spot.zip" \
+            --checksum "$root/spot.zip.CHECKSUM" \
+            --venue spot \
+            --timestamp-unit auto \
+            --availability-lag-ms 25 \
+            > artifacts/binance-spot-ingest-2026-08-18.json
+          pcs-clickhouse binance-ingest \
+            --market BNBUSD \
+            --archive "$root/perp.zip" \
+            --checksum "$root/perp.zip.CHECKSUM" \
+            --venue um_futures \
+            --timestamp-unit milliseconds \
+            --availability-lag-ms 40 \
+            > artifacts/binance-perp-ingest-2026-08-18.json
+      - name: Run source-bound OOS economic pipeline smoke
+        id: economic
+        if: steps.chain.outcome == 'success' && steps.download.outcome == 'success' && steps.ingest.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          pcs-clickhouse campaign-evaluate \
+            --market BNBUSD \
+            --db artifacts/bnbusd-source-bound-2026-08-18.sqlite \
+            --spot-timestamp-unit auto \
+            --spot-availability-lag-ms 25 \
+            --perp-timestamp-unit milliseconds \
+            --perp-availability-lag-ms 40 \
+            --chainlink-availability-lag-ms 500 \
+            --feature-lead-seconds 20 \
+            --stake-wei 1000000000000000 \
+            --bet-gas-wei 120000000000000 \
+            --claim-gas-wei 90000000000000 \
+            --inclusion-latency-seconds 3 \
+            --min-train-rounds 100 \
+            --test-rounds 50 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 20 \
+            --pool-min-train-rounds 50 \
+            --pool-window-rounds 200 \
+            > artifacts/recent-source-bound-economic-smoke-2026-08-18.json
+      - name: Persist smoke evidence
+        if: always()
+        env:
+          CHAIN_OUTCOME: ${{ steps.chain.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+          ECONOMIC_OUTCOME: ${{ steps.economic.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def load(path: str):
+              p = Path(path)
+              if not p.exists():
+                  return None
+              try:
+                  return json.loads(p.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  return {"raw": p.read_text(encoding="utf-8")[-4000:]}
+
+          payload = {
+              "evidence_version": 1,
+              "purpose": "recent_source_bound_economic_pipeline_smoke",
+              "market": "BNBUSD",
+              "source_window": {
+                  "start_timestamp": 1787011200,
+                  "end_timestamp": 1787097600,
+                  "binance_archive_date": "2026-08-18",
+              },
+              "assumptions": {
+                  "spot_availability_lag_ms": 25,
+                  "perp_availability_lag_ms": 40,
+                  "chainlink_availability_lag_ms": 500,
+                  "feature_lead_seconds": 20,
+                  "stake_wei": 1000000000000000,
+                  "bet_gas_wei": 120000000000000,
+                  "claim_gas_wei": 90000000000000,
+                  "inclusion_latency_seconds": 3,
+                  "economic_values_role": "explicit smoke scenario; not measured production costs or profitability evidence",
+              },
+              "oos_smoke_config": {
+                  "min_train_rounds": 100,
+                  "test_rounds": 50,
+                  "purge_rounds": 2,
+                  "embargo_rounds": 2,
+                  "calibration_rounds": 20,
+                  "pool_min_train_rounds": 50,
+                  "pool_window_rounds": 200,
+              },
+              "step_outcomes": {
+                  "chain": os.environ.get("CHAIN_OUTCOME", "skipped"),
+                  "download": os.environ.get("DOWNLOAD_OUTCOME", "skipped"),
+                  "ingest": os.environ.get("INGEST_OUTCOME", "skipped"),
+                  "economic": os.environ.get("ECONOMIC_OUTCOME", "skipped"),
+              },
+              "chain": load("artifacts/recent-source-chain-2026-08-18.json"),
+              "spot_ingest": load("artifacts/binance-spot-ingest-2026-08-18.json"),
+              "perp_ingest": load("artifacts/binance-perp-ingest-2026-08-18.json"),
+              "economic": load("artifacts/recent-source-bound-economic-smoke-2026-08-18.json"),
+              "pipeline_success": os.environ.get("ECONOMIC_OUTCOME") == "success",
+              "profitability_gate_eligible": False,
+              "signing_enabled": False,
+              "live_broadcast": False,
+          }
+          path = Path("evidence/recent-source-bound-economic-smoke-2026-08-18-latest.json")
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          if payload["pipeline_success"]:
+              success = Path("evidence/recent-source-bound-economic-smoke-2026-08-18-last-success.json")
+              success.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-source-bound-economic-smoke-2026-08-18-latest.json
+          if [ -f evidence/recent-source-bound-economic-smoke-2026-08-18-last-success.json ]; then
+            git add evidence/recent-source-bound-economic-smoke-2026-08-18-last-success.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'Recent economic smoke evidence unchanged.'
+          else
+            git commit -m 'chore: record recent source-bound economic smoke evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-source-bound-economic-smoke-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Enforce smoke gate
+        if: always()
+        env:
+          ECONOMIC_OUTCOME: ${{ steps.economic.outcome }}
+        run: |
+          if [ "$ECONOMIC_OUTCOME" != success ]; then
+            echo 'Recent source-bound economic pipeline smoke failed; inspect latest evidence.' >&2
+            exit 2
+          fi
