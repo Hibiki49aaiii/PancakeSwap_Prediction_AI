@@ -17,13 +17,14 @@ For recent windows, find a lower search bound by exponential backoff from the co
 ## Evidence
 
 - `evidence/public-archive-candidate-probe.json` records `https://rpc-bsc.48.club` as `recent_logs_ready=true` with 8 `StartRound` logs in the confirmed-head-minus-5,000-block probe, while old creation-era state/log requests return `header not found`.
-- `evidence/recent-public-bootstrap-smoke-2026-08-19.json` from before the resolver fix failed on the same endpoint at block `58489512`, far outside the requested Aug 19 recent window. That failure occurred during timestamp-to-block resolution rather than the demonstrated recent-log capability.
+- Before the resolver repair, the Aug 19 smoke reached the same endpoint but attempted block `58489512`, far outside the requested recent window, and failed with `block not found`; that stale failure remains recoverable from Git history rather than being kept as the current evidence file.
 - Commit `6ad31bb4629468d45e98171b99d013970fa31c7d` changes `resolve_timestamp_block_range` to obtain a nearby lower bound by exponential backoff from the confirmed head before local binary search.
 - Commit `8b42f3c002c43b9c80fa4f65fd1718dd603b3664` adds regression coverage proving a recent range near head 1023 never probes block 0 and does not probe below block 991.
+- Current `evidence/recent-public-bootstrap-smoke-2026-08-19.json` is the post-fix end-to-end confirmation: the same public 48.club source successfully resolved blocks `116844485..116860482`, inserted 910 Prediction events including 559 bets, observed 23 Start/Lock/End events each, and produced deterministic replay evidence for 25 rounds. `success=true` and `workflow_outcome=success`.
 
 ## Why it matters
 
-Without this distinction, a workflow labeled `archive_state_required=false` can still fail on providers solely because its block-number lookup accidentally demands deep historical headers. This both wastes viable recent-log sources and misclassifies provider capability.
+Without this distinction, a workflow labeled `archive_state_required=false` can still fail on providers solely because its block-number lookup accidentally demands deep historical headers. This both wastes viable recent-log sources and misclassifies provider capability. The post-fix smoke demonstrates that removing the accidental dependency can convert a previously rejected source into a working recent canonical Prediction-event source.
 
 ## Applicability
 
@@ -33,7 +34,7 @@ Without this distinction, a workflow labeled `archive_state_required=false` can 
 
 ## Exceptions / Limitations
 
-A genuinely old requested timestamp can still require old headers and should fail if the provider cannot supply them. Exponential backoff does not make an endpoint archival; it only avoids probing history older than necessary for a recent target. End-to-end collector evidence remains required before promoting a source.
+A genuinely old requested timestamp can still require old headers and should fail if the provider cannot supply them. Exponential backoff does not make an endpoint archival; it only avoids probing history older than necessary for a recent target. The successful smoke collects Prediction events only (`chainlink_collected=false`) and therefore is not a substitute for the full historical Prediction + active-Chainlink source gate.
 
 ## Related files
 
