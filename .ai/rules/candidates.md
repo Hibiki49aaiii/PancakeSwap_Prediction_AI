@@ -6,7 +6,7 @@ Confidence: medium
 
 ### Rule
 
-When a GitHub Actions gate deliberately continues after a failed check so diagnostics/evidence can be persisted, preserve the original gate semantics and the identity of the source revision being validated.
+When a GitHub Actions gate deliberately continues after a failed check so diagnostics/evidence can be persisted, preserve the original gate semantics, the identity of the source revision being validated, and the semantic meaning of success.
 
 - If a gate step uses `continue-on-error: true`, add a later enforcement step that fails unless the original gate outcome was `success`.
 - If a prerequisite is absent, fail explicitly rather than skipping every substantive step and leaving a green job.
@@ -15,6 +15,7 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - Publish any artifact required by downstream evidence consumers before exposing success evidence that points to that artifact.
 - Do not rely on a normal `push` made with the repository `GITHUB_TOKEN` to trigger a downstream workflow. GitHub suppresses recursive workflow runs for events created by `GITHUB_TOKEN` except explicitly supported dispatch events. Prefer an explicit reusable-workflow call or another intentionally authorized trigger.
 - When a source-producing job and a downstream evaluator share one workflow run, keep the source gate identity independent from the final aggregate run conclusion. A downstream evaluation failure must not retroactively invalidate a source artifact already proven by its own gate and `last-success` evidence.
+- Do not equate process exit code zero with semantic evidence success when the command can legally return an empty result. Evidence gates must assert the minimum non-vacuous conditions required by the claim being recorded.
 
 ### Applicability
 
@@ -23,7 +24,8 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - workflows with concurrency cancellation;
 - workflows where a green status or persisted JSON can be interpreted as evidence that a specific revision actually ran and passed;
 - chained workflows where an upstream source artifact/evidence is consumed by a later research or evaluation stage;
-- same-run reusable-workflow chains where upstream source validity and downstream evaluation validity are separate claims.
+- same-run reusable-workflow chains where upstream source validity and downstream evaluation validity are separate claims;
+- analytical commands that can complete successfully with zero folds, zero scored rows, zero signals, zero projections, empty provenance, or another structurally valid but decision-useless result.
 
 ### Verification
 
@@ -36,7 +38,8 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - if an upstream workflow commit uses `GITHUB_TOKEN`, do not assume that commit will fire a downstream `push` workflow; use `workflow_call` or another explicitly supported trigger;
 - bind downstream consumption to the upstream run ID, actual source SHA, event SHA, artifact identity, and source-specific success evidence;
 - do not require the aggregate workflow conclusion to be `success` when a later independent downstream stage is allowed to fail while the earlier source gate remains valid;
-- verify that normal repository CI remains green and, where practical, exercise negative/cancellation/artifact-ordering paths.
+- define semantic minimums for analytical evidence. For the recent economic pipeline smoke this means at least one research feature row, one OOS fold, one direction signal, one pool projection, one joint epoch, one scored OOS sample, and non-empty Spot/Perp provenance with the requested positive availability lags;
+- verify that normal repository CI remains green and, where practical, exercise negative/cancellation/artifact-ordering/vacuous-result paths.
 
 ### Evidence
 
@@ -48,11 +51,13 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - The one-day Chainlink-to-economic-smoke chain exposed an artifact-ordering race: `recent-public-chainlink-day` originally pushed `last-success` evidence before uploading the SQLite artifact that the downstream smoke consumes. Commit `644eda1b84458a3361310dacac0d36f744dcd0e3` changed the order to upload the same-run artifact first, suppress cancelled-run persistence, then publish success evidence.
 - The same chain exposed a second design error: success-evidence commits made by GitHub Actions with the repository `GITHUB_TOKEN` do not create ordinary recursive `push` workflow runs. Commits `af1dd5d93cf94ced71e9297296e6ef5bc0d46198` and `9a7d9f5adf564db900fd019222eefa9347853f7a` replace that implicit bot-push trigger with an explicit local reusable-workflow call. The caller passes the exact source run ID, actual collector checkout SHA, and event SHA.
 - The reusable design also separates upstream source validity from downstream aggregate run conclusion: a valid one-day Chainlink `last-success` artifact may remain usable even if the same run later fails in the independent economic-smoke job. Downstream manual reuse therefore binds to source evidence and artifact identity rather than requiring the aggregate workflow conclusion to be globally successful.
-- PR CI run 903 passed after the reusable-workflow integration was introduced, confirming normal repository quality checks remained green for source revision `9a7d9f5adf564db900fd019222eefa9347853f7a`.
+- `campaign-evaluate` can validly return exit code zero even when expanding-fold generation produces no folds, because an undersized feature set returns an empty fold tuple rather than raising. Commit `0af9bbd02846186147db59b315bef6e8e154c5d7` adds a separate semantic gate requiring non-empty research features, OOS folds, direction signals, pool projections, joint epochs, scored samples, and Spot/Perp provenance before the recent economic smoke can become `last-success`.
+- Commit `b8e59b597ae79206d97b2a5a3faa96efe9a37ff0` also separates one-day Chainlink collection success from artifact-publication success: `latest` records both outcomes while `last-success` requires both.
+- PR CI run 906 passed after these fail-closed changes, confirming normal repository quality checks remained green for source revision `b8e59b597ae79206d97b2a5a3faa96efe9a37ff0`.
 
 ### Exceptions / Limitations
 
-This applies only when the workflow is semantically a gate or its persisted artifact represents current/revision-bound readiness. A best-effort telemetry workflow may intentionally remain green after a failed observation, and historical evidence for an older revision may be useful, but that intent and revision must be explicit. The reusable one-day Chainlink/economic chain still needs its external-source execution result before the new chaining behavior is considered empirically proven, so this remains a Candidate Rule rather than a Validated Rule.
+This applies only when the workflow is semantically a gate or its persisted artifact represents current/revision-bound readiness. A best-effort telemetry workflow may intentionally remain green after a failed observation, and historical evidence for an older revision may be useful, but that intent and revision must be explicit. A zero-trade economic result may also be a legitimate model/economic outcome; the semantic smoke gate therefore requires a non-empty OOS evaluation path but does not require positive PnL, positive expected value, or any executed trade. The reusable one-day Chainlink/economic chain still needs its external-source execution result before the new chaining behavior is considered empirically proven, so this remains a Candidate Rule rather than a Validated Rule.
 
 ### Related cases / observations
 
