@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .abi import EventSpec
+from .abi import PREDICTION_EVENTS, EventSpec
 from .collector import HistoricalCollector
+from .contracts import Market
 from .rpc import RpcError
 
 
@@ -115,3 +116,57 @@ class PublicHistoricalCollector(HistoricalCollector):
             ),
         )
         return logs, merged_blocks
+
+    def prove_latest_oracle_stable_since(
+        self,
+        market: Market,
+        *,
+        from_block: int,
+        through_block: int,
+    ) -> dict[str, object]:
+        """Fail closed unless the latest oracle is proven stable since ``from_block``.
+
+        A public full node may not support historical ``oracle()`` state reads.
+        For a recent window, the latest oracle is still valid for the complete
+        window if no ``NewOracle`` event occurred from the window start through
+        the observed head. Any observed change makes the pre-change oracle
+        ambiguous without additional historical evidence, so this method
+        rejects rather than guessing.
+        """
+
+        if from_block < 0 or through_block < from_block:
+            raise ValueError("invalid oracle stability proof range")
+        chain_id = self.validate_chain()
+        new_oracle_specs = tuple(
+            spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
+        )
+        if len(new_oracle_specs) != 1:
+            raise RuntimeError("expected exactly one NewOracle event specification")
+        spec = new_oracle_specs[0]
+        event_count, observed_oracles = self._collect_address_logs(
+            chain_id=chain_id,
+            address=market.address,
+            market=market.symbol,
+            source="oracle_proof",
+            specs=new_oracle_specs,
+            from_block=from_block,
+            to_block=through_block,
+            topic0s=(spec.topic0,),
+        )
+        if event_count != 0 or observed_oracles:
+            raise RpcError(
+                "latest oracle cannot prove the window start: NewOracle was observed "
+                f"between blocks {from_block} and {through_block}"
+            )
+        oracle = self.oracle_at(market, "latest").lower()
+        self.store.record_metadata(
+            f"{market.symbol}.recent_oracle_stability_proof",
+            f"{from_block}:{through_block}:{oracle}",
+        )
+        return {
+            "oracle": oracle,
+            "from_block": from_block,
+            "through_block": through_block,
+            "new_oracle_events": event_count,
+            "method": "latest_oracle_plus_no_NewOracle_since_window_start",
+        }
