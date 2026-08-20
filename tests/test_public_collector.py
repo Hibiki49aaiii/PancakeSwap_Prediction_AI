@@ -12,19 +12,25 @@ from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
 
 
-def _block(hash_suffix: str = "aa") -> dict[str, Any]:
+def _block(hash_suffix: str = "aa", *, number: int = 100) -> dict[str, Any]:
     return {
-        "number": "0x64",
+        "number": hex(number),
         "hash": "0x" + hash_suffix * 32,
         "parentHash": "0x" + "11" * 32,
-        "timestamp": "0x1",
+        "timestamp": hex(number),
     }
 
 
-def _log(topic: str, index: int, *, hash_suffix: str = "aa") -> dict[str, Any]:
+def _log(
+    topic: str,
+    index: int,
+    *,
+    hash_suffix: str = "aa",
+    block_number: int = 100,
+) -> dict[str, Any]:
     return {
         "address": "0x" + "22" * 20,
-        "blockNumber": "0x64",
+        "blockNumber": hex(block_number),
         "blockHash": "0x" + hash_suffix * 32,
         "transactionHash": "0x" + f"{index + 1:064x}",
         "transactionIndex": hex(index),
@@ -164,6 +170,43 @@ class ChangingOracleProofRpc(StableOracleProofRpc):
         return [log]
 
 
+class PostReadOracleChangeRpc(StableOracleProofRpc):
+    def block_number(self) -> int:
+        return 101
+
+    def block(self, number: int) -> dict[str, Any]:
+        if number == 100:
+            return _block("aa", number=100)
+        if number == 101:
+            return _block("bb", number=101)
+        raise AssertionError(f"unexpected block {number}")
+
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert address.lower() == MARKETS["BNBUSD"].address.lower()
+        assert from_block == 100
+        assert to_block == 101
+        self.calls.append(topic0s)
+        new_oracle_spec = next(
+            spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
+        )
+        log = _log(
+            new_oracle_spec.topic0,
+            0,
+            hash_suffix="bb",
+            block_number=101,
+        )
+        log["address"] = MARKETS["BNBUSD"].address
+        log["data"] = "0x" + "00" * 12 + "44" * 20
+        return [log]
+
+
 def _collector(tmp_path: Path, rpc: TopicLimitRpc) -> PublicHistoricalCollector:
     store = EventStore(tmp_path / "events.sqlite3")
     store.initialize()
@@ -251,7 +294,7 @@ def test_public_collector_proves_stable_latest_oracle_without_archive_state(
         "from_block": 100,
         "through_block": 100,
         "new_oracle_events": 0,
-        "method": "latest_oracle_plus_no_NewOracle_since_window_start",
+        "method": "latest_oracle_then_no_NewOracle_through_post_read_head",
     }
 
 
@@ -259,6 +302,19 @@ def test_public_collector_rejects_latest_oracle_proof_after_oracle_change(
     tmp_path: Path,
 ) -> None:
     collector = _collector(tmp_path, ChangingOracleProofRpc())
+
+    with pytest.raises(RpcError, match="NewOracle"):
+        collector.prove_latest_oracle_stable_since(
+            MARKETS["BNBUSD"],
+            from_block=100,
+            through_block=100,
+        )
+
+
+def test_public_collector_rejects_oracle_change_after_latest_read_before_head(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, PostReadOracleChangeRpc())
 
     with pytest.raises(RpcError, match="NewOracle"):
         collector.prove_latest_oracle_stable_since(
