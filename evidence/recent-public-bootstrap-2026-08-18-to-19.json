@@ -3,93 +3,68 @@
   "attempts": [
     {
       "endpoint": "https://rpc-bsc.48.club",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-pokt.nodies.app",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.drpc.org",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bnb.api.onfinality.io/public",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.meowrpc.com",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-mainnet.public.blastapi.io",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 521: <none>",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-dataseed.bnbchain.org",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-dataseed-public.bnbchain.org",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-dataseed.nariox.org",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-dataseed.defibit.io",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-dataseed.ninicoin.io",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.nodereal.io",
-      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc-rpc.publicnode.com",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://public.1rpc.io/bnb",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
+      "error": null,
+      "outcome": "success"
     }
   ],
   "chainlink_collected": false,
   "chainlink_requested": false,
-  "evidence_version": 3,
+  "evidence_version": 5,
   "live_broadcast": false,
   "market": "BNBUSD",
   "requested_end_timestamp": 1787097600,
   "requested_start_timestamp": 1787011200,
-  "selected": null,
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "timeout_s": 20.0
+  },
+  "selected": {
+    "endpoint": "https://rpc-bsc.48.club",
+    "report": {
+      "authoritative_prediction_events": true,
+      "block_range": {
+        "confirmations": 64,
+        "from_block": 116556542,
+        "from_block_timestamp": 1787011200,
+        "head_block": 116984287,
+        "requested_end_timestamp": 1787097600,
+        "requested_start_timestamp": 1787011200,
+        "to_block": 116748497,
+        "to_block_timestamp": 1787097599
+      },
+      "chainlink_collected": false,
+      "collection": {
+        "chainlink_events_inserted": 0,
+        "collector_run_id": 1,
+        "from_block": 116556542,
+        "include_chainlink": false,
+        "market": "BNBUSD",
+        "oracle_addresses": [],
+        "prediction_analytic_only": false,
+        "prediction_events_inserted": 14496,
+        "reorg_blocks_detected": [],
+        "to_block": 116748497
+      },
+      "database": "artifacts/bnbusd-recent-2026-08-18-to-19.sqlite",
+      "market": "BNBUSD",
+      "oracle_stability_proof": null,
+      "quality": {
+        "bets": 8673,
+        "duplicate_canonical_heights": 0,
+        "ends": 282,
+        "locks": 282,
+        "market": "BNBUSD",
+        "reorgs": 0,
+        "starts": 282,
+        "unresolved_started_rounds": 2
+      },
+      "replay_input_digest": "655042bf56cd2a6cef457dfaba913d853e9a02d34c23462dbb487732eb69da8a",
+      "replay_output_digest": "52a353fe3e48ddc0645cb08c1c03ee1cea01c8ba16b6e370ebf1e593f245d0b9",
+      "replay_rounds": 284
+    }
+  },
   "signing_enabled": false,
-  "success": false
+  "success": true
 }
