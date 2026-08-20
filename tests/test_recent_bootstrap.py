@@ -26,6 +26,16 @@ class HeaderRpc:
         }
 
 
+class RecordingHeaderRpc(HeaderRpc):
+    def __init__(self, timestamps: tuple[int, ...]) -> None:
+        super().__init__(timestamps)
+        self.requested_blocks: list[int] = []
+
+    def block(self, number: int) -> dict[str, Any]:
+        self.requested_blocks.append(number)
+        return super().block(number)
+
+
 def _rpc() -> RecentBootstrapRpc:
     return cast(
         RecentBootstrapRpc,
@@ -54,6 +64,23 @@ def test_recent_range_uses_exclusive_end_and_confirmed_head() -> None:
     assert result.to_block_timestamp == 170
     assert result.head_block == 9
     assert result.confirmations == 1
+
+
+def test_recent_range_search_stays_near_recent_window() -> None:
+    header_rpc = RecordingHeaderRpc(tuple(range(1_024)))
+    rpc = cast(RecentBootstrapRpc, header_rpc)
+
+    result = resolve_timestamp_block_range(
+        rpc,
+        start_timestamp=1_000,
+        end_timestamp=1_010,
+        confirmations=0,
+    )
+
+    assert result.from_block == 1_000
+    assert result.to_block == 1_009
+    assert min(header_rpc.requested_blocks) >= 991
+    assert 0 not in header_rpc.requested_blocks
 
 
 def test_recent_range_rejects_future_or_reversed_window() -> None:
