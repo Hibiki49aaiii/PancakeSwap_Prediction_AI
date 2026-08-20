@@ -46,6 +46,10 @@ jobs:
               "https://bsc-mainnet.public.blastapi.io",
               "https://binance.llamarpc.com",
               "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
+              "https://bsc-pokt.nodies.app",
+              "https://bsc.blockpi.network/v1/rpc/public",
+              "https://bsc.meowrpc.com",
+              "https://rpc-bsc.48.club",
           )
           results = [_probe_rpc(endpoint, 12.0) for endpoint in candidates]
           archive_ready = [
@@ -58,11 +62,18 @@ jobs:
               for result in results
               if result.get("log_replay_ready") is True
           ]
+          combined_ready = [
+              str(result["endpoint"])
+              for result in results
+              if result.get("archive_ready") is True
+              and result.get("log_replay_ready") is True
+          ]
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "purpose": "additional unauthenticated public BSC capability probe",
               "archive_ready_endpoints": archive_ready,
               "log_replay_ready_endpoints": log_replay_ready,
+              "combined_probe_ready_endpoints": combined_ready,
               "results": results,
               "signing_enabled": False,
               "live_broadcast": False,
@@ -99,7 +110,7 @@ jobs:
           path: artifacts/public-archive-candidate-probe.json
           if-no-files-found: error
           retention-days: 30
-      - name: Enforce archive-capable public candidate gate
+      - name: Enforce archive-state candidate gate
         if: always()
         env:
           PROBE_OUTCOME: ${{ steps.probe.outcome }}
@@ -108,3 +119,4 @@ jobs:
             echo 'No additional tested public BSC candidate satisfied the archive-state gate.' >&2
             exit 2
           fi
+          echo 'Archive-state capability only; full historical-source readiness requires log/collector evidence.'
