@@ -47,8 +47,18 @@ jobs:
             --confirmations 64 \
             --chunk-size 2000 \
             --include-chainlink
+      - name: Upload one-day artifacts
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-public-chainlink-day-${{ github.run_id }}
+          path: |
+            artifacts/recent-public-chainlink-2026-08-18-to-19.json
+            artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite
+          if-no-files-found: warn
+          retention-days: 30
       - name: Persist latest attempt evidence
-        if: always()
+        if: always() && !cancelled()
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
           SOURCE_RUN_ID: ${{ github.run_id }}
@@ -97,18 +107,8 @@ jobs:
             git pull --rebase origin agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
-      - name: Upload one-day artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recent-public-chainlink-day-${{ github.run_id }}
-          path: |
-            artifacts/recent-public-chainlink-2026-08-18-to-19.json
-            artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite
-          if-no-files-found: warn
-          retention-days: 30
       - name: Enforce one-day Chainlink gate
-        if: always()
+        if: always() && !cancelled()
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
         run: |
