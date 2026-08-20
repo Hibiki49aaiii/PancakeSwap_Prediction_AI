@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Optional successful recent-public-chainlink-day run ID; defaults to persisted last-success evidence
+        description: Optional source run ID; it must match persisted one-day Chainlink last-success evidence
         required: false
         type: string
 
@@ -64,26 +64,31 @@ jobs:
           import os
           from pathlib import Path
 
-          manual = os.environ.get("MANUAL_SOURCE_RUN_ID", "").strip()
           evidence_path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json")
-          if manual:
-              run_id = int(manual)
-          else:
-              if not evidence_path.exists():
-                  raise SystemExit("one-day Chainlink last-success evidence is not available")
-              payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-              if payload.get("workflow_outcome") != "success" or payload.get("success") is not True:
-                  raise SystemExit("persisted one-day Chainlink evidence is not successful")
-              if payload.get("chainlink_collected") is not True:
-                  raise SystemExit("persisted one-day Chainlink evidence has no Chainlink collection")
-              if payload.get("requested_start_timestamp") != 1787011200:
-                  raise SystemExit("unexpected one-day Chainlink start timestamp")
-              if payload.get("requested_end_timestamp") != 1787097600:
-                  raise SystemExit("unexpected one-day Chainlink end timestamp")
-              run_id = int(payload["source_run_id"])
+          if not evidence_path.exists():
+              raise SystemExit("one-day Chainlink last-success evidence is not available")
+          payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+          if payload.get("workflow_outcome") != "success" or payload.get("success") is not True:
+              raise SystemExit("persisted one-day Chainlink evidence is not successful")
+          if payload.get("chainlink_collected") is not True:
+              raise SystemExit("persisted one-day Chainlink evidence has no Chainlink collection")
+          if payload.get("requested_start_timestamp") != 1787011200:
+              raise SystemExit("unexpected one-day Chainlink start timestamp")
+          if payload.get("requested_end_timestamp") != 1787097600:
+              raise SystemExit("unexpected one-day Chainlink end timestamp")
+          run_id = int(payload["source_run_id"])
+          source_sha = str(payload.get("source_sha", "")).strip().lower()
+          if len(source_sha) != 40 or any(char not in "0123456789abcdef" for char in source_sha):
+              raise SystemExit("persisted one-day Chainlink source SHA is invalid")
+          manual = os.environ.get("MANUAL_SOURCE_RUN_ID", "").strip()
+          if manual and int(manual) != run_id:
+              raise SystemExit(
+                  "manual source_run_id must match persisted one-day Chainlink last-success evidence"
+              )
           Path("artifacts/source-run-id.txt").write_text(f"{run_id}\n", encoding="utf-8")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"source_run_id={run_id}\n")
+              handle.write(f"source_sha={source_sha}\n")
           PY
           SOURCE_RUN_ID="$(cat artifacts/source-run-id.txt)"
           for attempt in $(seq 1 18); do
@@ -119,11 +124,11 @@ jobs:
               raise SystemExit(f"source workflow did not reach success: {payload.get('conclusion')!r}")
           if payload.get("head_branch") != "agent/v0.7-alpha-research":
               raise SystemExit(f"unexpected source branch: {payload.get('head_branch')!r}")
-          source_sha = str(payload.get("head_sha", ""))
-          if len(source_sha) != 40:
-              raise SystemExit("source workflow head SHA is missing")
+          event_sha = str(payload.get("head_sha", "")).strip().lower()
+          if len(event_sha) != 40 or any(char not in "0123456789abcdef" for char in event_sha):
+              raise SystemExit("source workflow event head SHA is invalid")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
-              handle.write(f"source_sha={source_sha}\n")
+              handle.write(f"source_event_sha={event_sha}\n")
           PY
 
       - name: Download exact one-day Chainlink artifact
@@ -270,6 +275,7 @@ jobs:
           CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
           SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source.outputs.source_event_sha }}
           TRIGGER_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
@@ -317,8 +323,9 @@ jobs:
           source_run_raw = os.environ.get("SOURCE_RUN_ID", "").strip()
           source_run_id = int(source_run_raw) if source_run_raw.isdigit() else None
           source_sha = os.environ.get("SOURCE_SHA", "").strip() or None
+          source_event_sha = os.environ.get("SOURCE_EVENT_SHA", "").strip() or None
           payload = {
-              "evidence_version": 2,
+              "evidence_version": 3,
               "evidence_role": "latest_attempt",
               "purpose": "recent_source_bound_economic_pipeline_smoke",
               "success": smoke_ready,
@@ -330,6 +337,7 @@ jobs:
               "step_outcomes": outcomes,
               "source_run_id": source_run_id,
               "source_sha": source_sha,
+              "source_event_sha": source_event_sha,
               "source_run": load_optional_json("artifacts/source-run.json"),
               "trigger_sha": os.environ.get("TRIGGER_SHA"),
               "economic_source_sha": subprocess.check_output(
