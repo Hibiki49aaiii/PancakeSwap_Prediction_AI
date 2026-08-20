@@ -2,12 +2,17 @@
   "archive_ready_endpoints": [
     "https://bsc-mainnet.public.blastapi.io"
   ],
-  "combined_probe_ready_endpoints": [],
-  "evidence_version": 2,
+  "combined_historical_probe_ready_endpoints": [],
+  "evidence_version": 3,
+  "historical_log_replay_ready_endpoints": [],
   "live_broadcast": false,
-  "log_replay_ready_endpoints": [],
   "profitability_gate_eligible": false,
-  "purpose": "additional unauthenticated public BSC capability probe",
+  "purpose": "additional unauthenticated public BSC capability matrix",
+  "recent_log_confirmations": 64,
+  "recent_log_ready_endpoints": [
+    "https://rpc-bsc.48.club"
+  ],
+  "recent_log_window_blocks": 5000,
   "results": [
     {
       "archive_ready": false,
@@ -16,7 +21,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 1273,
+      "elapsed_ms": 485,
       "endpoint": "https://bnb.api.onfinality.io/public",
       "error": "RuntimeError: HTTP 429: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32029,\"message\":\"Too Many Requests, Please apply an OnFinality API key or contact us to receive a higher rate limit\"},\"id\":1}",
       "errors": {},
@@ -25,30 +30,35 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
-      "chain_id": 56,
+      "chain_id": null,
       "creation_provenance": null,
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 1033,
+      "elapsed_ms": 63,
       "endpoint": "https://bsc.drpc.org",
-      "error": null,
-      "errors": {
-        "archive_state": "RuntimeError: HTTP 429: {\"id\":1,\"jsonrpc\":\"2.0\",\"error\":{\"message\":\"You reached Public endpoint rate limit, please upgrade to paid plan\",\"code\":15}}",
-        "creation_receipt": "RuntimeError: creation receipt lookup did not return an object",
-        "creation_transaction": "RuntimeError: HTTP 429: {\"id\":1,\"jsonrpc\":\"2.0\",\"error\":{\"message\":\"You reached Public endpoint rate limit, please upgrade to paid plan\",\"code\":15}}",
-        "historical_logs": "RuntimeError: {\"code\":-32000,\"message\":\"Your request has been rate-limited due to unusually high traffic on the Alchemy public API. Consider creating a free Alchemy account or upgrading to a paid plan for guaranteed throughput, even in times of extraordinary request traffic.\"}"
-      },
+      "error": "RuntimeError: HTTP 429: {\"id\":1,\"jsonrpc\":\"2.0\",\"error\":{\"message\":\"You reached Public endpoint rate limit, please upgrade to paid plan\",\"code\":15}}",
+      "errors": {},
       "historical_code": false,
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116978382,
-      "log_replay_ready": false
+      "latest_block": null,
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": true,
@@ -57,7 +67,7 @@
       "creation_receipt_log_count": 1,
       "creation_receipt_ready": true,
       "creation_transaction_ready": false,
-      "elapsed_ms": 896,
+      "elapsed_ms": 872,
       "endpoint": "https://bsc-mainnet.public.blastapi.io",
       "error": null,
       "errors": {
@@ -68,8 +78,13 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": true,
-      "latest_block": 116978385,
-      "log_replay_ready": false
+      "latest_block": 116979458,
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": 116974394,
+      "recent_log_to_block": 116979394,
+      "recent_logs_error": "RuntimeError: HTTP 429: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"Your request has been rate-limited due to unusually high traffic on the Alchemy public API. Consider creating a free Alchemy account or upgrading to a paid plan for guaranteed throughput, even in times of extraordinary request traffic.\"}}",
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -78,7 +93,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 63,
+      "elapsed_ms": 47,
       "endpoint": "https://binance.llamarpc.com",
       "error": "RuntimeError: HTTP request failed: [Errno -2] Name or service not known",
       "errors": {},
@@ -87,7 +102,12 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -96,7 +116,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 226,
+      "elapsed_ms": 212,
       "endpoint": "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
       "error": "RuntimeError: HTTP 521: error code: 521",
       "errors": {},
@@ -105,7 +125,12 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -114,7 +139,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 318,
+      "elapsed_ms": 308,
       "endpoint": "https://bsc-pokt.nodies.app",
       "error": "RuntimeError: HTTP 403: The network of this endpoint requires a paid subscription plan. Subscribe at https://nodies.app to get access.",
       "errors": {},
@@ -123,7 +148,12 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -132,7 +162,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 279,
+      "elapsed_ms": 250,
       "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
       "error": "RuntimeError: HTTP 521: error code: 521",
       "errors": {},
@@ -141,7 +171,12 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -150,7 +185,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 496,
+      "elapsed_ms": 403,
       "endpoint": "https://bsc.meowrpc.com",
       "error": "RuntimeError: HTTP 429: Too Many Requests",
       "errors": {},
@@ -159,7 +194,12 @@
       "historical_logs_ready": false,
       "historical_paused_call": false,
       "latest_block": null,
-      "log_replay_ready": false
+      "log_replay_ready": false,
+      "recent_log_count": null,
+      "recent_log_from_block": null,
+      "recent_log_to_block": null,
+      "recent_logs_error": null,
+      "recent_logs_ready": false
     },
     {
       "archive_ready": false,
@@ -168,7 +208,7 @@
       "creation_receipt_log_count": null,
       "creation_receipt_ready": false,
       "creation_transaction_ready": false,
-      "elapsed_ms": 975,
+      "elapsed_ms": 808,
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "errors": {
@@ -181,8 +221,13 @@
       "historical_log_count": null,
       "historical_logs_ready": false,
       "historical_paused_call": false,
-      "latest_block": 116978390,
-      "log_replay_ready": false
+      "latest_block": 116979463,
+      "log_replay_ready": false,
+      "recent_log_count": 8,
+      "recent_log_from_block": 116974399,
+      "recent_log_to_block": 116979399,
+      "recent_logs_error": null,
+      "recent_logs_ready": true
     }
   ],
   "signing_enabled": false
