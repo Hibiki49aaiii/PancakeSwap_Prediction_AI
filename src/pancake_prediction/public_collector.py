@@ -9,18 +9,7 @@ from .rpc import RpcError
 
 
 class PublicHistoricalCollector(HistoricalCollector):
-    """Historical collector hardened for restrictive unauthenticated RPCs.
-
-    The base collector already halves block ranges when providers reject a broad
-    ``eth_getLogs`` request. Some public BSC endpoints also enforce a result
-    limit on a *single block* when several topic0 alternatives are queried at
-    once. At that point a range split cannot make progress.
-
-    Public endpoints can also reject an unfiltered address-only log request.
-    For this subclass, an omitted topic filter therefore means "all known event
-    specs" rather than a raw address-only query. The resulting explicit topic0
-    alternatives can then be partitioned without dropping any known event type.
-    """
+    """Historical collector hardened for restrictive unauthenticated RPCs."""
 
     def _collect_address_logs(
         self,
@@ -87,16 +76,30 @@ class PublicHistoricalCollector(HistoricalCollector):
             end=end,
             topic0s=right_topics,
         )
+        return self._merge_log_results(
+            left_logs,
+            left_blocks,
+            right_logs,
+            right_blocks,
+            mismatch_message=f"canonical block mismatch across topic partitions at block {{block}}",
+        )
 
+    @staticmethod
+    def _merge_log_results(
+        left_logs: list[dict[str, Any]],
+        left_blocks: dict[int, dict[str, Any]],
+        right_logs: list[dict[str, Any]],
+        right_blocks: dict[int, dict[str, Any]],
+        *,
+        mismatch_message: str,
+    ) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
         merged_blocks = dict(left_blocks)
         for number, block in right_blocks.items():
             existing = merged_blocks.get(number)
             if existing is not None and str(existing.get("hash", "")).lower() != str(
                 block.get("hash", "")
             ).lower():
-                raise RpcError(
-                    f"canonical block mismatch across topic partitions at block {number}"
-                )
+                raise RpcError(mismatch_message.format(block=number))
             merged_blocks[number] = block
 
         unique_logs: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -117,6 +120,47 @@ class PublicHistoricalCollector(HistoricalCollector):
         )
         return logs, merged_blocks
 
+    def _fetch_consistent_range(
+        self,
+        *,
+        address: str,
+        start: int,
+        end: int,
+        topic0s: tuple[str, ...],
+    ) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
+        """Read a log range without checkpoints, splitting only on provider range limits."""
+
+        try:
+            return self._fetch_consistent_chunk(
+                address=address,
+                start=start,
+                end=end,
+                topic0s=topic0s,
+            )
+        except RpcError as exc:
+            if start >= end or not self._is_log_range_error(exc):
+                raise
+        midpoint = (start + end) // 2
+        left_logs, left_blocks = self._fetch_consistent_range(
+            address=address,
+            start=start,
+            end=midpoint,
+            topic0s=topic0s,
+        )
+        right_logs, right_blocks = self._fetch_consistent_range(
+            address=address,
+            start=midpoint + 1,
+            end=end,
+            topic0s=topic0s,
+        )
+        return self._merge_log_results(
+            left_logs,
+            left_blocks,
+            right_logs,
+            right_blocks,
+            mismatch_message=f"canonical block mismatch across range partitions at block {{block}}",
+        )
+
     def prove_latest_oracle_stable_since(
         self,
         market: Market,
@@ -127,15 +171,14 @@ class PublicHistoricalCollector(HistoricalCollector):
         """Fail closed unless one latest-oracle snapshot is stable since the window start.
 
         Read ``oracle()`` first, then capture a head block and scan ``NewOracle``
-        through that head. A change before the latest-state read or between that
-        read and the head snapshot is therefore observed and rejected. A change
-        after the captured head cannot invalidate the oracle that was active for
-        the historical window being collected.
+        through that head. The proof scan intentionally bypasses collector
+        checkpoints so a repeated failed proof cannot later pass just because a
+        previous attempt advanced a resume cursor.
         """
 
         if from_block < 0 or through_block < from_block:
             raise ValueError("invalid oracle stability proof range")
-        chain_id = self.validate_chain()
+        self.validate_chain()
         oracle = self.oracle_at(market, "latest").lower()
         observed_head = self.rpc.block_number()
         proof_through_block = max(through_block, observed_head)
@@ -146,17 +189,13 @@ class PublicHistoricalCollector(HistoricalCollector):
         if len(new_oracle_specs) != 1:
             raise RuntimeError("expected exactly one NewOracle event specification")
         spec = new_oracle_specs[0]
-        event_count, observed_oracles = self._collect_address_logs(
-            chain_id=chain_id,
+        logs, _ = self._fetch_consistent_range(
             address=market.address,
-            market=market.symbol,
-            source="oracle_proof",
-            specs=new_oracle_specs,
-            from_block=from_block,
-            to_block=proof_through_block,
+            start=from_block,
+            end=proof_through_block,
             topic0s=(spec.topic0,),
         )
-        if event_count != 0 or observed_oracles:
+        if logs:
             raise RpcError(
                 "latest oracle cannot prove the window start: NewOracle was observed "
                 f"between blocks {from_block} and {proof_through_block}"
@@ -169,6 +208,6 @@ class PublicHistoricalCollector(HistoricalCollector):
             "oracle": oracle,
             "from_block": from_block,
             "through_block": proof_through_block,
-            "new_oracle_events": event_count,
-            "method": "latest_oracle_then_no_NewOracle_through_post_read_head",
+            "new_oracle_events": 0,
+            "method": "latest_oracle_then_stateless_no_NewOracle_through_post_read_head",
         }
