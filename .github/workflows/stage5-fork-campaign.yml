@@ -85,12 +85,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # --silent prevents Anvil's deterministic development private keys and
+          # mnemonic from being emitted into CI logs or retained artifacts.
           anvil \
+            --silent \
             --host 127.0.0.1 \
             --port 8545 \
             --fork-url "$BSC_FORK_SOURCE_RPC_URL" \
             --fork-block-number "${{ steps.fork.outputs.fork_block }}" \
-            > /tmp/stage5-anvil.log 2>&1 &
+            > /dev/null 2>&1 &
           echo $! > /tmp/stage5-anvil.pid
 
           READY=0
@@ -150,14 +153,10 @@ jobs:
             --source-sha "$GITHUB_SHA" \
             > artifacts/stage5b-verification.json
 
-      - name: Collect Anvil diagnostics
+      - name: Stop loopback fork
         if: always()
         shell: bash
         run: |
-          mkdir -p artifacts
-          if [ -f /tmp/stage5-anvil.log ]; then
-            cp /tmp/stage5-anvil.log artifacts/stage5-anvil.log
-          fi
           if [ -f /tmp/stage5-anvil.pid ]; then
             kill "$(cat /tmp/stage5-anvil.pid)" 2>/dev/null || true
           fi
@@ -173,6 +172,5 @@ jobs:
             artifacts/stage5b-evidence.json
             artifacts/stage5b-campaign-summary.json
             artifacts/stage5b-verification.json
-            artifacts/stage5-anvil.log
           if-no-files-found: warn
           retention-days: 30
