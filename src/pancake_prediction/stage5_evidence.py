@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 from .abi import function_selector
 from .contracts import CHAIN_ID_BSC, MARKETS
