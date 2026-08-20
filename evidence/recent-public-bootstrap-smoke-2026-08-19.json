@@ -2,31 +2,6 @@
   "archive_state_required": false,
   "attempts": [
     {
-      "endpoint": "https://bsc-pokt.nodies.app",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.drpc.org",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bnb.api.onfinality.io/public",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
-      "outcome": "failure"
-    },
-    {
-      "endpoint": "https://bsc.meowrpc.com",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success"
@@ -48,7 +23,7 @@
         "confirmations": 64,
         "from_block": 116844485,
         "from_block_timestamp": 1787140800,
-        "head_block": 116979626,
+        "head_block": 116979951,
         "requested_end_timestamp": 1787148000,
         "requested_start_timestamp": 1787140800,
         "to_block": 116860482,
