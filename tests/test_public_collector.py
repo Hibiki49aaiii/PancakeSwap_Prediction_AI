@@ -294,7 +294,7 @@ def test_public_collector_proves_stable_latest_oracle_without_archive_state(
         "from_block": 100,
         "through_block": 100,
         "new_oracle_events": 0,
-        "method": "latest_oracle_then_no_NewOracle_through_post_read_head",
+        "method": "latest_oracle_then_stateless_no_NewOracle_through_post_read_head",
     }
 
 
@@ -303,12 +303,13 @@ def test_public_collector_rejects_latest_oracle_proof_after_oracle_change(
 ) -> None:
     collector = _collector(tmp_path, ChangingOracleProofRpc())
 
-    with pytest.raises(RpcError, match="NewOracle"):
-        collector.prove_latest_oracle_stable_since(
-            MARKETS["BNBUSD"],
-            from_block=100,
-            through_block=100,
-        )
+    for _ in range(2):
+        with pytest.raises(RpcError, match="NewOracle"):
+            collector.prove_latest_oracle_stable_since(
+                MARKETS["BNBUSD"],
+                from_block=100,
+                through_block=100,
+            )
 
 
 def test_public_collector_rejects_oracle_change_after_latest_read_before_head(
