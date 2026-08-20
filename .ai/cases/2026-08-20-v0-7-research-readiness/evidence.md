@@ -24,35 +24,50 @@
 - `validation_ready: true` for this parser/ingest validation;
 - an explicit note that zero availability lag in this workflow is not profitability evidence.
 
-## Quality evidence
+## Quality evidence history
 
-`evidence/quality-gate.json` at the observed pre-External-Intelligence head records:
+Before the lint repair, persisted quality evidence and GitHub Actions runs 788/789 established a narrow failure shape:
 
 - mypy: success
 - pytest: success, 294 passed
 - Bandit: success
 - pip-audit: success
-- Ruff: failure
-- ready: false
-
-GitHub Actions CI run `788` on the External Intelligence head independently reproduced the same quality shape:
-
 - Gitleaks: success
-- legacy 144k-round audit: success
 - ClickHouse integration: success
-- installed CLI smoke checks: success
-- mypy strict: success (`140 source files` reported by the job)
-- pytest: success (`294 passed`, total coverage `87%`)
-- Bandit: success (`0 issues identified`)
-- pip-audit: success (no known dependency vulnerabilities reported)
+- legacy 144k-round audit: success
 - Ruff: failure
 
-The CI job log establishes the Ruff root cause precisely, so it is no longer left as an inference:
+The job log established the exact Ruff diagnostics:
 
 - `src/pancake_prediction/execution_intent.py:9:1`: `UP035` — import `Mapping` from `collections.abc`
 - `src/pancake_prediction/stage5_evidence.py:11:1`: `UP035` — import `Mapping` from `collections.abc`
 
-The final quality-gate step fails only because Ruff is unsuccessful. These two diagnostics are in pre-existing Stage 5 Python files; the External Intelligence commit itself adds Markdown/control metadata and does not introduce either lint location. This is case evidence, not a generalized rule: the import cleanup is directly recoverable from the current CI log and does not justify a separate Observation or Failure Memory entry.
+The source fixes were deliberately minimal:
+
+- `27c6d95f9513a49f80ccb5e5d241aeb3f5c36e20` moved `Mapping` in `stage5_evidence.py`;
+- `ae25cf0a4915f953fda7d1dac4042133b1d76f0e` moved `Mapping` in `execution_intent.py`.
+
+The commit diffs contain no execution-logic changes; the latter also normalizes the file's final newline.
+
+GitHub Actions CI run 791 on `ae25cf0a4915f953fda7d1dac4042133b1d76f0e` completed successfully:
+
+- Ruff: success
+- mypy strict: success
+- pytest: success, 294 passed
+- Bandit: success
+- pip-audit: success
+- Gitleaks: success
+- ClickHouse integration: success
+- legacy 144k-round audit: success
+- final quality-gate enforcement: success
+
+The repository automation subsequently committed `f38910027e381605b12952f0bd8ad718ed534bd7`, updating `evidence/quality-gate.json` to:
+
+- `ready: true`
+- `ruff: success`
+- `source_sha: ae25cf0a4915f953fda7d1dac4042133b1d76f0e`
+
+This lint incident remains case-level evidence rather than a generalized Observation/Failure/Rule because the repair is mechanically recoverable from current source and Ruff output and does not materially change future architectural decisions.
 
 ## Repository-level invariants
 
