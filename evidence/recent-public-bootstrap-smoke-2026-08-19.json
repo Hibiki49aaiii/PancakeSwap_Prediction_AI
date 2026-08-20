@@ -2,11 +2,6 @@
   "archive_state_required": false,
   "attempts": [
     {
-      "endpoint": "https://fast.bsc-rpc.com",
-      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
-      "outcome": "failure"
-    },
-    {
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success"
@@ -14,13 +9,19 @@
   ],
   "chainlink_collected": false,
   "chainlink_requested": false,
-  "evidence_version": 4,
+  "evidence_version": 5,
   "live_broadcast": false,
   "market": "BNBUSD",
   "profitability_gate_eligible": false,
   "purpose": "public_rpc_collector_smoke_only",
   "requested_end_timestamp": 1787148000,
   "requested_start_timestamp": 1787140800,
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "timeout_s": 20.0
+  },
   "selected": {
     "endpoint": "https://rpc-bsc.48.club",
     "report": {
@@ -29,7 +30,7 @@
         "confirmations": 64,
         "from_block": 116844485,
         "from_block_timestamp": 1787140800,
-        "head_block": 116983474,
+        "head_block": 116984290,
         "requested_end_timestamp": 1787148000,
         "requested_start_timestamp": 1787140800,
         "to_block": 116860482,
