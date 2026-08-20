@@ -82,8 +82,27 @@ jobs:
               handle.write(f"source_run_id={run_id}\n")
           PY
           SOURCE_RUN_ID="$(cat artifacts/source-run-id.txt)"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
-            > artifacts/source-run.json
+          for attempt in $(seq 1 18); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+              > artifacts/source-run.json
+            STATE="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("artifacts/source-run.json").read_text(encoding="utf-8"))
+          print(payload.get("conclusion") or payload.get("status") or "unknown")
+          PY
+          )"
+            case "$STATE" in
+              success)
+                break
+                ;;
+              failure|cancelled|timed_out|action_required|stale)
+                echo "source Chainlink workflow ended with $STATE" >&2
+                exit 2
+                ;;
+            esac
+            sleep 5
+          done
           python - <<'PY'
           import json
           import os
@@ -93,7 +112,7 @@ jobs:
           if payload.get("name") != "recent-public-chainlink-day":
               raise SystemExit(f"unexpected source workflow: {payload.get('name')!r}")
           if payload.get("conclusion") != "success":
-              raise SystemExit(f"source workflow is not successful: {payload.get('conclusion')!r}")
+              raise SystemExit(f"source workflow did not reach success: {payload.get('conclusion')!r}")
           if payload.get("head_branch") != "agent/v0.7-alpha-research":
               raise SystemExit(f"unexpected source branch: {payload.get('head_branch')!r}")
           source_sha = str(payload.get("head_sha", ""))
