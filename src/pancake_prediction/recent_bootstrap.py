@@ -32,6 +32,36 @@ class TimestampBlockRange:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class RecentBootstrapResult:
+    market: str
+    database: str
+    block_range: TimestampBlockRange
+    collection: dict[str, object]
+    quality: QualityReport
+    replay_rounds: int
+    replay_input_digest: str
+    replay_output_digest: str
+    chainlink_collected: bool
+    authoritative_prediction_events: bool
+    oracle_stability_proof: dict[str, object] | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": self.market,
+            "database": self.database,
+            "block_range": self.block_range.as_dict(),
+            "collection": self.collection,
+            "quality": self.quality.as_dict(),
+            "replay_rounds": self.replay_rounds,
+            "replay_input_digest": self.replay_input_digest,
+            "replay_output_digest": self.replay_output_digest,
+            "chainlink_collected": self.chainlink_collected,
+            "authoritative_prediction_events": self.authoritative_prediction_events,
+            "oracle_stability_proof": self.oracle_stability_proof,
+        }
+
+
 def _block_timestamp(rpc: RecentBootstrapRpc, block_number: int) -> int:
     block = rpc.block(block_number)
     raw = block.get("timestamp")
@@ -74,14 +104,7 @@ def recent_search_lower_bound(
     *,
     upper_block: int,
 ) -> int:
-    """Find a nearby lower bound without probing arbitrary old block headers.
-
-    Public BSC nodes may serve current headers/logs while pruning or restricting
-    much older block headers. A genesis-to-head binary search therefore creates
-    an accidental archive-history dependency even for a recent timestamp.
-    Exponential backoff from the confirmed head keeps probes near the requested
-    recent window, then the normal binary search can operate inside that bound.
-    """
+    """Find a nearby lower bound without probing arbitrary old block headers."""
 
     if timestamp < 0 or upper_block < 0:
         raise ValueError("timestamp and upper_block must be non-negative")
@@ -158,6 +181,7 @@ def run_recent_prediction_bootstrap(
     end_timestamp: int,
     confirmations: int = 64,
     chunk_size: int = 2_000,
+    include_chainlink: bool = False,
 ) -> RecentBootstrapResult:
     block_range = resolve_timestamp_block_range(
         rpc,
@@ -167,6 +191,20 @@ def run_recent_prediction_bootstrap(
     )
     store = EventStore(database)
     store.initialize()
+
+    oracle_stability_proof: dict[str, object] | None = None
+    if include_chainlink:
+        proof_collector = PublicHistoricalCollector(
+            rpc=rpc,
+            store=store,
+            chunk_size=max(chunk_size, 50_000),
+        )
+        oracle_stability_proof = proof_collector.prove_latest_oracle_stable_since(
+            market,
+            from_block=block_range.from_block,
+            through_block=block_range.head_block,
+        )
+
     collector = PublicHistoricalCollector(
         rpc=rpc,
         store=store,
@@ -176,7 +214,7 @@ def run_recent_prediction_bootstrap(
         market,
         block_range.from_block,
         block_range.to_block,
-        include_chainlink=False,
+        include_chainlink=include_chainlink,
         prediction_analytic_only=False,
     )
     quality = build_quality_report(database, market.symbol)
@@ -190,34 +228,7 @@ def run_recent_prediction_bootstrap(
         replay_rounds=len(replay.rounds),
         replay_input_digest=replay.input_digest,
         replay_output_digest=replay.output_digest,
-        chainlink_collected=False,
+        chainlink_collected=include_chainlink,
         authoritative_prediction_events=True,
+        oracle_stability_proof=oracle_stability_proof,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class RecentBootstrapResult:
-    market: str
-    database: str
-    block_range: TimestampBlockRange
-    collection: dict[str, object]
-    quality: QualityReport
-    replay_rounds: int
-    replay_input_digest: str
-    replay_output_digest: str
-    chainlink_collected: bool
-    authoritative_prediction_events: bool
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "market": self.market,
-            "database": self.database,
-            "block_range": self.block_range.as_dict(),
-            "collection": self.collection,
-            "quality": self.quality.as_dict(),
-            "replay_rounds": self.replay_rounds,
-            "replay_input_digest": self.replay_input_digest,
-            "replay_output_digest": self.replay_output_digest,
-            "chainlink_collected": self.chainlink_collected,
-            "authoritative_prediction_events": self.authoritative_prediction_events,
-        }
