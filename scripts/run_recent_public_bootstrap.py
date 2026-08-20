@@ -46,8 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-chainlink",
         action="store_true",
         help=(
-            "collect recent Chainlink events only after proving the latest oracle "
-            "was unchanged from the requested window start through observed head"
+            "collect recent Chainlink AnswerUpdated events only after proving both "
+            "the Prediction oracle proxy and its underlying aggregator were stable"
         ),
     )
     return parser
@@ -72,6 +72,11 @@ def main() -> int:
                 chunk_size=args.chunk_size,
                 include_chainlink=args.include_chainlink,
             )
+            if args.include_chainlink and not report.chainlink_collected:
+                raise RuntimeError(
+                    "Chainlink was requested but no AnswerUpdated events were collected "
+                    "from the proven underlying aggregator"
+                )
             success = {
                 "endpoint": endpoint,
                 "report": report.as_dict(),
@@ -99,7 +104,7 @@ def main() -> int:
         and success["report"].get("chainlink_collected") is True
     )
     payload = {
-        "evidence_version": 3,
+        "evidence_version": 4,
         "market": str(args.market),
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
