@@ -52,13 +52,13 @@ jobs:
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
           SOURCE_RUN_ID: ${{ github.run_id }}
-          SOURCE_SHA: ${{ github.sha }}
         run: |
           cp artifacts/recent-public-chainlink-2026-08-18-to-19.json \
             evidence/recent-public-chainlink-2026-08-18-to-19-latest.json
           python - <<'PY'
           import json
           import os
+          import subprocess
           from pathlib import Path
 
           path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-latest.json")
@@ -68,7 +68,9 @@ jobs:
           payload["purpose"] = "public_recent_prediction_chainlink_one_day"
           payload["profitability_gate_eligible"] = False
           payload["source_run_id"] = int(os.environ["SOURCE_RUN_ID"])
-          payload["source_sha"] = os.environ["SOURCE_SHA"]
+          payload["source_sha"] = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           git config user.name 'github-actions[bot]'
