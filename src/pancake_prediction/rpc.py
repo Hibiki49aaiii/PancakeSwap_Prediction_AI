@@ -4,7 +4,7 @@ import json
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 
@@ -43,13 +43,42 @@ class JsonRpcClient:
     timeout_s: float = 20.0
     retries: int = 4
     backoff_s: float = 0.6
+    min_interval_s: float = 0.0
     _request_id: int = 0
+    _last_request_at: float | None = field(default=None, init=False, repr=False)
+
+    def _pace_request(self) -> None:
+        if self.min_interval_s < 0:
+            raise ValueError("min_interval_s must be non-negative")
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            wait_s = self.min_interval_s - (now - self._last_request_at)
+            if wait_s > 0:
+                time.sleep(wait_s)
+                now += wait_s
+        self._last_request_at = now
+
+    @staticmethod
+    def _retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
+        if exc.code != 429 or exc.headers is None:
+            return None
+        value = exc.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, seconds)
 
     def call(self, method: str, params: list[object]) -> Any:
         if self.retries < 1:
             raise ValueError("retries must be positive")
+        if self.backoff_s < 0:
+            raise ValueError("backoff_s must be non-negative")
         last_error: Exception | None = None
         for attempt in range(self.retries):
+            self._pace_request()
             self._request_id += 1
             payload = json.dumps(
                 {
@@ -80,6 +109,12 @@ class JsonRpcClient:
                 raise
             except RpcError:
                 raise
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if attempt + 1 < self.retries:
+                    retry_after_s = self._retry_after_seconds(exc)
+                    exponential_s = self.backoff_s * (2**attempt)
+                    time.sleep(max(exponential_s, retry_after_s or 0.0))
             except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
                 last_error = exc
                 if attempt + 1 < self.retries:
