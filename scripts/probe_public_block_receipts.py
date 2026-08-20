@@ -9,6 +9,14 @@ from pancake_prediction.contracts import MARKETS
 from pancake_prediction.rpc import JsonRpcClient
 from scripts.run_recent_public_bootstrap import PUBLIC_BSC_ENDPOINTS
 
+ADDITIONAL_PUBLIC_BSC_ENDPOINTS = (
+    "https://bnb.api.onfinality.io/public",
+    "https://bsc.drpc.org",
+)
+PUBLIC_BLOCK_RECEIPT_ENDPOINTS = tuple(
+    dict.fromkeys((*PUBLIC_BSC_ENDPOINTS, *ADDITIONAL_PUBLIC_BSC_ENDPOINTS))
+)
+
 
 def _receipt_summary(result: object) -> dict[str, object]:
     if not isinstance(result, list):
@@ -64,7 +72,7 @@ def main() -> int:
 
     attempts: list[dict[str, object]] = []
     selected: dict[str, object] | None = None
-    for endpoint in PUBLIC_BSC_ENDPOINTS:
+    for endpoint in PUBLIC_BLOCK_RECEIPT_ENDPOINTS:
         try:
             result = _probe_endpoint(endpoint)
             attempts.append({"endpoint": endpoint, "outcome": "success", "result": result})
