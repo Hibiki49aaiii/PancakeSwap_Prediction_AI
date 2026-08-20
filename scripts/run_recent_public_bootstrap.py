@@ -10,11 +10,10 @@ from pancake_prediction.rpc import JsonRpcClient
 
 # BNB Chain documents that eth_getLogs is disabled on its public Mainnet
 # dataseed endpoints and recommends third-party providers for log workloads.
-# 48 Club currently advertises fast.bsc-rpc.com as its public RPC; keep the
-# previously proven rpc-bsc.48.club route immediately behind it, then fall back
-# through other public candidates before the official diagnostic seeds.
+# Prefer endpoints with repository evidence for confirmed recent Prediction
+# logs. fast.bsc-rpc.com is intentionally excluded after repeated GitHub-runner
+# HTTP 403 evidence; rpc-bsc.48.club remains the first proven recent-log route.
 PUBLIC_BSC_ENDPOINTS = (
-    "https://fast.bsc-rpc.com",
     "https://rpc-bsc.48.club",
     "https://bsc-pokt.nodies.app",
     "https://bsc.blockpi.network/v1/rpc/public",
@@ -32,6 +31,11 @@ PUBLIC_BSC_ENDPOINTS = (
     "https://bsc-rpc.publicnode.com",
     "https://public.1rpc.io/bnb",
 )
+
+PUBLIC_RPC_TIMEOUT_S = 20.0
+PUBLIC_RPC_RETRIES = 6
+PUBLIC_RPC_BACKOFF_S = 1.5
+PUBLIC_RPC_MIN_INTERVAL_S = 0.15
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,12 +63,19 @@ def main() -> int:
     attempts: list[dict[str, object]] = []
     success: dict[str, object] | None = None
 
+    rpc_policy = {
+        "timeout_s": PUBLIC_RPC_TIMEOUT_S,
+        "retries": PUBLIC_RPC_RETRIES,
+        "backoff_s": PUBLIC_RPC_BACKOFF_S,
+        "min_interval_s": PUBLIC_RPC_MIN_INTERVAL_S,
+    }
+
     for endpoint in PUBLIC_BSC_ENDPOINTS:
         if args.database.exists():
             args.database.unlink()
         try:
             report = run_recent_prediction_bootstrap(
-                JsonRpcClient(endpoint, timeout_s=20.0, retries=3),
+                JsonRpcClient(endpoint, **rpc_policy),
                 MARKETS[str(args.market)],
                 args.database,
                 start_timestamp=args.start_timestamp,
@@ -105,13 +116,14 @@ def main() -> int:
         and success["report"].get("chainlink_collected") is True
     )
     payload = {
-        "evidence_version": 4,
+        "evidence_version": 5,
         "market": str(args.market),
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
         "success": success is not None,
         "attempts": attempts,
         "selected": success,
+        "rpc_policy": rpc_policy,
         "archive_state_required": False,
         "chainlink_requested": bool(args.include_chainlink),
         "chainlink_collected": chainlink_collected,
