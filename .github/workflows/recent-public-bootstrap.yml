@@ -33,31 +33,31 @@ jobs:
           python-version: '3.12'
       - name: Install project
         run: pip install -e .
-      - name: Run public recent canonical bootstrap
+      - name: Run one-day public recent canonical bootstrap
         id: bootstrap
         continue-on-error: true
         run: |
           mkdir -p artifacts evidence
           python scripts/run_recent_public_bootstrap.py \
             --market BNBUSD \
-            --database artifacts/bnbusd-recent-2026-08-02-to-09.sqlite \
-            --output artifacts/recent-public-bootstrap-2026-08-02-to-09.json \
-            --start-timestamp 1785628800 \
-            --end-timestamp 1786233600 \
+            --database artifacts/bnbusd-recent-2026-08-18-to-19.sqlite \
+            --output artifacts/recent-public-bootstrap-2026-08-18-to-19.json \
+            --start-timestamp 1787011200 \
+            --end-timestamp 1787097600 \
             --confirmations 64 \
             --chunk-size 2000
       - name: Persist bootstrap evidence
         if: always()
         run: |
-          cp artifacts/recent-public-bootstrap-2026-08-02-to-09.json \
-            evidence/recent-public-bootstrap-2026-08-02-to-09.json
+          cp artifacts/recent-public-bootstrap-2026-08-18-to-19.json \
+            evidence/recent-public-bootstrap-2026-08-18-to-19.json
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/recent-public-bootstrap-2026-08-02-to-09.json
+          git add evidence/recent-public-bootstrap-2026-08-18-to-19.json
           if git diff --cached --quiet; then
             echo 'Recent bootstrap evidence unchanged.'
           else
-            git commit -m 'chore: record recent public bootstrap evidence'
+            git commit -m 'chore: record Aug18-19 public bootstrap evidence'
             git pull --rebase origin agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
