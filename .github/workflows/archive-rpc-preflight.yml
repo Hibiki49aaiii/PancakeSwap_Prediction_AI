@@ -81,3 +81,12 @@ jobs:
           path: artifacts/archive-rpc-preflight.json
           if-no-files-found: error
           retention-days: 14
+      - name: Enforce archive RPC gate
+        if: always()
+        env:
+          ARCHIVE_OUTCOME: ${{ steps.archive.outcome }}
+        run: |
+          if [ "$ARCHIVE_OUTCOME" != success ]; then
+            echo 'Archive RPC gate is not ready; see redacted preflight evidence.' >&2
+            exit 2
+          fi
