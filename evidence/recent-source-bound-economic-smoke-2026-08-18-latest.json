@@ -11,7 +11,9 @@
     "stake_wei": 1000000000000000
   },
   "chain": null,
+  "do_not_use_as_readiness_evidence": true,
   "economic": null,
+  "evidence_role": "legacy_cancelled_attempt",
   "evidence_version": 1,
   "live_broadcast": false,
   "market": "BNBUSD",
@@ -40,5 +42,8 @@
     "download": "skipped",
     "economic": "skipped",
     "ingest": "skipped"
-  }
+  },
+  "superseded": true,
+  "superseded_by": ".github/workflows/recent-public-chainlink-day.yml -> .github/workflows/recent-economic-smoke.yml",
+  "superseded_reason": "The legacy workflow duplicated the Aug18-19 source/economic path with different assumptions and treated command success as sufficient pipeline success. It never produced last-success evidence and is retained only as historical cancelled-attempt evidence."
 }
