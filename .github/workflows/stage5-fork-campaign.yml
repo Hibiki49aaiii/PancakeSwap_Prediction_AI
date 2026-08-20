@@ -22,7 +22,7 @@ on:
       - src/pancake_prediction/stage5_evidence.py
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: stage5-fork-${{ github.ref }}
@@ -39,8 +39,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -51,6 +49,8 @@ jobs:
       - run: pip install -e .
 
       - name: Install pinned Foundry nightly
+        id: foundry
+        continue-on-error: true
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly-4aec465267fd92b44b54fafc7fbe8ebbe7f96eca
@@ -58,6 +58,8 @@ jobs:
 
       - name: Record toolchain
         id: toolchain
+        if: steps.foundry.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -66,22 +68,29 @@ jobs:
 
       - name: Discover freshest confirmed bettable Prediction fork block
         id: fork
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          FORK_BLOCK="$({
-            python scripts/discover_stage5_fork_block.py \
-              --rpc-url "$BSC_FORK_SOURCE_RPC_URL" \
-              --market BNBUSD \
-              --lookback-blocks 128 \
-              --confirmation-lag 4
-          })"
+          python scripts/discover_stage5_fork_block.py \
+            --rpc-url "$BSC_FORK_SOURCE_RPC_URL" \
+            --market BNBUSD \
+            --lookback-blocks 128 \
+            --confirmation-lag 4 \
+            2> >(tee artifacts/stage5b-discovery.err >&2) \
+            | tee artifacts/fork-block.txt
+          FORK_BLOCK="$(tr -d '[:space:]' < artifacts/fork-block.txt)"
           test -n "$FORK_BLOCK"
+          case "$FORK_BLOCK" in
+            *[!0-9]*) echo "fork block is not numeric: $FORK_BLOCK" >&2; exit 2 ;;
+          esac
           echo "fork_block=$FORK_BLOCK" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "$FORK_BLOCK" > artifacts/fork-block.txt
 
       - name: Start loopback-only BSC fork
+        id: start_fork
+        if: steps.fork.outcome == 'success' && steps.toolchain.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -111,11 +120,15 @@ jobs:
             sleep 1
           done
           if [ "$READY" -ne 1 ]; then
-            echo "Anvil fork did not become BSC-ready" >&2
+            echo "Anvil fork did not become BSC-ready" \
+              | tee artifacts/stage5b-start-fork.err >&2
             exit 1
           fi
 
       - name: Execute observed Stage 5B campaign
+        id: campaign
+        if: steps.start_fork.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -126,9 +139,13 @@ jobs:
             --source-sha "$GITHUB_SHA" \
             --fork-block-number "${{ steps.fork.outputs.fork_block }}" \
             --anvil-version "${{ steps.toolchain.outputs.anvil_version }}" \
-            > artifacts/stage5b-campaign-summary.json
+            2> >(tee artifacts/stage5b-campaign.err >&2) \
+            | tee artifacts/stage5b-campaign-summary.json
 
       - name: Independently verify generated evidence
+        id: verify
+        if: steps.campaign.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -146,12 +163,15 @@ jobs:
               raise SystemExit(
                   f"unexpected Stage 5 evidence version: expected={expected} actual={actual}"
               )
+          if evidence.get("origin") != "observed":
+              raise SystemExit("Stage 5 evidence origin is not observed")
           PY
           python scripts/verify_stage5_fork_evidence.py \
             --db artifacts/stage5b-execution.sqlite3 \
             --evidence artifacts/stage5b-evidence.json \
             --source-sha "$GITHUB_SHA" \
-            > artifacts/stage5b-verification.json
+            2> >(tee artifacts/stage5b-verification.err >&2) \
+            | tee artifacts/stage5b-verification.json
 
       - name: Stop loopback fork
         if: always()
@@ -161,8 +181,145 @@ jobs:
             kill "$(cat /tmp/stage5-anvil.pid)" 2>/dev/null || true
           fi
 
+      - name: Build Stage 5B gate evidence
+        if: always() && !cancelled()
+        env:
+          FOUNDRY_OUTCOME: ${{ steps.foundry.outcome }}
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain.outcome }}
+          FORK_OUTCOME: ${{ steps.fork.outcome }}
+          START_FORK_OUTCOME: ${{ steps.start_fork.outcome }}
+          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          FORK_BLOCK: ${{ steps.fork.outputs.fork_block }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def load_json(path: str):
+              source = Path(path)
+              if not source.is_file() or not source.read_text(encoding="utf-8").strip():
+                  return None
+              try:
+                  return json.loads(source.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  return {"json_error": str(exc)}
+
+          def error_tail(path: str):
+              source = Path(path)
+              if not source.is_file():
+                  return None
+              text = source.read_text(encoding="utf-8", errors="replace").strip()
+              return text[-4000:] if text else None
+
+          outcomes = {
+              "foundry": os.environ.get("FOUNDRY_OUTCOME", "skipped"),
+              "toolchain": os.environ.get("TOOLCHAIN_OUTCOME", "skipped"),
+              "fork_discovery": os.environ.get("FORK_OUTCOME", "skipped"),
+              "start_loopback_fork": os.environ.get("START_FORK_OUTCOME", "skipped"),
+              "campaign": os.environ.get("CAMPAIGN_OUTCOME", "skipped"),
+              "verification": os.environ.get("VERIFY_OUTCOME", "skipped"),
+          }
+          verification = load_json("artifacts/stage5b-verification.json")
+          verified_ready = bool(
+              isinstance(verification, dict) and verification.get("ready") is True
+          )
+          gate_success = (
+              all(value == "success" for value in outcomes.values())
+              and verified_ready
+          )
+          fork_block_raw = os.environ.get("FORK_BLOCK", "").strip()
+          payload = {
+              "evidence_version": 1,
+              "evidence_role": "latest_attempt",
+              "purpose": "observed_stage5b_loopback_bsc_fork_gate",
+              "success": gate_success,
+              "stage5b_gate_satisfied": gate_success,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "transaction_endpoint_scope": "loopback_local_fork_only",
+              "source_rpc_role": "read_only_bsc_fork_source",
+              "source_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "source_event_sha": os.environ["GITHUB_SHA"],
+              "source_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "fork_block_number": (
+                  int(fork_block_raw) if fork_block_raw.isdigit() else None
+              ),
+              "step_outcomes": outcomes,
+              "campaign_evidence": load_json("artifacts/stage5b-evidence.json"),
+              "campaign_summary": load_json(
+                  "artifacts/stage5b-campaign-summary.json"
+              ),
+              "verification": verification,
+              "errors": {
+                  "fork_discovery": error_tail("artifacts/stage5b-discovery.err"),
+                  "start_loopback_fork": error_tail(
+                      "artifacts/stage5b-start-fork.err"
+                  ),
+                  "campaign": error_tail("artifacts/stage5b-campaign.err"),
+                  "verification": error_tail(
+                      "artifacts/stage5b-verification.err"
+                  ),
+              },
+              "interpretation": (
+                  "Observed execution-readiness evidence is limited to an impersonated-account "
+                  "Anvil fork bound to 127.0.0.1. It grants no signing authority and is not "
+                  "funded/mainnet execution evidence."
+              ),
+          }
+          path = Path("evidence/stage5b-fork-latest.json")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Persist Stage 5B gate evidence
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/stage5b-fork-latest.json
+          if python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("evidence/stage5b-fork-latest.json").read_text())
+          raise SystemExit(0 if payload.get("success") is True else 1)
+          PY
+          then
+            cp evidence/stage5b-fork-latest.json evidence/stage5b-fork-last-success.json
+            python - <<'PY'
+            import json
+            from pathlib import Path
+
+            path = Path("evidence/stage5b-fork-last-success.json")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["evidence_role"] = "last_success"
+            path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            PY
+            git add evidence/stage5b-fork-last-success.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'Stage 5B gate evidence unchanged.'
+          else
+            git commit -m 'chore: record Stage 5B fork gate evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
       - name: Upload observed campaign evidence
-        if: always()
+        if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: stage5b-v3-fork-evidence-${{ github.run_id }}
@@ -172,5 +329,38 @@ jobs:
             artifacts/stage5b-evidence.json
             artifacts/stage5b-campaign-summary.json
             artifacts/stage5b-verification.json
+            artifacts/stage5b-discovery.err
+            artifacts/stage5b-start-fork.err
+            artifacts/stage5b-campaign.err
+            artifacts/stage5b-verification.err
+            evidence/stage5b-fork-latest.json
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Enforce Stage 5B gate
+        if: always() && !cancelled()
+        env:
+          FOUNDRY_OUTCOME: ${{ steps.foundry.outcome }}
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain.outcome }}
+          FORK_OUTCOME: ${{ steps.fork.outcome }}
+          START_FORK_OUTCOME: ${{ steps.start_fork.outcome }}
+          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        shell: bash
+        run: |
+          if [ "$FOUNDRY_OUTCOME" != success ] || \
+             [ "$TOOLCHAIN_OUTCOME" != success ] || \
+             [ "$FORK_OUTCOME" != success ] || \
+             [ "$START_FORK_OUTCOME" != success ] || \
+             [ "$CAMPAIGN_OUTCOME" != success ] || \
+             [ "$VERIFY_OUTCOME" != success ]; then
+            echo "Stage 5B gate failed: foundry=$FOUNDRY_OUTCOME toolchain=$TOOLCHAIN_OUTCOME fork=$FORK_OUTCOME start=$START_FORK_OUTCOME campaign=$CAMPAIGN_OUTCOME verify=$VERIFY_OUTCOME" >&2
+            exit 2
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("evidence/stage5b-fork-latest.json").read_text())
+          if payload.get("success") is not True:
+              raise SystemExit("Stage 5B semantic evidence gate did not clear")
+          PY
