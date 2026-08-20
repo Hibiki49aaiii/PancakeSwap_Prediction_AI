@@ -401,9 +401,9 @@ def test_public_collector_collects_answer_updates_from_underlying_aggregator(
     assert report["chainlink_events_inserted"] == 1
     with collector.store.connect() as conn:
         row = conn.execute(
-            "SELECT address,event_name,decoded_json FROM events WHERE source='chainlink'"
+            "SELECT contract_address,event_name,decoded_json FROM events WHERE source='chainlink'"
         ).fetchone()
     assert row is not None
-    assert row["address"] == CHAINLINK_AGGREGATOR
+    assert row["contract_address"] == CHAINLINK_AGGREGATOR
     assert row["event_name"] == "AnswerUpdated"
     assert '"current":60000000000' in str(row["decoded_json"])
