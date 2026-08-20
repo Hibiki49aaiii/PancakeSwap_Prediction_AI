@@ -47,28 +47,43 @@ jobs:
             --confirmations 64 \
             --chunk-size 2000 \
             --include-chainlink
-      - name: Persist Chainlink smoke evidence
+      - name: Persist latest and last-success Chainlink smoke evidence
         if: always()
         env:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
           cp artifacts/recent-public-chainlink-smoke-2026-08-19.json \
-            evidence/recent-public-chainlink-smoke-2026-08-19.json
+            evidence/recent-public-chainlink-smoke-2026-08-19-latest.json
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          path = Path("evidence/recent-public-chainlink-smoke-2026-08-19.json")
+          path = Path("evidence/recent-public-chainlink-smoke-2026-08-19-latest.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           payload["workflow_outcome"] = os.environ["SMOKE_OUTCOME"]
+          payload["evidence_role"] = "latest_attempt"
           payload["purpose"] = "public_recent_prediction_chainlink_source_smoke"
           payload["profitability_gate_eligible"] = False
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/recent-public-chainlink-smoke-2026-08-19.json
+          git add evidence/recent-public-chainlink-smoke-2026-08-19-latest.json
+          if [ "$SMOKE_OUTCOME" = success ]; then
+            cp evidence/recent-public-chainlink-smoke-2026-08-19-latest.json \
+              evidence/recent-public-chainlink-smoke-2026-08-19-last-success.json
+            python - <<'PY'
+            import json
+            from pathlib import Path
+
+            path = Path("evidence/recent-public-chainlink-smoke-2026-08-19-last-success.json")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["evidence_role"] = "last_success"
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            PY
+            git add evidence/recent-public-chainlink-smoke-2026-08-19-last-success.json
+          fi
           if git diff --cached --quiet; then
             echo 'Public Chainlink smoke evidence unchanged.'
           else
@@ -92,6 +107,6 @@ jobs:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
           if [ "$SMOKE_OUTCOME" != success ]; then
-            echo 'Recent public Prediction + Chainlink smoke failed; inspect persisted evidence.' >&2
+            echo 'Recent public Prediction + Chainlink smoke failed; inspect latest evidence.' >&2
             exit 2
           fi
