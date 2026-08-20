@@ -78,7 +78,9 @@ jobs:
         id: chain
         continue-on-error: true
         run: |
-          mkdir -p artifacts evidence /tmp/binance-2026-08-18
+          mkdir -p artifacts evidence \
+            /tmp/binance-2026-08-18/spot \
+            /tmp/binance-2026-08-18/perp
           python scripts/run_recent_public_bootstrap.py \
             --market BNBUSD \
             --database artifacts/bnbusd-source-bound-2026-08-18.sqlite \
@@ -95,14 +97,13 @@ jobs:
         run: |
           set -euo pipefail
           root=/tmp/binance-2026-08-18
-          spot=https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-18.zip
-          perp=https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/BNBUSDT-aggTrades-2026-08-18.zip
-          curl -fsSL "$spot" -o "$root/spot.zip"
-          curl -fsSL "$spot.CHECKSUM" -o "$root/spot.zip.CHECKSUM"
-          curl -fsSL "$perp" -o "$root/perp.zip"
-          curl -fsSL "$perp.CHECKSUM" -o "$root/perp.zip.CHECKSUM"
-          sed -i 's/BNBUSDT-aggTrades-2026-08-18.zip/spot.zip/' "$root/spot.zip.CHECKSUM"
-          sed -i 's/BNBUSDT-aggTrades-2026-08-18.zip/perp.zip/' "$root/perp.zip.CHECKSUM"
+          file=BNBUSDT-aggTrades-2026-08-18.zip
+          spot=https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/$file
+          perp=https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/$file
+          curl -fsSL "$spot" -o "$root/spot/$file"
+          curl -fsSL "$spot.CHECKSUM" -o "$root/spot/$file.CHECKSUM"
+          curl -fsSL "$perp" -o "$root/perp/$file"
+          curl -fsSL "$perp.CHECKSUM" -o "$root/perp/$file.CHECKSUM"
       - name: Ingest checksum-verified Binance sources with positive availability lag
         id: ingest
         if: steps.chain.outcome == 'success' && steps.download.outcome == 'success'
@@ -110,18 +111,19 @@ jobs:
         run: |
           set -euo pipefail
           root=/tmp/binance-2026-08-18
+          file=BNBUSDT-aggTrades-2026-08-18.zip
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
-            --archive "$root/spot.zip" \
-            --checksum "$root/spot.zip.CHECKSUM" \
+            --archive "$root/spot/$file" \
+            --checksum "$root/spot/$file.CHECKSUM" \
             --venue spot \
             --timestamp-unit auto \
             --availability-lag-ms 25 \
             > artifacts/binance-spot-ingest-2026-08-18.json
           pcs-clickhouse binance-ingest \
             --market BNBUSD \
-            --archive "$root/perp.zip" \
-            --checksum "$root/perp.zip.CHECKSUM" \
+            --archive "$root/perp/$file" \
+            --checksum "$root/perp/$file.CHECKSUM" \
             --venue um_futures \
             --timestamp-unit milliseconds \
             --availability-lag-ms 40 \
