@@ -12,13 +12,15 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - If a prerequisite is absent, fail explicitly rather than skipping every substantive step and leaving a green job.
 - If the workflow uses `cancel-in-progress`, a cancelled superseded run must not overwrite current evidence with `skipped` outcomes.
 - Run quality checks against the trigger SHA (or explicitly record the actual checked-out SHA), rather than silently testing a moving branch HEAD while labeling evidence with another SHA.
+- If persisted success evidence triggers a downstream workflow that consumes an artifact from the same run, publish the required artifact before committing/pushing that success evidence, or otherwise make downstream artifact readiness explicit and verified.
 
 ### Applicability
 
 - repository workflows that persist diagnostics/evidence after a failing check;
 - prerequisite gates such as credentials, archive readiness, external-source readiness, quality checks, or empirical research probes;
 - workflows with concurrency cancellation;
-- workflows where a green status or persisted JSON can be interpreted as evidence that a specific revision actually ran and passed.
+- workflows where a green status or persisted JSON can be interpreted as evidence that a specific revision actually ran and passed;
+- chained evidence workflows where a persisted `last-success` file is also the trigger for a downstream consumer of the originating run's artifact.
 
 ### Verification
 
@@ -27,6 +29,7 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - for prerequisite checks, include an explicit failing step when the prerequisite is absent;
 - for `cancel-in-progress`, do not persist current-state evidence from cancelled runs (`always() && !cancelled()` or an equivalent guard);
 - checkout the trigger SHA for revision-bound evidence, or record the checked-out revision if branch-head validation is intentional;
+- when downstream work is triggered by persisted success evidence, ensure its required same-run artifact is already published before that evidence becomes visible;
 - verify that normal repository CI remains green and, where practical, exercise the negative/cancellation path.
 
 ### Evidence
@@ -36,11 +39,12 @@ When a GitHub Actions gate deliberately continues after a failed check so diagno
 - `.github/workflows/quality-evidence.yml` exposed a separate cancellation/source-identity failure: a superseded run persisted all quality outcomes as `skipped`, changed `ready` from true to false, and labeled the evidence with trigger SHA `6ad31bb4629468d45e98171b99d013970fa31c7d`. Commit `61df8e8731b92ea7f30e6011fde02cdd6d0bdd28` fixes this by checking out `${{ github.sha }}` and suppressing persistence/upload/enforcement steps on cancelled runs.
 - After the fix, `evidence/quality-gate.json` recovered to `ready=true` with Ruff/mypy/pytest/Bandit/pip-audit all successful, 295 tests passed, and 87% coverage for source SHA `8adc08d8709577a10941e7bfd618a8a06215c419`.
 - `.github/workflows/public-block-receipts-probe.yml`, `.github/workflows/public-archive-candidate-probe.yml`, and `.github/workflows/public-blast-bootstrap-smoke.yml` demonstrate the evidence-first-then-enforce pattern.
+- The one-day Chainlink-to-economic-smoke chain exposed an artifact-ordering race: `recent-public-chainlink-day` originally pushed `last-success` evidence before uploading the SQLite artifact that the downstream smoke consumes. Commit `644eda1b84458a3361310dacac0d36f744dcd0e3` changes the order to upload the same-run artifact first, suppress cancelled-run persistence, then publish success evidence. The downstream `recent-economic-smoke` binds to the recorded run ID and verifies the source workflow conclusion/branch before downloading that artifact.
 - PR CI run 797 passed after the earlier fail-closed workflow changes, and later quality evidence confirms the recent bootstrap changes are also green.
 
 ### Exceptions / Limitations
 
-This applies only when the workflow is semantically a gate or its persisted artifact represents current/revision-bound readiness. A best-effort telemetry workflow may intentionally remain green after a failed observation, and historical evidence for an older revision may be useful, but that intent and revision must be explicit. Although three independent workflow failure modes now support this rule, the repository has not yet exercised every negative/cancellation path under dedicated tests, so it remains a Candidate Rule rather than a Validated Rule.
+This applies only when the workflow is semantically a gate or its persisted artifact represents current/revision-bound readiness. A best-effort telemetry workflow may intentionally remain green after a failed observation, and historical evidence for an older revision may be useful, but that intent and revision must be explicit. Although several independent workflow failure modes now support this rule, the repository has not yet exercised every negative/cancellation/artifact-ordering path under dedicated tests, so it remains a Candidate Rule rather than a Validated Rule.
 
 ### Related cases / observations
 
