@@ -49,6 +49,7 @@ jobs:
         id: bootstrap
         continue-on-error: true
         run: |
+          set -o pipefail
           mkdir -p artifacts evidence
           python scripts/run_recent_public_bootstrap.py \
             --market BNBUSD \
@@ -58,7 +59,15 @@ jobs:
             --end-timestamp 1787097600 \
             --confirmations 64 \
             --chunk-size 2000 \
-            --include-chainlink
+            --include-chainlink \
+            2> >(tee artifacts/recent-public-chainlink-2026-08-18-to-19.err >&2)
+      - name: Validate one-day source files
+        id: source_files
+        if: always() && !cancelled()
+        continue-on-error: true
+        run: |
+          test -s artifacts/recent-public-chainlink-2026-08-18-to-19.json
+          test -s artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite
       - name: Upload one-day artifacts
         id: artifact
         if: always() && !cancelled()
@@ -69,47 +78,105 @@ jobs:
           path: |
             artifacts/recent-public-chainlink-2026-08-18-to-19.json
             artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite
+            artifacts/recent-public-chainlink-2026-08-18-to-19.err
           if-no-files-found: error
           retention-days: 30
       - name: Persist latest attempt evidence
         if: always() && !cancelled()
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          SOURCE_FILES_OUTCOME: ${{ steps.source_files.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
-          SOURCE_RUN_ID: ${{ steps.source_identity.outputs.source_run_id }}
-          SOURCE_SHA: ${{ steps.source_identity.outputs.source_sha }}
-          SOURCE_EVENT_SHA: ${{ steps.source_identity.outputs.source_event_sha }}
+          SOURCE_RUN_ID: ${{ steps.source_identity.outputs.source_run_id || github.run_id }}
+          SOURCE_SHA: ${{ steps.source_identity.outputs.source_sha || github.sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source_identity.outputs.source_event_sha || github.sha }}
         run: |
-          cp artifacts/recent-public-chainlink-2026-08-18-to-19.json \
-            evidence/recent-public-chainlink-2026-08-18-to-19-latest.json
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-latest.json")
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          bootstrap_outcome = os.environ["BOOTSTRAP_OUTCOME"]
-          artifact_outcome = os.environ["ARTIFACT_OUTCOME"]
-          gate_success = bootstrap_outcome == "success" and artifact_outcome == "success"
+          source = Path("artifacts/recent-public-chainlink-2026-08-18-to-19.json")
+          error_path = Path("artifacts/recent-public-chainlink-2026-08-18-to-19.err")
+          if source.is_file() and source.read_text(encoding="utf-8").strip():
+              try:
+                  payload = json.loads(source.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  payload = {
+                      "evidence_version": 6,
+                      "market": "BNBUSD",
+                      "requested_start_timestamp": 1787011200,
+                      "requested_end_timestamp": 1787097600,
+                      "success": False,
+                      "chainlink_requested": True,
+                      "chainlink_collected": False,
+                      "source_report_json_error": str(exc),
+                      "signing_enabled": False,
+                      "live_broadcast": False,
+                  }
+          else:
+              payload = {
+                  "evidence_version": 6,
+                  "market": "BNBUSD",
+                  "requested_start_timestamp": 1787011200,
+                  "requested_end_timestamp": 1787097600,
+                  "success": False,
+                  "chainlink_requested": True,
+                  "chainlink_collected": False,
+                  "source_report_missing": True,
+                  "signing_enabled": False,
+                  "live_broadcast": False,
+              }
+
+          bootstrap_outcome = os.environ.get("BOOTSTRAP_OUTCOME", "skipped")
+          source_files_outcome = os.environ.get("SOURCE_FILES_OUTCOME", "skipped")
+          artifact_outcome = os.environ.get("ARTIFACT_OUTCOME", "skipped")
+          gate_success = all(
+              outcome == "success"
+              for outcome in (
+                  bootstrap_outcome,
+                  source_files_outcome,
+                  artifact_outcome,
+              )
+          )
           payload["workflow_outcome"] = "success" if gate_success else "failure"
           payload["gate_success"] = gate_success
           payload["step_outcomes"] = {
               "bootstrap": bootstrap_outcome,
+              "source_files": source_files_outcome,
               "artifact": artifact_outcome,
           }
           payload["evidence_role"] = "latest_attempt"
           payload["purpose"] = "public_recent_prediction_chainlink_one_day"
           payload["profitability_gate_eligible"] = False
-          payload["source_run_id"] = int(os.environ["SOURCE_RUN_ID"])
-          payload["source_sha"] = os.environ["SOURCE_SHA"]
-          payload["source_event_sha"] = os.environ["SOURCE_EVENT_SHA"]
-          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          run_id = os.environ.get("SOURCE_RUN_ID", "").strip()
+          payload["source_run_id"] = int(run_id) if run_id.isdigit() else None
+          payload["source_sha"] = os.environ.get("SOURCE_SHA", "").strip() or None
+          payload["source_event_sha"] = (
+              os.environ.get("SOURCE_EVENT_SHA", "").strip() or None
+          )
+          if error_path.is_file():
+              error_text = error_path.read_text(
+                  encoding="utf-8",
+                  errors="replace",
+              ).strip()
+              payload["bootstrap_error_tail"] = error_text[-4000:] if error_text else None
+          else:
+              payload["bootstrap_error_tail"] = None
+
+          path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-latest.json")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-public-chainlink-2026-08-18-to-19-latest.json
-          if [ "$BOOTSTRAP_OUTCOME" = success ] && [ "$ARTIFACT_OUTCOME" = success ]; then
+          if [ "$BOOTSTRAP_OUTCOME" = success ] && \
+             [ "$SOURCE_FILES_OUTCOME" = success ] && \
+             [ "$ARTIFACT_OUTCOME" = success ]; then
             cp evidence/recent-public-chainlink-2026-08-18-to-19-latest.json \
               evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json
             python - <<'PY'
@@ -119,7 +186,10 @@ jobs:
             path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json")
             payload = json.loads(path.read_text(encoding="utf-8"))
             payload["evidence_role"] = "last_success"
-            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             PY
             git add evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json
           fi
@@ -134,10 +204,13 @@ jobs:
         if: always() && !cancelled()
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          SOURCE_FILES_OUTCOME: ${{ steps.source_files.outcome }}
           ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
         run: |
-          if [ "$BOOTSTRAP_OUTCOME" != success ] || [ "$ARTIFACT_OUTCOME" != success ]; then
-            echo "One-day public Prediction + Chainlink gate failed: bootstrap=$BOOTSTRAP_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
+          if [ "$BOOTSTRAP_OUTCOME" != success ] || \
+             [ "$SOURCE_FILES_OUTCOME" != success ] || \
+             [ "$ARTIFACT_OUTCOME" != success ]; then
+            echo "One-day public Prediction + Chainlink gate failed: bootstrap=$BOOTSTRAP_OUTCOME source_files=$SOURCE_FILES_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
             exit 2
           fi
 
