@@ -39,10 +39,10 @@ jobs:
           mkdir -p artifacts evidence
           python scripts/run_recent_public_bootstrap.py \
             --market BNBUSD \
-            --database artifacts/bnbusd-public-smoke-2026-08-09.sqlite \
-            --output artifacts/recent-public-bootstrap-smoke-2026-08-09.json \
-            --start-timestamp 1786233600 \
-            --end-timestamp 1786240800 \
+            --database artifacts/bnbusd-public-smoke-2026-08-19.sqlite \
+            --output artifacts/recent-public-bootstrap-smoke-2026-08-19.json \
+            --start-timestamp 1787140800 \
+            --end-timestamp 1787148000 \
             --confirmations 64 \
             --chunk-size 2000
       - name: Persist smoke evidence
@@ -50,14 +50,14 @@ jobs:
         env:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
-          cp artifacts/recent-public-bootstrap-smoke-2026-08-09.json \
-            evidence/recent-public-bootstrap-smoke-2026-08-09.json
+          cp artifacts/recent-public-bootstrap-smoke-2026-08-19.json \
+            evidence/recent-public-bootstrap-smoke-2026-08-19.json
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          path = Path("evidence/recent-public-bootstrap-smoke-2026-08-09.json")
+          path = Path("evidence/recent-public-bootstrap-smoke-2026-08-19.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           payload["workflow_outcome"] = os.environ["SMOKE_OUTCOME"]
           payload["purpose"] = "public_rpc_collector_smoke_only"
@@ -66,11 +66,11 @@ jobs:
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/recent-public-bootstrap-smoke-2026-08-09.json
+          git add evidence/recent-public-bootstrap-smoke-2026-08-19.json
           if git diff --cached --quiet; then
             echo 'Public bootstrap smoke evidence unchanged.'
           else
-            git commit -m 'chore: record public bootstrap smoke evidence'
+            git commit -m 'chore: record Aug19 public bootstrap smoke evidence'
             git pull --rebase origin agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
