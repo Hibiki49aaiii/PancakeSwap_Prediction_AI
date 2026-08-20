@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/v0.7-alpha-research
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -57,7 +57,7 @@ jobs:
         continue-on-error: true
         run: pip-audit > artifacts/pip-audit.log 2>&1
       - name: Persist compact quality evidence
-        if: always()
+        if: ${{ always() && !cancelled() }}
         env:
           SOURCE_SHA: ${{ github.sha }}
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
@@ -113,7 +113,7 @@ jobs:
             git push origin HEAD:agent/v0.7-alpha-research
           fi
       - name: Upload detailed quality logs
-        if: always()
+        if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: quality-evidence-${{ github.run_id }}
@@ -121,7 +121,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Enforce quality gate
-        if: always()
+        if: ${{ always() && !cancelled() }}
         env:
           RUFF_OUTCOME: ${{ steps.ruff.outcome }}
           MYPY_OUTCOME: ${{ steps.mypy.outcome }}
