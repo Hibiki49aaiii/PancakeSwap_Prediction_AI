@@ -331,6 +331,77 @@ jobs:
             2> >(tee artifacts/recent-economic-smoke-campaign.err >&2) \
             | tee artifacts/recent-economic-smoke-campaign.json
 
+      - name: Validate non-vacuous OOS campaign semantics
+        id: campaign_semantics
+        if: steps.campaign.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-smoke-semantic-validation.err >&2)
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          campaign_path = Path("artifacts/recent-economic-smoke-campaign.json")
+          payload = json.loads(campaign_path.read_text(encoding="utf-8"))
+          dataset = payload.get("dataset") or {}
+          evaluation = payload.get("evaluation") or {}
+          probability = evaluation.get("probability_metrics") or {}
+          manifest = payload.get("campaign_manifest") or {}
+          assumptions = payload.get("assumptions") or {}
+          spot_sources = manifest.get("spot_sources") or []
+          perp_sources = manifest.get("perp_sources") or []
+
+          checks = {
+              "research_feature_rows_positive": int(dataset.get("research_feature_rows", 0)) > 0,
+              "fold_count_positive": int(evaluation.get("fold_count", 0)) >= 1,
+              "direction_signal_count_positive": int(
+                  evaluation.get("direction_signal_count", 0)
+              ) > 0,
+              "pool_projection_count_positive": int(
+                  evaluation.get("pool_projection_count", 0)
+              ) > 0,
+              "joint_epoch_count_positive": int(evaluation.get("joint_epoch_count", 0)) > 0,
+              "n_scored_positive": int(probability.get("n_scored", 0)) > 0,
+              "spot_provenance_present": len(spot_sources) > 0,
+              "perp_provenance_present": len(perp_sources) > 0,
+              "spot_lag_exact": assumptions.get("spot_availability_lag_ms") == 250,
+              "perp_lag_exact": assumptions.get("perp_availability_lag_ms") == 250,
+              "chainlink_lag_exact": assumptions.get("chainlink_availability_lag_ms") == 1000,
+              "spot_source_lags_exact": bool(spot_sources)
+              and all(item.get("availability_lag_ms") == 250 for item in spot_sources),
+              "perp_source_lags_exact": bool(perp_sources)
+              and all(item.get("availability_lag_ms") == 250 for item in perp_sources),
+          }
+          summary = {
+              "checks": checks,
+              "ready": all(checks.values()),
+              "research_feature_rows": int(dataset.get("research_feature_rows", 0)),
+              "skipped_no_aligned_market_data": int(
+                  dataset.get("skipped_no_aligned_market_data", 0)
+              ),
+              "fold_count": int(evaluation.get("fold_count", 0)),
+              "direction_signal_count": int(evaluation.get("direction_signal_count", 0)),
+              "pool_projection_count": int(evaluation.get("pool_projection_count", 0)),
+              "joint_epoch_count": int(evaluation.get("joint_epoch_count", 0)),
+              "n_scored": int(probability.get("n_scored", 0)),
+              "spot_source_count": len(spot_sources),
+              "perp_source_count": len(perp_sources),
+              "spot_query_start_ms": dataset.get("spot_query_start_ms"),
+              "perp_query_start_ms": dataset.get("perp_query_start_ms"),
+              "query_end_ms": dataset.get("query_end_ms"),
+          }
+          Path("artifacts/recent-economic-smoke-semantic-validation.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not summary["ready"]:
+              failed = [name for name, passed in checks.items() if not passed]
+              raise SystemExit(
+                  "economic smoke is vacuous or provenance-incomplete: " + ", ".join(failed)
+              )
+          PY
+
       - name: Build bounded smoke evidence
         if: always() && !cancelled()
         env:
@@ -340,6 +411,7 @@ jobs:
           BINANCE_DOWNLOAD_OUTCOME: ${{ steps.binance_download.outcome }}
           BINANCE_INGEST_OUTCOME: ${{ steps.binance_ingest.outcome }}
           CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+          CAMPAIGN_SEMANTICS_OUTCOME: ${{ steps.campaign_semantics.outcome }}
           SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           SOURCE_EVENT_SHA: ${{ steps.source.outputs.source_event_sha }}
@@ -386,6 +458,9 @@ jobs:
               "binance_download": os.environ.get("BINANCE_DOWNLOAD_OUTCOME", "skipped"),
               "binance_ingest": os.environ.get("BINANCE_INGEST_OUTCOME", "skipped"),
               "campaign": os.environ.get("CAMPAIGN_OUTCOME", "skipped"),
+              "campaign_semantics": os.environ.get(
+                  "CAMPAIGN_SEMANTICS_OUTCOME", "skipped"
+              ),
           }
           smoke_ready = all(value == "success" for value in outcomes.values())
           source_run_raw = os.environ.get("SOURCE_RUN_ID", "").strip()
@@ -393,7 +468,7 @@ jobs:
           source_sha = os.environ.get("SOURCE_SHA", "").strip() or None
           source_event_sha = os.environ.get("SOURCE_EVENT_SHA", "").strip() or None
           payload = {
-              "evidence_version": 4,
+              "evidence_version": 5,
               "evidence_role": "latest_attempt",
               "purpose": "recent_source_bound_economic_pipeline_smoke",
               "success": smoke_ready,
@@ -453,6 +528,9 @@ jobs:
               "campaign": load_optional_json(
                   "artifacts/recent-economic-smoke-campaign.json"
               ),
+              "campaign_semantics": load_optional_json(
+                  "artifacts/recent-economic-smoke-semantic-validation.json"
+              ),
               "errors": {
                   "source": load_error("artifacts/recent-economic-smoke-source.err"),
                   "source_artifact": load_error(
@@ -466,11 +544,14 @@ jobs:
                       "artifacts/recent-economic-smoke-binance-ingest.err"
                   ),
                   "campaign": load_error("artifacts/recent-economic-smoke-campaign.err"),
+                  "campaign_semantics": load_error(
+                      "artifacts/recent-economic-smoke-semantic-validation.err"
+                  ),
               },
               "interpretation": (
                   "Pipeline smoke only: validates exact-source binding, positive availability lags, "
-                  "purged/embargoed OOS plumbing, and explicit costs on a one-day sample. It is not "
-                  "profitability evidence and does not satisfy the full historical source gate."
+                  "non-vacuous purged/embargoed OOS plumbing, and explicit costs on a one-day sample. "
+                  "It is not profitability evidence and does not satisfy the full historical source gate."
               ),
           }
           out = Path("evidence/recent-economic-smoke-2026-08-18-to-19-latest.json")
