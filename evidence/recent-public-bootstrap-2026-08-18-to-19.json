@@ -28,7 +28,7 @@
         "confirmations": 64,
         "from_block": 116556542,
         "from_block_timestamp": 1787011200,
-        "head_block": 116984287,
+        "head_block": 117044442,
         "requested_end_timestamp": 1787097600,
         "requested_start_timestamp": 1787011200,
         "to_block": 116748497,
