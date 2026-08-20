@@ -8,7 +8,19 @@ from pancake_prediction.contracts import MARKETS
 from pancake_prediction.recent_bootstrap import run_recent_prediction_bootstrap
 from pancake_prediction.rpc import JsonRpcClient
 
+# BNB Chain documents that eth_getLogs is disabled on its public Mainnet
+# dataseed endpoints and recommends third-party providers for log workloads.
+# Keep the official seeds as diagnostic fallbacks, but prefer current public
+# third-party endpoints for this read-only historical-log bootstrap.
 PUBLIC_BSC_ENDPOINTS = (
+    "https://bsc-pokt.nodies.app",
+    "https://bsc.blockpi.network/v1/rpc/public",
+    "https://bsc.drpc.org",
+    "https://bnb.api.onfinality.io/public",
+    "https://bsc.meowrpc.com",
+    "https://rpc-bsc.48.club",
+    "https://bsc-mainnet.public.blastapi.io",
+    "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
     "https://bsc-dataseed.bnbchain.org",
     "https://bsc-dataseed-public.bnbchain.org",
     "https://bsc-dataseed.nariox.org",
@@ -72,7 +84,7 @@ def main() -> int:
             )
 
     payload = {
-        "evidence_version": 1,
+        "evidence_version": 2,
         "market": str(args.market),
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
