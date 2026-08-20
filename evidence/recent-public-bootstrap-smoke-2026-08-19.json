@@ -8,7 +8,8 @@
     }
   ],
   "chainlink_collected": false,
-  "evidence_version": 2,
+  "chainlink_requested": false,
+  "evidence_version": 3,
   "live_broadcast": false,
   "market": "BNBUSD",
   "profitability_gate_eligible": false,
@@ -23,7 +24,7 @@
         "confirmations": 64,
         "from_block": 116844485,
         "from_block_timestamp": 1787140800,
-        "head_block": 116979951,
+        "head_block": 116980821,
         "requested_end_timestamp": 1787148000,
         "requested_start_timestamp": 1787140800,
         "to_block": 116860482,
@@ -44,6 +45,7 @@
       },
       "database": "artifacts/bnbusd-public-smoke-2026-08-19.sqlite",
       "market": "BNBUSD",
+      "oracle_stability_proof": null,
       "quality": {
         "bets": 559,
         "duplicate_canonical_heights": 0,
