@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .abi import decode_address_result, function_selector
 from .collector import HistoricalCollector, ReadOnlyRpc
 from .contracts import Market
 from .historical_preflight import (
@@ -102,6 +103,39 @@ def _persist_oracle_anchor(
     )
 
 
+def _historical_proxy_aggregator(
+    rpc: HistoricalBootstrapRpc,
+    preflight: HistoricalPreflightResult,
+) -> str | None:
+    """Return a distinct Chainlink proxy aggregator when one is provable.
+
+    The legacy historical collector assumes the Prediction oracle address itself
+    emits ``AnswerUpdated``. Current BNBUSD uses an EACAggregatorProxy whose
+    underlying aggregator emits that event. Until a full historical
+    proxy/aggregator activation timeline is collected, detect that shape and
+    fail closed rather than silently producing empty/misattributed Chainlink
+    history.
+
+    A direct aggregator may return no ABI data for ``aggregator()``; malformed or
+    empty ABI data is treated as "not proven proxy". RPC transport/application
+    errors are deliberately not swallowed.
+    """
+
+    oracle = preflight.archive_probe.oracle_address.lower()
+    raw = rpc.eth_call(
+        oracle,
+        function_selector("aggregator()"),
+        preflight.archive_probe.block_number,
+    )
+    try:
+        aggregator = decode_address_result(raw).lower()
+    except ValueError:
+        return None
+    if aggregator == "0x" + "00" * 20 or aggregator == oracle:
+        return None
+    return aggregator
+
+
 def run_historical_bootstrap(
     rpc: HistoricalBootstrapRpc,
     market: Market,
@@ -124,6 +158,13 @@ def run_historical_bootstrap(
     store = EventStore(database)
     store.initialize()
     if include_chainlink:
+        proxy_aggregator = _historical_proxy_aggregator(rpc, preflight)
+        if proxy_aggregator is not None:
+            raise RpcError(
+                "historical Chainlink oracle is a proxy whose AnswerUpdated emitter "
+                f"is {proxy_aggregator}; full proxy/aggregator route-timeline "
+                "collection is required before historical-bootstrap may continue"
+            )
         _persist_oracle_anchor(store, preflight)
     collector = HistoricalCollector(
         rpc=rpc,
