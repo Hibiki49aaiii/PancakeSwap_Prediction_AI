@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from pancake_prediction.contracts import MARKETS
-from pancake_prediction.recent_bootstrap import run_recent_prediction_bootstrap
+from pancake_prediction.recent_bootstrap import (
+    ChainlinkRouteAnchor,
+    run_recent_prediction_bootstrap,
+)
 from pancake_prediction.rpc import JsonRpcClient
 
 # BNB Chain documents that eth_getLogs is disabled on its public Mainnet
@@ -38,6 +43,74 @@ PUBLIC_RPC_BACKOFF_S = 1.5
 PUBLIC_RPC_MIN_INTERVAL_S = 0.15
 
 
+def _object(value: object, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return cast(dict[str, Any], value)
+
+
+def load_chainlink_route_anchor(path: Path, *, market: str) -> ChainlinkRouteAnchor:
+    """Load and validate a previously persisted successful Chainlink route proof."""
+
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid Chainlink route anchor JSON: {exc}") from exc
+    payload = _object(decoded, field="anchor evidence")
+
+    if payload.get("success") is not True:
+        raise ValueError("Chainlink route anchor evidence is not successful")
+    workflow_outcome = payload.get("workflow_outcome")
+    if workflow_outcome not in {None, "success"}:
+        raise ValueError("Chainlink route anchor workflow outcome is not successful")
+    if payload.get("chainlink_collected") is not True:
+        raise ValueError("Chainlink route anchor did not collect Chainlink events")
+    if str(payload.get("market", "")) != market:
+        raise ValueError("Chainlink route anchor market does not match requested market")
+
+    selected = _object(payload.get("selected"), field="anchor selected")
+    report = _object(selected.get("report"), field="anchor selected.report")
+    if report.get("authoritative_prediction_events") is not True:
+        raise ValueError("Chainlink route anchor lacks authoritative Prediction events")
+    if report.get("chainlink_collected") is not True:
+        raise ValueError("Chainlink route anchor report did not collect Chainlink events")
+
+    proof = _object(
+        report.get("oracle_stability_proof"),
+        field="anchor selected.report.oracle_stability_proof",
+    )
+    if int(proof.get("new_oracle_events", -1)) != 0:
+        raise ValueError("Chainlink route anchor contains a Prediction oracle change")
+    if int(proof.get("aggregator_confirmed_events", -1)) != 0:
+        raise ValueError("Chainlink route anchor contains a Chainlink aggregator change")
+
+    anchor_block = int(proof.get("from_block", 0))
+    proof_through_block = int(proof.get("through_block", 0))
+    if anchor_block <= 0 or proof_through_block < anchor_block:
+        raise ValueError("Chainlink route anchor has an invalid proven block range")
+    oracle_proxy = str(proof.get("oracle", "")).lower()
+    chainlink_aggregator = str(proof.get("chainlink_aggregator", "")).lower()
+
+    collection = _object(report.get("collection"), field="anchor selected.report.collection")
+    oracle_addresses = collection.get("oracle_addresses")
+    chainlink_addresses = collection.get("chainlink_event_addresses")
+    if oracle_addresses != [oracle_proxy]:
+        raise ValueError("Chainlink route anchor proxy disagrees with collection evidence")
+    if chainlink_addresses != [chainlink_aggregator]:
+        raise ValueError("Chainlink route anchor aggregator disagrees with collection evidence")
+    if int(collection.get("chainlink_events_inserted", 0)) <= 0:
+        raise ValueError("Chainlink route anchor contains no AnswerUpdated events")
+
+    return ChainlinkRouteAnchor(
+        oracle_proxy=oracle_proxy,
+        chainlink_aggregator=chainlink_aggregator,
+        anchor_block=anchor_block,
+        evidence_sha256=digest,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--market", choices=sorted(MARKETS), default="BNBUSD")
@@ -55,11 +128,34 @@ def build_parser() -> argparse.ArgumentParser:
             "the Prediction oracle proxy and its underlying aggregator were stable"
         ),
     )
+    parser.add_argument(
+        "--chainlink-route-anchor-evidence",
+        type=Path,
+        help=(
+            "persisted successful later-window Chainlink evidence whose proven route "
+            "will be extended backward using stateless change-event scans"
+        ),
+    )
     return parser
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    market = str(args.market)
+    anchor_path = cast(Path | None, args.chainlink_route_anchor_evidence)
+    if anchor_path is not None and not bool(args.include_chainlink):
+        parser.error("--chainlink-route-anchor-evidence requires --include-chainlink")
+
+    try:
+        route_anchor = (
+            None
+            if anchor_path is None
+            else load_chainlink_route_anchor(anchor_path, market=market)
+        )
+    except (OSError, ValueError) as exc:
+        parser.error(f"invalid Chainlink route anchor evidence: {exc}")
+
     attempts: list[dict[str, object]] = []
     success: dict[str, object] | None = None
 
@@ -82,13 +178,14 @@ def main() -> int:
                     backoff_s=PUBLIC_RPC_BACKOFF_S,
                     min_interval_s=PUBLIC_RPC_MIN_INTERVAL_S,
                 ),
-                MARKETS[str(args.market)],
+                MARKETS[market],
                 args.database,
                 start_timestamp=args.start_timestamp,
                 end_timestamp=args.end_timestamp,
                 confirmations=args.confirmations,
                 chunk_size=args.chunk_size,
                 include_chainlink=args.include_chainlink,
+                chainlink_route_anchor=route_anchor,
             )
             if args.include_chainlink and not report.chainlink_collected:
                 raise RuntimeError(
@@ -122,8 +219,8 @@ def main() -> int:
         and success["report"].get("chainlink_collected") is True
     )
     payload = {
-        "evidence_version": 5,
-        "market": str(args.market),
+        "evidence_version": 6,
+        "market": market,
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
         "success": success is not None,
@@ -133,6 +230,16 @@ def main() -> int:
         "archive_state_required": False,
         "chainlink_requested": bool(args.include_chainlink),
         "chainlink_collected": chainlink_collected,
+        "chainlink_route_anchor": None if route_anchor is None else route_anchor.as_dict(),
+        "route_proof_mode": (
+            "none"
+            if not bool(args.include_chainlink)
+            else (
+                "window_end_state"
+                if route_anchor is None
+                else "persisted_evidence_anchor_backward_change_scan"
+            )
+        ),
         "signing_enabled": False,
         "live_broadcast": False,
     }
