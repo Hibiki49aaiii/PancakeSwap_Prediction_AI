@@ -5,11 +5,14 @@ from typing import Any
 
 import pytest
 
-from pancake_prediction.abi import PREDICTION_EVENTS
+from pancake_prediction.abi import CHAINLINK_EVENTS, PREDICTION_EVENTS
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.public_collector import PublicHistoricalCollector
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
+
+ORACLE_PROXY = "0x" + "33" * 20
+CHAINLINK_AGGREGATOR = "0x" + "55" * 20
 
 
 def _block(hash_suffix: str = "aa", *, number: int = 100) -> dict[str, Any]:
@@ -38,6 +41,10 @@ def _log(
         "topics": [topic],
         "data": "0x",
     }
+
+
+def _word(value: int) -> str:
+    return value.to_bytes(32, "big", signed=False).hex()
 
 
 class TopicLimitRpc:
@@ -74,10 +81,18 @@ class TopicLimitRpc:
         return [_log(topic, index)]
 
     def get_code(self, address: str, block: int | str = "latest") -> str:
+        del address, block
         return "0x01"
 
     def eth_call(self, to: str, data: str, block: int | str = "latest") -> str:
-        return "0x" + "00" * 12 + "33" * 20
+        del data, block
+        if to.lower() == MARKETS["BNBUSD"].address.lower():
+            address = ORACLE_PROXY
+        elif to.lower() == ORACLE_PROXY:
+            address = CHAINLINK_AGGREGATOR
+        else:
+            address = ORACLE_PROXY
+        return "0x" + "00" * 12 + address[2:]
 
 
 class SingleTopicLimitRpc(TopicLimitRpc):
@@ -89,6 +104,7 @@ class SingleTopicLimitRpc(TopicLimitRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
+        del address, from_block, to_block
         self.calls.append(topic0s)
         raise RpcError("eth_getLogs: -32005 limit exceeded")
 
@@ -108,6 +124,7 @@ class PartitionForkRpc(TopicLimitRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
+        del address
         assert from_block == to_block == 100
         self.calls.append(topic0s)
         self.last_topics = topic0s
@@ -126,7 +143,7 @@ class ExplicitFilterRpc(TopicLimitRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        assert address
+        del address
         assert from_block == to_block == 100
         self.calls.append(topic0s)
         if topic0s is None:
@@ -143,7 +160,10 @@ class StableOracleProofRpc(TopicLimitRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        assert address.lower() == MARKETS["BNBUSD"].address.lower()
+        assert address.lower() in {
+            MARKETS["BNBUSD"].address.lower(),
+            ORACLE_PROXY,
+        }
         assert from_block == to_block == 100
         self.calls.append(topic0s)
         return []
@@ -158,9 +178,11 @@ class ChangingOracleProofRpc(StableOracleProofRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        assert address.lower() == MARKETS["BNBUSD"].address.lower()
         assert from_block == to_block == 100
         self.calls.append(topic0s)
+        if address.lower() == ORACLE_PROXY:
+            return []
+        assert address.lower() == MARKETS["BNBUSD"].address.lower()
         new_oracle_spec = next(
             spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
         )
@@ -168,6 +190,24 @@ class ChangingOracleProofRpc(StableOracleProofRpc):
         log["address"] = MARKETS["BNBUSD"].address
         log["data"] = "0x" + "00" * 12 + "44" * 20
         return [log]
+
+
+class ChangingAggregatorProofRpc(StableOracleProofRpc):
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert from_block == to_block == 100
+        self.calls.append(topic0s)
+        if address.lower() == MARKETS["BNBUSD"].address.lower():
+            return []
+        assert address.lower() == ORACLE_PROXY
+        assert topic0s is not None and len(topic0s) == 1
+        return [_log(topic0s[0], 0)]
 
 
 class PostReadOracleChangeRpc(StableOracleProofRpc):
@@ -189,10 +229,12 @@ class PostReadOracleChangeRpc(StableOracleProofRpc):
         *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
-        assert address.lower() == MARKETS["BNBUSD"].address.lower()
         assert from_block == 100
         assert to_block == 101
         self.calls.append(topic0s)
+        if address.lower() == ORACLE_PROXY:
+            return []
+        assert address.lower() == MARKETS["BNBUSD"].address.lower()
         new_oracle_spec = next(
             spec for spec in PREDICTION_EVENTS if spec.name == "NewOracle"
         )
@@ -207,6 +249,26 @@ class PostReadOracleChangeRpc(StableOracleProofRpc):
         return [log]
 
 
+class ChainlinkFeedRpc(TopicLimitRpc):
+    def get_logs(
+        self,
+        address: str,
+        from_block: int,
+        to_block: int,
+        *,
+        topic0s: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        assert address.lower() == CHAINLINK_AGGREGATOR
+        assert from_block == to_block == 100
+        assert topic0s == (CHAINLINK_EVENTS[0].topic0,)
+        answer = 600 * 10**8
+        log = _log(CHAINLINK_EVENTS[0].topic0, 0)
+        log["address"] = CHAINLINK_AGGREGATOR
+        log["topics"] = [CHAINLINK_EVENTS[0].topic0, "0x" + _word(answer), "0x" + _word(7)]
+        log["data"] = "0x" + _word(100)
+        return [log]
+
+
 def _collector(tmp_path: Path, rpc: TopicLimitRpc) -> PublicHistoricalCollector:
     store = EventStore(tmp_path / "events.sqlite3")
     store.initialize()
@@ -216,14 +278,12 @@ def _collector(tmp_path: Path, rpc: TopicLimitRpc) -> PublicHistoricalCollector:
 def test_public_collector_splits_single_block_topic_overload(tmp_path: Path) -> None:
     rpc = TopicLimitRpc()
     collector = _collector(tmp_path, rpc)
-
     logs, blocks = collector._fetch_consistent_chunk(
         address="0x" + "22" * 20,
         start=100,
         end=100,
         topic0s=("0x1", "0x2", "0x3", "0x4"),
     )
-
     assert [log["topics"][0] for log in logs] == ["0x1", "0x2", "0x3", "0x4"]
     assert tuple(blocks) == (100,)
     assert ("0x1",) in rpc.calls
@@ -233,9 +293,7 @@ def test_public_collector_splits_single_block_topic_overload(tmp_path: Path) -> 
 def test_public_collector_fails_closed_when_one_topic_is_still_over_limit(
     tmp_path: Path,
 ) -> None:
-    rpc = SingleTopicLimitRpc()
-    collector = _collector(tmp_path, rpc)
-
+    collector = _collector(tmp_path, SingleTopicLimitRpc())
     with pytest.raises(RpcError, match="limit exceeded"):
         collector._fetch_consistent_chunk(
             address="0x" + "22" * 20,
@@ -246,9 +304,7 @@ def test_public_collector_fails_closed_when_one_topic_is_still_over_limit(
 
 
 def test_public_collector_rejects_partition_block_hash_disagreement(tmp_path: Path) -> None:
-    rpc = PartitionForkRpc()
-    collector = _collector(tmp_path, rpc)
-
+    collector = _collector(tmp_path, PartitionForkRpc())
     with pytest.raises(RpcError, match="block mismatch"):
         collector._fetch_consistent_chunk(
             address="0x" + "22" * 20,
@@ -261,7 +317,6 @@ def test_public_collector_rejects_partition_block_hash_disagreement(tmp_path: Pa
 def test_public_collector_turns_unfiltered_request_into_known_topics(tmp_path: Path) -> None:
     rpc = ExplicitFilterRpc()
     collector = _collector(tmp_path, rpc)
-
     inserted, oracles = collector._collect_address_logs(
         chain_id=56,
         address="0x" + "22" * 20,
@@ -272,37 +327,36 @@ def test_public_collector_turns_unfiltered_request_into_known_topics(tmp_path: P
         to_block=100,
         topic0s=None,
     )
-
     assert inserted == 0
     assert oracles == set()
     assert rpc.calls == [tuple(spec.topic0 for spec in PREDICTION_EVENTS)]
 
 
-def test_public_collector_proves_stable_latest_oracle_without_archive_state(
+def test_public_collector_proves_stable_proxy_and_aggregator_without_archive_state(
     tmp_path: Path,
 ) -> None:
     collector = _collector(tmp_path, StableOracleProofRpc())
-
     proof = collector.prove_latest_oracle_stable_since(
         MARKETS["BNBUSD"],
         from_block=100,
         through_block=100,
     )
-
     assert proof == {
-        "oracle": "0x" + "33" * 20,
+        "oracle": ORACLE_PROXY,
+        "chainlink_aggregator": CHAINLINK_AGGREGATOR,
         "from_block": 100,
         "through_block": 100,
         "new_oracle_events": 0,
-        "method": "latest_oracle_then_stateless_no_NewOracle_through_post_read_head",
+        "aggregator_confirmed_events": 0,
+        "method": (
+            "latest_prediction_oracle_and_chainlink_aggregator_then_"
+            "stateless_change_scan_through_post_read_head"
+        ),
     }
 
 
-def test_public_collector_rejects_latest_oracle_proof_after_oracle_change(
-    tmp_path: Path,
-) -> None:
+def test_public_collector_rejects_prediction_oracle_change_repeatably(tmp_path: Path) -> None:
     collector = _collector(tmp_path, ChangingOracleProofRpc())
-
     for _ in range(2):
         with pytest.raises(RpcError, match="NewOracle"):
             collector.prove_latest_oracle_stable_since(
@@ -312,14 +366,44 @@ def test_public_collector_rejects_latest_oracle_proof_after_oracle_change(
             )
 
 
+def test_public_collector_rejects_chainlink_aggregator_change(tmp_path: Path) -> None:
+    collector = _collector(tmp_path, ChangingAggregatorProofRpc())
+    with pytest.raises(RpcError, match="AggregatorConfirmed"):
+        collector.prove_latest_oracle_stable_since(
+            MARKETS["BNBUSD"],
+            from_block=100,
+            through_block=100,
+        )
+
+
 def test_public_collector_rejects_oracle_change_after_latest_read_before_head(
     tmp_path: Path,
 ) -> None:
     collector = _collector(tmp_path, PostReadOracleChangeRpc())
-
     with pytest.raises(RpcError, match="NewOracle"):
         collector.prove_latest_oracle_stable_since(
             MARKETS["BNBUSD"],
             from_block=100,
             through_block=100,
         )
+
+
+def test_public_collector_collects_answer_updates_from_underlying_aggregator(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, ChainlinkFeedRpc())
+    report = collector.collect_chainlink_feed(
+        MARKETS["BNBUSD"],
+        aggregator_address=CHAINLINK_AGGREGATOR,
+        from_block=100,
+        to_block=100,
+    )
+    assert report["chainlink_events_inserted"] == 1
+    with collector.store.connect() as conn:
+        row = conn.execute(
+            "SELECT address,event_name,decoded_json FROM events WHERE source='chainlink'"
+        ).fetchone()
+    assert row is not None
+    assert row["address"] == CHAINLINK_AGGREGATOR
+    assert row["event_name"] == "AnswerUpdated"
+    assert '"current":60000000000' in str(row["decoded_json"])
