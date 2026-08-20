@@ -45,28 +45,43 @@ jobs:
             --end-timestamp 1787148000 \
             --confirmations 64 \
             --chunk-size 2000
-      - name: Persist smoke evidence
+      - name: Persist latest and last-success smoke evidence
         if: always()
         env:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
           cp artifacts/recent-public-bootstrap-smoke-2026-08-19.json \
-            evidence/recent-public-bootstrap-smoke-2026-08-19.json
+            evidence/recent-public-bootstrap-smoke-2026-08-19-latest.json
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          path = Path("evidence/recent-public-bootstrap-smoke-2026-08-19.json")
+          path = Path("evidence/recent-public-bootstrap-smoke-2026-08-19-latest.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
           payload["workflow_outcome"] = os.environ["SMOKE_OUTCOME"]
+          payload["evidence_role"] = "latest_attempt"
           payload["purpose"] = "public_rpc_collector_smoke_only"
           payload["profitability_gate_eligible"] = False
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add evidence/recent-public-bootstrap-smoke-2026-08-19.json
+          git add evidence/recent-public-bootstrap-smoke-2026-08-19-latest.json
+          if [ "$SMOKE_OUTCOME" = success ]; then
+            cp evidence/recent-public-bootstrap-smoke-2026-08-19-latest.json \
+              evidence/recent-public-bootstrap-smoke-2026-08-19-last-success.json
+            python - <<'PY'
+            import json
+            from pathlib import Path
+
+            path = Path("evidence/recent-public-bootstrap-smoke-2026-08-19-last-success.json")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["evidence_role"] = "last_success"
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            PY
+            git add evidence/recent-public-bootstrap-smoke-2026-08-19-last-success.json
+          fi
           if git diff --cached --quiet; then
             echo 'Public bootstrap smoke evidence unchanged.'
           else
@@ -88,6 +103,6 @@ jobs:
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         run: |
           if [ "$SMOKE_OUTCOME" != success ]; then
-            echo 'Public canonical smoke failed; inspect persisted evidence.' >&2
+            echo 'Public canonical smoke failed; inspect latest evidence.' >&2
             exit 2
           fi
