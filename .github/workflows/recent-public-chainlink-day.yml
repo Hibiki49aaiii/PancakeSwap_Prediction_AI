@@ -48,6 +48,7 @@ jobs:
             --chunk-size 2000 \
             --include-chainlink
       - name: Upload one-day artifacts
+        id: artifact
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
@@ -55,10 +56,10 @@ jobs:
           path: |
             artifacts/recent-public-chainlink-2026-08-18-to-19.json
             artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
       - name: Persist latest attempt evidence
-        if: always() && !cancelled()
+        if: always() && !cancelled() && steps.artifact.outcome == 'success'
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
           SOURCE_RUN_ID: ${{ github.run_id }}
@@ -111,8 +112,9 @@ jobs:
         if: always() && !cancelled()
         env:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
         run: |
-          if [ "$BOOTSTRAP_OUTCOME" != success ]; then
-            echo 'One-day public Prediction + Chainlink bootstrap failed; inspect latest evidence.' >&2
+          if [ "$BOOTSTRAP_OUTCOME" != success ] || [ "$ARTIFACT_OUTCOME" != success ]; then
+            echo "One-day public Prediction + Chainlink gate failed: bootstrap=$BOOTSTRAP_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
             exit 2
           fi
