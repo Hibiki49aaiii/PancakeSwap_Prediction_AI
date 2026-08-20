@@ -2,6 +2,11 @@
   "archive_state_required": false,
   "attempts": [
     {
+      "endpoint": "https://fast.bsc-rpc.com",
+      "error": "RpcError: RPC request failed after 3 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success"
@@ -24,7 +29,7 @@
         "confirmations": 64,
         "from_block": 116844485,
         "from_block_timestamp": 1787140800,
-        "head_block": 116982205,
+        "head_block": 116983474,
         "requested_end_timestamp": 1787148000,
         "requested_start_timestamp": 1787140800,
         "to_block": 116860482,
