@@ -10,15 +10,16 @@ from pancake_prediction.rpc import JsonRpcClient
 
 # BNB Chain documents that eth_getLogs is disabled on its public Mainnet
 # dataseed endpoints and recommends third-party providers for log workloads.
-# Keep the official seeds as diagnostic fallbacks, but prefer current public
-# third-party endpoints for this read-only historical-log bootstrap.
+# Keep the official seeds as diagnostic fallbacks, but prefer endpoints that
+# current repository evidence has actually shown can return confirmed recent
+# Prediction logs from the GitHub runner.
 PUBLIC_BSC_ENDPOINTS = (
+    "https://rpc-bsc.48.club",
     "https://bsc-pokt.nodies.app",
     "https://bsc.blockpi.network/v1/rpc/public",
     "https://bsc.drpc.org",
     "https://bnb.api.onfinality.io/public",
     "https://bsc.meowrpc.com",
-    "https://rpc-bsc.48.club",
     "https://bsc-mainnet.public.blastapi.io",
     "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
     "https://bsc-dataseed.bnbchain.org",
