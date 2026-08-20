@@ -1,0 +1,16 @@
+{
+  "bootstrap": null,
+  "endpoint": "https://bsc-mainnet.public.blastapi.io",
+  "error": "RpcError: RPC request failed after 6 attempts: eth_getLogs: HTTP Error 403: Forbidden",
+  "evidence_version": 1,
+  "from_block": 10333825,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "one_block_log_count": null,
+  "oracle_history": null,
+  "profitability_gate_eligible": false,
+  "signing_enabled": false,
+  "source_sha": "bf40f2df1db20f01cd4e73da69ceb40625bf770b",
+  "success": false,
+  "to_block": 10335825
+}
