@@ -169,6 +169,15 @@ class StableOracleProofRpc(TopicLimitRpc):
         return []
 
 
+class WindowBoundOracleProofRpc(StableOracleProofRpc):
+    def block_number(self) -> int:
+        raise AssertionError("fixed-window proof must not read the current head")
+
+    def eth_call(self, to: str, data: str, block: int | str = "latest") -> str:
+        assert block == 100
+        return super().eth_call(to, data, block)
+
+
 class ChangingOracleProofRpc(StableOracleProofRpc):
     def get_logs(
         self,
@@ -330,6 +339,54 @@ def test_public_collector_turns_unfiltered_request_into_known_topics(tmp_path: P
     assert inserted == 0
     assert oracles == set()
     assert rpc.calls == [tuple(spec.topic0 for spec in PREDICTION_EVENTS)]
+
+
+def test_public_collector_proves_fixed_window_route_from_window_end_state(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, WindowBoundOracleProofRpc())
+    proof = collector.prove_oracle_stable_in_range(
+        MARKETS["BNBUSD"],
+        from_block=100,
+        through_block=100,
+    )
+    assert proof == {
+        "oracle": ORACLE_PROXY,
+        "chainlink_aggregator": CHAINLINK_AGGREGATOR,
+        "from_block": 100,
+        "through_block": 100,
+        "state_block": 100,
+        "new_oracle_events": 0,
+        "aggregator_confirmed_events": 0,
+        "method": (
+            "window_end_prediction_oracle_and_chainlink_aggregator_then_"
+            "stateless_change_scan_within_source_window"
+        ),
+    }
+
+
+def test_public_collector_fixed_window_rejects_prediction_oracle_change(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, ChangingOracleProofRpc())
+    with pytest.raises(RpcError, match="NewOracle"):
+        collector.prove_oracle_stable_in_range(
+            MARKETS["BNBUSD"],
+            from_block=100,
+            through_block=100,
+        )
+
+
+def test_public_collector_fixed_window_rejects_chainlink_aggregator_change(
+    tmp_path: Path,
+) -> None:
+    collector = _collector(tmp_path, ChangingAggregatorProofRpc())
+    with pytest.raises(RpcError, match="AggregatorConfirmed"):
+        collector.prove_oracle_stable_in_range(
+            MARKETS["BNBUSD"],
+            from_block=100,
+            through_block=100,
+        )
 
 
 def test_public_collector_proves_stable_proxy_and_aggregator_without_archive_state(
