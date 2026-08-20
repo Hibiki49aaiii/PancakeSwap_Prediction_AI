@@ -24,7 +24,7 @@
         "confirmations": 64,
         "from_block": 116844485,
         "from_block_timestamp": 1787140800,
-        "head_block": 116981281,
+        "head_block": 116981650,
         "requested_end_timestamp": 1787148000,
         "requested_start_timestamp": 1787140800,
         "to_block": 116860482,
@@ -52,7 +52,7 @@
         "method": "latest_oracle_then_stateless_no_NewOracle_through_post_read_head",
         "new_oracle_events": 0,
         "oracle": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee",
-        "through_block": 116981294
+        "through_block": 116981666
       },
       "quality": {
         "bets": 559,
