@@ -60,6 +60,7 @@ def _inspect_candidate(
     *,
     market: str,
     block_number: int,
+    min_seconds_before_lock: int,
 ) -> ForkPoint | None:
     target = MARKETS[market].address
     block = rpc.block(block_number)
@@ -87,6 +88,8 @@ def _inspect_candidate(
         return None
     if not start_timestamp < block_timestamp < lock_timestamp:
         return None
+    if lock_timestamp - block_timestamp < min_seconds_before_lock:
+        return None
     return ForkPoint(
         block_number=block_number,
         block_timestamp=block_timestamp,
@@ -102,6 +105,7 @@ def discover_fork_block(
     market: str,
     lookback_blocks: int,
     confirmation_lag: int,
+    min_seconds_before_lock: int = 0,
 ) -> ForkPoint:
     if market not in MARKETS:
         raise ValueError(f"unsupported market: {market}")
@@ -109,6 +113,8 @@ def discover_fork_block(
         raise ValueError("lookback_blocks must be positive")
     if confirmation_lag < 1:
         raise ValueError("confirmation_lag must be positive")
+    if min_seconds_before_lock < 0:
+        raise ValueError("min_seconds_before_lock must be non-negative")
     if rpc.chain_id() != CHAIN_ID_BSC:
         raise RuntimeError("fork source RPC is not BSC mainnet chain id 56")
 
@@ -122,11 +128,17 @@ def discover_fork_block(
             rpc,
             market=market,
             block_number=block_number,
+            min_seconds_before_lock=min_seconds_before_lock,
         )
         if point is not None:
             return point
 
+    headroom_text = (
+        ""
+        if min_seconds_before_lock == 0
+        else f" with at least {min_seconds_before_lock}s before lock"
+    )
     raise RuntimeError(
         "no confirmed bettable Prediction state found "
-        f"in the last {lookback_blocks} blocks"
+        f"in the last {lookback_blocks} blocks{headroom_text}"
     )
