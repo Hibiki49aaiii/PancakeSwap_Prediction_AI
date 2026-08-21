@@ -16,6 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--market", choices=sorted(MARKETS), default="BNBUSD")
     parser.add_argument("--lookback-blocks", type=int, default=128)
     parser.add_argument("--confirmation-lag", type=int, default=4)
+    parser.add_argument(
+        "--min-seconds-before-lock",
+        type=int,
+        default=0,
+        help="require this much source-block timestamp headroom before round lock",
+    )
     return parser
 
 
@@ -28,6 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         market=str(args.market),
         lookback_blocks=int(args.lookback_blocks),
         confirmation_lag=int(args.confirmation_lag),
+        min_seconds_before_lock=int(args.min_seconds_before_lock),
     )
     print(point.block_number)
     return 0
