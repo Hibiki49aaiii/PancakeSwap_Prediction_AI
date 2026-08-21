@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -207,8 +207,10 @@ def test_load_chainlink_route_anchor_binds_exact_evidence_bytes(tmp_path: Path) 
 
 def test_load_chainlink_route_anchor_fails_closed_on_route_disagreement(tmp_path: Path) -> None:
     payload = _anchor_payload()
-    report = payload["selected"]["report"]  # type: ignore[index]
-    report["collection"]["chainlink_event_addresses"] = ["0x" + "66" * 20]  # type: ignore[index]
+    selected = cast(dict[str, object], payload["selected"])
+    report = cast(dict[str, object], selected["report"])
+    collection = cast(dict[str, object], report["collection"])
+    collection["chainlink_event_addresses"] = ["0x" + "66" * 20]
     path = tmp_path / "anchor.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="aggregator disagrees"):
