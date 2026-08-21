@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pancake_prediction.campaign_sensitivity as campaign_sensitivity
 from pancake_prediction.campaign_evaluation import EconomicCampaignConfig
-from pancake_prediction.campaign_sensitivity import parse_sensitivity_scenarios
 
 
 SCENARIO_PATH = Path("config/recent-economic-sensitivity-aug18.json")
@@ -42,9 +42,16 @@ def _base_config() -> EconomicCampaignConfig:
     )
 
 
-def test_aug18_robustness_scenarios_are_parseable_and_exact() -> None:
+def _load_scenarios() -> tuple[campaign_sensitivity.EconomicSensitivityScenario, ...]:
     payload = json.loads(SCENARIO_PATH.read_text(encoding="utf-8"))
-    scenarios = parse_sensitivity_scenarios(payload, base_config=_base_config())
+    return campaign_sensitivity.parse_sensitivity_scenarios(
+        payload,
+        base_config=_base_config(),
+    )
+
+
+def test_aug18_robustness_scenarios_are_parseable_and_exact() -> None:
+    scenarios = _load_scenarios()
 
     assert len(scenarios) == 8
     assert {scenario.name for scenario in scenarios} == EXPECTED_NAMES
@@ -52,8 +59,7 @@ def test_aug18_robustness_scenarios_are_parseable_and_exact() -> None:
 
 
 def test_aug18_robustness_baseline_matches_economic_smoke() -> None:
-    payload = json.loads(SCENARIO_PATH.read_text(encoding="utf-8"))
-    scenarios = parse_sensitivity_scenarios(payload, base_config=_base_config())
+    scenarios = _load_scenarios()
     by_name = {scenario.name: scenario.config for scenario in scenarios}
     baseline = by_name["baseline"]
 
@@ -65,8 +71,7 @@ def test_aug18_robustness_baseline_matches_economic_smoke() -> None:
 
 
 def test_aug18_combined_stress_is_stricter_than_baseline() -> None:
-    payload = json.loads(SCENARIO_PATH.read_text(encoding="utf-8"))
-    scenarios = parse_sensitivity_scenarios(payload, base_config=_base_config())
+    scenarios = _load_scenarios()
     by_name = {scenario.name: scenario.config for scenario in scenarios}
     baseline = by_name["baseline"]
     stress = by_name["combined-stress"]
