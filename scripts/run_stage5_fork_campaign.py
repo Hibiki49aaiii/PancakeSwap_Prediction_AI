@@ -94,13 +94,18 @@ def _finalize(
     for _ in range(max_extra_blocks):
         if current.state == IntentState.FINALIZED:
             return current
-        if current.state != IntentState.MINED:
+        if current.state not in {IntentState.SUBMITTED, IntentState.MINED}:
             raise RuntimeError(
                 f"intent {intent_id} did not reach a mineable state: {current.state}"
             )
         coordinator.rpc.mine()
         current = coordinator.reconcile(intent_id)
-    raise RuntimeError(f"intent {intent_id} did not finalize")
+    if current.state == IntentState.FINALIZED:
+        return current
+    raise RuntimeError(
+        f"intent {intent_id} did not finalize after {max_extra_blocks} local-fork blocks: "
+        f"{current.state}"
+    )
 
 
 def _submit_and_finalize(
@@ -242,6 +247,9 @@ def _observe_reorg_recovery(
         raise RuntimeError("reorg scenario transaction was not submitted")
     tx_hash = submitted.current_tx_hash
     mined = coordinator.reconcile(intent.id)
+    if mined.state == IntentState.SUBMITTED:
+        rpc.mine()
+        mined = coordinator.reconcile(intent.id)
     if mined.state != IntentState.MINED:
         raise RuntimeError(f"reorg scenario did not first reach MINED: {mined.state}")
 
