@@ -8,12 +8,12 @@ from typing import Any, cast
 import pytest
 
 from pancake_prediction.abi import PREDICTION_EVENTS
+from pancake_prediction.chainlink_anchor import load_chainlink_route_anchor
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.public_collector import PublicHistoricalCollector
 from pancake_prediction.recent_bootstrap import ChainlinkRouteAnchor
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
-from scripts.run_recent_public_bootstrap import load_chainlink_route_anchor
 
 ORACLE_PROXY = "0x" + "33" * 20
 CHAINLINK_AGGREGATOR = "0x" + "55" * 20
