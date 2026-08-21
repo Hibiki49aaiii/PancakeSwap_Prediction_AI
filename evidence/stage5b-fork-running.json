@@ -1,11 +1,12 @@
 {
   "evidence_version": 1,
   "live_broadcast": false,
+  "min_seconds_before_lock": 60,
   "purpose": "observed_stage5b_loopback_bsc_fork_gate",
   "signing_enabled": false,
-  "source_event_sha": "fc28b5e5ccb0eb080b42b8d5ee1b829e759b0f58",
-  "source_run_id": 32493667093,
-  "source_sha": "fc28b5e5ccb0eb080b42b8d5ee1b829e759b0f58",
+  "source_event_sha": "44e6fb96ed4d0c5b20c96852a1174ba13bfd1c13",
+  "source_run_id": 32493832756,
+  "source_sha": "44e6fb96ed4d0c5b20c96852a1174ba13bfd1c13",
   "state": "running",
   "transaction_endpoint_scope": "loopback_local_fork_only"
 }
