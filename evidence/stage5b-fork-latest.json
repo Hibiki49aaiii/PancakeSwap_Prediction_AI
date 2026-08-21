@@ -1,0 +1,34 @@
+{
+  "campaign_evidence": null,
+  "campaign_summary": null,
+  "errors": {
+    "campaign": "Traceback (most recent call last):\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/scripts/run_stage5_fork_campaign.py\", line 456, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/scripts/run_stage5_fork_campaign.py\", line 442, in main\n    result = run_campaign(\n             ^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/scripts/run_stage5_fork_campaign.py\", line 341, in run_campaign\n    _submit_and_finalize(store, rpc, bull)\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/scripts/run_stage5_fork_campaign.py\", line 120, in _submit_and_finalize\n    return _finalize(coordinator, intent.id)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/PancakeSwap_Prediction_AI/PancakeSwap_Prediction_AI/scripts/run_stage5_fork_campaign.py\", line 98, in _finalize\n    raise RuntimeError(\nRuntimeError: intent 1 did not reach a mineable state: submitted",
+    "fork_discovery": null,
+    "start_loopback_fork": null,
+    "verification": null
+  },
+  "evidence_role": "latest_attempt",
+  "evidence_version": 1,
+  "fork_block_number": 117250402,
+  "interpretation": "Observed execution-readiness evidence is limited to an impersonated-account Anvil fork bound to 127.0.0.1. It grants no signing authority and is not funded/mainnet execution evidence.",
+  "live_broadcast": false,
+  "min_seconds_before_lock": 60,
+  "purpose": "observed_stage5b_loopback_bsc_fork_gate",
+  "signing_enabled": false,
+  "source_event_sha": "44e6fb96ed4d0c5b20c96852a1174ba13bfd1c13",
+  "source_rpc_role": "read_only_bsc_fork_source",
+  "source_run_id": 32493832756,
+  "source_sha": "44e6fb96ed4d0c5b20c96852a1174ba13bfd1c13",
+  "stage5b_gate_satisfied": false,
+  "step_outcomes": {
+    "campaign": "failure",
+    "fork_discovery": "success",
+    "foundry": "success",
+    "start_loopback_fork": "success",
+    "toolchain": "success",
+    "verification": "skipped"
+  },
+  "success": false,
+  "transaction_endpoint_scope": "loopback_local_fork_only",
+  "verification": null
+}
