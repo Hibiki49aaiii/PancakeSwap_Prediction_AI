@@ -242,14 +242,16 @@ def _observe_reorg_recovery(
     require_prediction_bet_ready(rpc, intent)
     snapshot_id = rpc.snapshot()
     coordinator = ForkExecutionCoordinator(store, rpc, confirmations=2)
-    submitted = coordinator.submit(intent.id)
-    if submitted.state != IntentState.SUBMITTED or submitted.current_tx_hash is None:
-        raise RuntimeError("reorg scenario transaction was not submitted")
-    tx_hash = submitted.current_tx_hash
-    mined = coordinator.reconcile(intent.id)
-    if mined.state == IntentState.SUBMITTED:
+    rpc.set_automine(False)
+    try:
+        submitted = coordinator.submit(intent.id)
+        if submitted.state != IntentState.SUBMITTED or submitted.current_tx_hash is None:
+            raise RuntimeError("reorg scenario transaction was not submitted")
+        tx_hash = submitted.current_tx_hash
         rpc.mine()
         mined = coordinator.reconcile(intent.id)
+    finally:
+        rpc.set_automine(True)
     if mined.state != IntentState.MINED:
         raise RuntimeError(f"reorg scenario did not first reach MINED: {mined.state}")
 
