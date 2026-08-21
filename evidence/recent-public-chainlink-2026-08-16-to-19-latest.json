@@ -1,0 +1,124 @@
+{
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": "RpcError: block not found: 115168148",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-pokt.nodies.app",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.drpc.org",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bnb.api.onfinality.io/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.meowrpc.com",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-mainnet.public.blastapi.io",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 521: <none>",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.bnbchain.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed-public.bnbchain.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.nariox.org",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.defibit.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-dataseed.ninicoin.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc.nodereal.io",
+      "error": "RpcResponseError: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://bsc-rpc.publicnode.com",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "endpoint": "https://public.1rpc.io/bnb",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    }
+  ],
+  "bootstrap_error_tail": null,
+  "chainlink_collected": false,
+  "chainlink_requested": true,
+  "chainlink_route_anchor": {
+    "anchor_block": 116844485,
+    "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+    "evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+    "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+  },
+  "evidence_role": "latest_attempt",
+  "evidence_version": 6,
+  "full_historical_gate_satisfied": false,
+  "gate_success": false,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "profitability_gate_eligible": false,
+  "purpose": "public_recent_prediction_chainlink_three_day",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1786838400,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "timeout_s": 20.0
+  },
+  "selected": null,
+  "semantic_success": false,
+  "signing_enabled": false,
+  "source_event_sha": "d1c8bf083f3338eef89ece956f58593e39d78945",
+  "source_run_id": 32503882364,
+  "source_sha": "d1c8bf083f3338eef89ece956f58593e39d78945",
+  "step_outcomes": {
+    "artifact": "success",
+    "bootstrap": "failure",
+    "semantics": "failure"
+  },
+  "success": false,
+  "workflow_outcome": "failure"
+}
