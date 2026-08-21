@@ -32,6 +32,7 @@ env:
   BSC_FORK_SOURCE_RPC_URL: https://bsc-dataseed.bnbchain.org
   LOCAL_FORK_RPC_URL: http://127.0.0.1:8545
   STAGE5_EVIDENCE_VERSION: "3"
+  STAGE5_MIN_SECONDS_BEFORE_LOCK: "60"
 
 jobs:
   observed-fork-campaign:
@@ -76,6 +77,7 @@ jobs:
               "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
               "source_sha": os.environ["SOURCE_SHA"],
               "source_event_sha": os.environ["SOURCE_EVENT_SHA"],
+              "min_seconds_before_lock": int(os.environ["STAGE5_MIN_SECONDS_BEFORE_LOCK"]),
               "signing_enabled": False,
               "live_broadcast": False,
               "transaction_endpoint_scope": "loopback_local_fork_only",
@@ -113,7 +115,7 @@ jobs:
           anvil --version
           echo "anvil_version=$(anvil --version | head -n 1)" >> "$GITHUB_OUTPUT"
 
-      - name: Discover freshest confirmed bettable Prediction fork block
+      - name: Discover confirmed Prediction fork block with lock headroom
         id: fork
         continue-on-error: true
         shell: bash
@@ -125,6 +127,7 @@ jobs:
             --market BNBUSD \
             --lookback-blocks 128 \
             --confirmation-lag 4 \
+            --min-seconds-before-lock "$STAGE5_MIN_SECONDS_BEFORE_LOCK" \
             2> >(tee artifacts/stage5b-discovery.err >&2) \
             | tee artifacts/fork-block.txt
           FORK_BLOCK="$(tr -d '[:space:]' < artifacts/fork-block.txt)"
@@ -295,24 +298,19 @@ jobs:
               "source_run_id": int(run_id) if run_id.isdigit() else None,
               "source_event_sha": os.environ.get("SOURCE_EVENT_SHA"),
               "source_sha": os.environ.get("SOURCE_SHA"),
+              "min_seconds_before_lock": int(os.environ["STAGE5_MIN_SECONDS_BEFORE_LOCK"]),
               "fork_block_number": (
                   int(fork_block_raw) if fork_block_raw.isdigit() else None
               ),
               "step_outcomes": outcomes,
               "campaign_evidence": load_json("artifacts/stage5b-evidence.json"),
-              "campaign_summary": load_json(
-                  "artifacts/stage5b-campaign-summary.json"
-              ),
+              "campaign_summary": load_json("artifacts/stage5b-campaign-summary.json"),
               "verification": verification,
               "errors": {
                   "fork_discovery": error_tail("artifacts/stage5b-discovery.err"),
-                  "start_loopback_fork": error_tail(
-                      "artifacts/stage5b-start-fork.err"
-                  ),
+                  "start_loopback_fork": error_tail("artifacts/stage5b-start-fork.err"),
                   "campaign": error_tail("artifacts/stage5b-campaign.err"),
-                  "verification": error_tail(
-                      "artifacts/stage5b-verification.err"
-                  ),
+                  "verification": error_tail("artifacts/stage5b-verification.err"),
               },
               "interpretation": (
                   "Observed execution-readiness evidence is limited to an impersonated-account "
@@ -335,26 +333,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/stage5b-fork-latest.json
-          if python - <<'PY'
-          import json
-          from pathlib import Path
-          payload = json.loads(Path("evidence/stage5b-fork-latest.json").read_text())
-          raise SystemExit(0 if payload.get("success") is True else 1)
-          PY
-          then
+          if python -c 'import json, pathlib; payload=json.loads(pathlib.Path("evidence/stage5b-fork-latest.json").read_text()); raise SystemExit(0 if payload.get("success") is True else 1)'; then
             cp evidence/stage5b-fork-latest.json evidence/stage5b-fork-last-success.json
-            python - <<'PY'
-            import json
-            from pathlib import Path
-
-            path = Path("evidence/stage5b-fork-last-success.json")
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["evidence_role"] = "last_success"
-            path.write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            PY
+            python -c 'import json, pathlib; path=pathlib.Path("evidence/stage5b-fork-last-success.json"); payload=json.loads(path.read_text()); payload["evidence_role"]="last_success"; path.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n")'
             git add evidence/stage5b-fork-last-success.json
           fi
           if git diff --cached --quiet; then
