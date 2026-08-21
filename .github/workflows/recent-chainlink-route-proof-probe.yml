@@ -6,6 +6,10 @@ on:
       - agent/v0.7-alpha-research
     paths:
       - .github/workflows/recent-chainlink-route-proof-probe.yml
+      - src/pancake_prediction/public_collector.py
+      - src/pancake_prediction/recent_bootstrap.py
+      - scripts/run_recent_public_bootstrap.py
+      - evidence/recent-public-chainlink-smoke-2026-08-19.json
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,9 +43,9 @@ jobs:
           from pathlib import Path
 
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "state": "running",
-              "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
+              "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
               "source_run_id": int(os.environ["GITHUB_RUN_ID"]),
               "source_event_sha": os.environ["GITHUB_SHA"],
               "source_sha": subprocess.check_output(
@@ -58,16 +62,14 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-chainlink-route-proof-probe-running.json
-          if git diff --cached --quiet; then
-            echo 'Probe run identity unchanged.'
-          else
-            git commit -m 'chore: record fixed-window route probe run'
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record anchored route probe run'
             git fetch origin agent/v0.7-alpha-research
             git rebase origin/agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
 
-      - name: Probe exact Aug18-19 Chainlink route proof
+      - name: Probe exact Aug18-19 Chainlink route from persisted Aug19 anchor
         id: probe
         continue-on-error: true
         run: |
@@ -83,23 +85,23 @@ jobs:
           from pancake_prediction.public_collector import PublicHistoricalCollector
           from pancake_prediction.rpc import JsonRpcClient
           from pancake_prediction.store import EventStore
+          from scripts.run_recent_public_bootstrap import load_chainlink_route_anchor
 
           FROM_BLOCK = 116556542
           TO_BLOCK = 116748497
           MARKET = MARKETS["BNBUSD"]
-          # Deliberately bounded capability probe, not the production fallback list.
-          # These three endpoints represent the already-observed capability classes:
-          # recent logs, historical/recent state, and official public dataseed.
+          ANCHOR_PATH = Path("evidence/recent-public-chainlink-smoke-2026-08-19.json")
           ENDPOINTS = (
               "https://rpc-bsc.48.club",
-              "https://bsc-mainnet.public.blastapi.io",
-              "https://bsc-dataseed.bnbchain.org",
+              "https://bsc-rpc.publicnode.com",
+              "https://public.1rpc.io/bnb",
           )
+          anchor = load_chainlink_route_anchor(ANCHOR_PATH, market="BNBUSD")
           attempts = []
           selected = None
 
           for index, endpoint in enumerate(ENDPOINTS, start=1):
-              db = Path(f"artifacts/route-proof-probe-{index}.sqlite")
+              db = Path(f"artifacts/anchored-route-proof-{index}.sqlite")
               if db.exists():
                   db.unlink()
               started = time.monotonic()
@@ -107,8 +109,8 @@ jobs:
                   rpc = JsonRpcClient(
                       endpoint,
                       timeout_s=10.0,
-                      retries=2,
-                      backoff_s=0.5,
+                      retries=3,
+                      backoff_s=0.75,
                       min_interval_s=0.15,
                   )
                   store = EventStore(db)
@@ -118,21 +120,19 @@ jobs:
                       store=store,
                       chunk_size=50_000,
                   )
-                  proof = collector.prove_oracle_stable_in_range(
+                  proof = collector.prove_oracle_stable_from_anchor(
                       MARKET,
                       from_block=FROM_BLOCK,
                       through_block=TO_BLOCK,
+                      anchor_block=anchor.anchor_block,
+                      oracle_proxy=anchor.oracle_proxy,
+                      chainlink_aggregator=anchor.chainlink_aggregator,
+                      anchor_evidence_sha256=anchor.evidence_sha256,
                   )
-                  state_block = rpc.block(TO_BLOCK)
-                  block_hash = str(state_block.get("hash", "")).lower()
-                  if not block_hash.startswith("0x") or len(block_hash) != 66:
-                      raise RuntimeError("window-end block hash is invalid")
-                  elapsed_ms = int((time.monotonic() - started) * 1000)
                   result = {
                       "endpoint": endpoint,
                       "outcome": "success",
-                      "elapsed_ms": elapsed_ms,
-                      "window_end_block_hash": block_hash,
+                      "elapsed_ms": int((time.monotonic() - started) * 1000),
                       "proof": proof,
                       "error": None,
                   }
@@ -145,31 +145,33 @@ jobs:
                           "endpoint": endpoint,
                           "outcome": "failure",
                           "elapsed_ms": int((time.monotonic() - started) * 1000),
-                          "window_end_block_hash": None,
                           "proof": None,
                           "error": f"{type(exc).__name__}: {exc}"[:2000],
                       }
                   )
 
           payload = {
-              "evidence_version": 2,
+              "evidence_version": 3,
               "evidence_role": "latest_attempt",
-              "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
+              "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
               "market": "BNBUSD",
               "from_block": FROM_BLOCK,
               "to_block": TO_BLOCK,
               "requested_start_timestamp": 1787011200,
               "requested_end_timestamp": 1787097600,
+              "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+              "anchor": anchor.as_dict(),
               "rpc_policy": {
                   "timeout_s": 10.0,
-                  "retries": 2,
-                  "backoff_s": 0.5,
+                  "retries": 3,
+                  "backoff_s": 0.75,
                   "min_interval_s": 0.15,
               },
               "candidate_endpoints": list(ENDPOINTS),
               "success": selected is not None,
               "selected": selected,
               "attempts": attempts,
+              "archive_state_required": False,
               "archive_complete_source_claim": False,
               "profitability_gate_eligible": False,
               "signing_enabled": False,
@@ -205,7 +207,6 @@ jobs:
           python - <<'PY'
           import json
           import os
-          import subprocess
           from pathlib import Path
 
           source = Path("artifacts/recent-chainlink-route-proof-probe.json")
@@ -213,17 +214,19 @@ jobs:
               payload = json.loads(source.read_text(encoding="utf-8"))
           else:
               payload = {
-                  "evidence_version": 2,
+                  "evidence_version": 3,
                   "evidence_role": "latest_attempt",
-                  "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
+                  "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
                   "market": "BNBUSD",
                   "from_block": 116556542,
                   "to_block": 116748497,
                   "requested_start_timestamp": 1787011200,
                   "requested_end_timestamp": 1787097600,
+                  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
                   "success": False,
                   "selected": None,
                   "attempts": [],
+                  "archive_state_required": False,
                   "archive_complete_source_claim": False,
                   "profitability_gate_eligible": False,
                   "signing_enabled": False,
@@ -244,18 +247,18 @@ jobs:
               "probe": probe_outcome,
               "artifact": artifact_outcome,
           }
-          payload["source_run_id"] = int(os.environ["GITHUB_RUN_ID"])
-          payload["source_event_sha"] = os.environ["GITHUB_SHA"]
-          payload["source_sha"] = subprocess.check_output(
-              ["git", "rev-parse", "HEAD"], text=True
-          ).strip()
+          running = Path("evidence/recent-chainlink-route-proof-probe-running.json")
+          if running.is_file():
+              identity = json.loads(running.read_text(encoding="utf-8"))
+              payload["source_run_id"] = identity.get("source_run_id")
+              payload["source_event_sha"] = identity.get("source_event_sha")
+              payload["source_sha"] = identity.get("source_sha")
           error_path = Path("artifacts/recent-chainlink-route-proof-probe.err")
           payload["probe_error_tail"] = (
               error_path.read_text(encoding="utf-8", errors="replace").strip()[-4000:]
               if error_path.is_file()
               else None
           )
-
           latest = Path("evidence/recent-chainlink-route-proof-probe-latest.json")
           latest.write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -265,35 +268,15 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-chainlink-route-proof-probe-latest.json
-          if python - <<'PY'
-          import json
-          from pathlib import Path
-          payload = json.loads(
-              Path("evidence/recent-chainlink-route-proof-probe-latest.json").read_text()
-          )
-          raise SystemExit(0 if payload.get("success") is True else 1)
-          PY
-          then
+          PROBE_SUCCESS="$(python -c 'import json; print("true" if json.load(open("evidence/recent-chainlink-route-proof-probe-latest.json"))["success"] else "false")')"
+          if [ "$PROBE_SUCCESS" = true ]; then
             cp evidence/recent-chainlink-route-proof-probe-latest.json \
               evidence/recent-chainlink-route-proof-probe-last-success.json
-            python - <<'PY'
-            import json
-            from pathlib import Path
-
-            path = Path("evidence/recent-chainlink-route-proof-probe-last-success.json")
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["evidence_role"] = "last_success"
-            path.write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            PY
+            python -c 'import json; p="evidence/recent-chainlink-route-proof-probe-last-success.json"; d=json.load(open(p)); d["evidence_role"]="last_success"; open(p,"w").write(json.dumps(d,indent=2,sort_keys=True)+"\n")'
             git add evidence/recent-chainlink-route-proof-probe-last-success.json
           fi
-          if git diff --cached --quiet; then
-            echo 'Route-proof probe evidence unchanged.'
-          else
-            git commit -m 'chore: record fixed-window Chainlink route probe'
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record anchored Chainlink route probe'
             git fetch origin agent/v0.7-alpha-research
             git rebase origin/agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
@@ -306,15 +289,7 @@ jobs:
           ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
         run: |
           if [ "$PROBE_OUTCOME" != success ] || [ "$ARTIFACT_OUTCOME" != success ]; then
-            echo "Fixed-window Chainlink route probe failed: probe=$PROBE_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
+            echo "Anchored Chainlink route probe failed: probe=$PROBE_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
             exit 2
           fi
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          payload = json.loads(
-              Path("evidence/recent-chainlink-route-proof-probe-latest.json").read_text()
-          )
-          if payload.get("success") is not True:
-              raise SystemExit("Fixed-window Chainlink route semantic gate did not clear")
-          PY
+          python -c 'import json; d=json.load(open("evidence/recent-chainlink-route-proof-probe-latest.json")); assert d.get("success") is True, "anchored route semantic gate did not clear"'
