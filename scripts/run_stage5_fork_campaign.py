@@ -51,6 +51,13 @@ def _quantity(value: object) -> int:
     return int(text, 16) if text.startswith("0x") else int(text)
 
 
+def _replacement_gas_price_wei(rpc: LocalForkRpcClient) -> int:
+    current = _quantity(rpc.call("eth_gasPrice", []))
+    if current <= 0:
+        raise RuntimeError("local fork returned a non-positive gas price")
+    return current * 2
+
+
 def _read_round_inputs(rpc: LocalForkRpcClient) -> tuple[int, int]:
     target = MARKETS[MARKET].address
     epoch = _decode_uint256(rpc.eth_call(target, CURRENT_EPOCH_SELECTOR))
@@ -208,7 +215,11 @@ def _observe_drop_recovery(
         raise RuntimeError("dropped transaction did not recover to the same reserved nonce")
     retryable = store.get(intent.id)
     require_prediction_bet_ready(rpc, retryable)
-    resubmitted = coordinator.submit(intent.id)
+    replacement_gas_price_wei = _replacement_gas_price_wei(rpc)
+    resubmitted = coordinator.submit(
+        intent.id,
+        gas_price_wei=replacement_gas_price_wei,
+    )
     if resubmitted.state != IntentState.SUBMITTED:
         raise RuntimeError("drop-recovered intent did not resubmit")
     _finalize(coordinator, intent.id)
@@ -220,6 +231,7 @@ def _observe_drop_recovery(
             "dropped_tx_hash": tx_hash,
             "reserved_nonce": submitted.nonce,
             "replacement_tx_hash": resubmitted.current_tx_hash,
+            "replacement_gas_price_wei": replacement_gas_price_wei,
         },
     )
     return True
@@ -265,7 +277,11 @@ def _observe_reorg_recovery(
 
     retryable = store.get(intent.id)
     require_prediction_bet_ready(rpc, retryable)
-    resubmitted = coordinator.submit(intent.id)
+    replacement_gas_price_wei = _replacement_gas_price_wei(rpc)
+    resubmitted = coordinator.submit(
+        intent.id,
+        gas_price_wei=replacement_gas_price_wei,
+    )
     if resubmitted.state != IntentState.SUBMITTED:
         raise RuntimeError("reorg-recovered intent did not resubmit")
     _finalize(coordinator, intent.id)
@@ -278,6 +294,7 @@ def _observe_reorg_recovery(
             "reorged_tx_hash": tx_hash,
             "reserved_nonce": mined.nonce,
             "replacement_tx_hash": resubmitted.current_tx_hash,
+            "replacement_gas_price_wei": replacement_gas_price_wei,
         },
     )
     return True
