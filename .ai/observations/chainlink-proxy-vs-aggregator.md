@@ -65,15 +65,26 @@ The persisted anchor is `evidence/recent-public-chainlink-smoke-2026-08-19.json`
 - method `persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range`;
 - artifact and semantic probe both succeeded.
 
+The full one-day external collection is now independently proven by `evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json`, source run `32481332419`:
+
+- exact source range `116556542..116748497`;
+- 14,496 canonical Prediction events and 8,673 bets;
+- 282 `StartRound`, 282 `LockRound`, and 282 `EndRound` events;
+- 2,615 real underlying-aggregator `AnswerUpdated` events;
+- 284 deterministic replay rounds;
+- exact anchor SHA-256 `88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3`;
+- zero `NewOracle` and zero `AggregatorConfirmed` events through the fixed anchor block;
+- `historical_state_required=false`;
+- source artifact publication and source semantic gate both succeeded.
+
 Implementation lineage:
 
 - `ec50ca7b2e48ed5f85f3e7fb5dce37bc9693cbbc`: anchored stateless route proof;
 - `a490b7d80260b3be420250b55668420844a1b7d1`: typed `ChainlinkRouteAnchor` and bootstrap integration;
 - `10768c3f3ceda7608d268ac33bcfad5de31d01ec`: package-level exact-byte anchor evidence loader;
-- `a831220e32173a78e879df4024e60f4ffcba6e19`: CLI uses the packaged anchor loader;
-- normal PR CI run `951` passed with 315 tests and 87% coverage, plus Ruff, mypy, Bandit, pip-audit, ClickHouse integration, Gitleaks, and the pinned 144k-round audit.
+- `a831220e32173a78e879df4024e60f4ffcba6e19`: CLI uses the packaged anchor loader.
 
-The complete one-day Prediction + Chainlink source remains a separate empirical gate until its own `last-success` evidence exists. Successful route proof alone does not prove full collection, economic-pipeline success, or profitability.
+The one-day source success establishes source acquisition and route identity only. The downstream economic smoke is separately source-bound and persisted, and neither result by itself proves profitability.
 
 ## Why it matters
 
@@ -101,6 +112,7 @@ An anchored proof does not reconstruct a window containing a route change. If `N
 - `.github/workflows/recent-public-chainlink-day.yml`
 - `evidence/recent-public-chainlink-smoke-2026-08-19.json`
 - `evidence/recent-chainlink-route-proof-probe-last-success.json`
+- `evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json`
 
 ## Related cases
 
