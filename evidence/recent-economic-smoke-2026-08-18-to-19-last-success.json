@@ -1,0 +1,209 @@
+{
+  "artifact_provenance": {
+    "economic_artifact_digest": "sha256:f05c88d48c0087be191018e2ad55c2684b59f48ec78cb68cb9118a1695985aee",
+    "economic_artifact_id": 9451199429,
+    "economic_campaign_sha256": "cb111c715acc6ec0a7f96ef664905c81d93dbc58c47f73857b4dc5eaa1cb1060",
+    "economic_semantic_validation_sha256": "860e6cc557becc6c8ed5ac2fff31bad90fb8cc50e809cb961b24dca371e395a9",
+    "source_artifact_digest": "sha256:a4412af5a8247075e2b2f44d5cfa1067d391de59314a9c180eaa5b720573a0f1",
+    "source_artifact_id": 9447571663,
+    "source_run_snapshot_sha256": "d97f4e04cccb1acb90705141ab96001d095c54f9a0e59830ce82198e48fa1ca0"
+  },
+  "availability_assumptions_ms": {
+    "chainlink": 1000,
+    "max_chainlink_age": 300000,
+    "spot": 250,
+    "um_futures": 250
+  },
+  "campaign_semantics": {
+    "checks": {
+      "chainlink_lag_exact": true,
+      "direction_signal_count_positive": true,
+      "fold_count_positive": true,
+      "joint_epoch_count_positive": true,
+      "n_scored_positive": true,
+      "perp_lag_exact": true,
+      "perp_provenance_present": true,
+      "perp_source_lags_exact": true,
+      "pool_projection_count_positive": true,
+      "research_feature_rows_positive": true,
+      "spot_lag_exact": true,
+      "spot_provenance_present": true,
+      "spot_source_lags_exact": true
+    },
+    "direction_signal_count": 159,
+    "fold_count": 4,
+    "joint_epoch_count": 159,
+    "n_scored": 159,
+    "perp_query_start_ms": 1787011140000,
+    "perp_source_count": 1,
+    "pool_projection_count": 230,
+    "query_end_ms": 1787101200000,
+    "ready": true,
+    "research_feature_rows": 268,
+    "skipped_no_aligned_market_data": 14,
+    "spot_query_start_ms": 1787011140000,
+    "spot_source_count": 1
+  },
+  "dataset": {
+    "candidate_rounds": 284,
+    "chunk_span_ms": 3600000,
+    "chunks_loaded": 25,
+    "market": "BNBUSD",
+    "max_perp_chunk_rows": 10219,
+    "max_spot_chunk_rows": 8869,
+    "perp_query_start_ms": 1787011140000,
+    "pool_feature_rows": 282,
+    "query_end_ms": 1787101200000,
+    "research_feature_rows": 268,
+    "skipped_no_aligned_market_data": 14,
+    "skipped_no_pool_features": 2,
+    "spot_query_start_ms": 1787011140000
+  },
+  "economic_assumptions": {
+    "bet_gas_wei": 50000000000000,
+    "claim_gas_wei": 30000000000000,
+    "inclusion_latency_seconds": 2,
+    "stake_wei": 10000000000000000
+  },
+  "economic_source_sha": "05d5247b65656f7f1d293f15e733329af9f0a53b",
+  "evaluation": {
+    "backtest_summary": {
+      "config": {
+        "bet_gas_wei": 50000000000000,
+        "claim_gas_wei": 30000000000000,
+        "decision_lead_seconds": 20,
+        "inclusion_latency_seconds": 2,
+        "initial_buffer_seconds": 30,
+        "initial_interval_seconds": 300,
+        "initial_treasury_fee_bps": 300,
+        "min_expected_value_wei": 0,
+        "require_pool_projection": true,
+        "stake_wei": 10000000000000000
+      },
+      "market": "BNBUSD",
+      "max_drawdown_wei": 77524907919421020,
+      "pnl_wei": 85367433627531589,
+      "replay_digest": "52a353fe3e48ddc0645cb08c1c03ee1cea01c8ba16b6e370ebf1e593f245d0b9",
+      "roi_ppm": 55433,
+      "settled_rounds": 281,
+      "skipped_integrity": 1,
+      "skipped_late": 0,
+      "skipped_no_positive_ev": 5,
+      "skipped_no_projection": 0,
+      "skipped_no_signal": 121,
+      "stake_deployed_wei": 1540000000000000000,
+      "trade_count": 154
+    },
+    "calibration_failures": 0,
+    "campaign_digest": "e5c75c8d7b96bb578507e2c40de77647eab69f9f841ceb3ca446bfca13e7b394",
+    "direction_signal_count": 159,
+    "evaluation_digest": "29635590241ea7f294fd0fb82d76b504fe8cec4de1f9c2c3872cc75d6181ed3c",
+    "feature_set_id": "full-v1",
+    "fold_count": 4,
+    "joint_epoch_count": 159,
+    "pool_projection_count": 230,
+    "probability_metrics": {
+      "accuracy": 0.5345911949685535,
+      "accuracy_ci95": [
+        0.457159366584184,
+        0.6103909985357463
+      ],
+      "brier_score": 0.2770743751658553,
+      "brier_skill_score": -0.12435269318908326,
+      "bull_base_rate": 0.44025157232704404,
+      "ece_10": 0.14488237106918242,
+      "log_loss": 0.7615719829868359,
+      "market": "BNBUSD",
+      "n_missing_signal": 122,
+      "n_scored": 159,
+      "n_ties_excluded": 0
+    }
+  },
+  "evidence_role": "last_success",
+  "evidence_version": 5,
+  "full_historical_gate_satisfied": false,
+  "interpretation": "Pipeline smoke only: validates exact-source binding, positive availability lags, non-vacuous purged/embargoed OOS plumbing, and explicit costs on a one-day sample. It is not profitability evidence and does not satisfy the full historical source gate.",
+  "live_broadcast": false,
+  "oos_smoke_config": {
+    "calibration_rounds": 20,
+    "embargo_rounds": 2,
+    "min_train_rounds": 100,
+    "pool_min_train_rounds": 50,
+    "pool_window_rounds": 200,
+    "purge_rounds": 2,
+    "test_rounds": 50
+  },
+  "profitability_gate_eligible": false,
+  "purpose": "recent_source_bound_economic_pipeline_smoke",
+  "recovery_provenance": {
+    "economic_compute_gate": "success",
+    "final_economic_gate": "success",
+    "original_economic_job_conclusion": "failure",
+    "original_economic_job_id": 96810154525,
+    "original_parent_run_attempt": 2,
+    "original_parent_run_conclusion": "failure",
+    "original_parent_run_id": 32481332419,
+    "persist_failure_reason": "nested shell heredoc syntax error after evidence build; no analytical step failed",
+    "persist_step": "failure",
+    "recovered_from_artifact": true,
+    "semantic_gate": "success"
+  },
+  "signing_enabled": false,
+  "source_current_run": true,
+  "source_event_sha": "a831220e32173a78e879df4024e60f4ffcba6e19",
+  "source_provenance": {
+    "active_chainlink_event_count": 2615,
+    "chainlink_artifact_sha256": "ee99c866905d6819cce3e2537bcc34435a8563adcce6b9d8f9f0ac7c51ecf093",
+    "chainlink_database_sha256": "bc428b4b6caec035dc0859d4e52489885226560d1a97bf23bd2aa6edbc406c2a",
+    "perp": [
+      {
+        "availability_lag_ms": 250,
+        "first_aggregate_trade_id": 858791160,
+        "first_trade_timestamp_ms": 1787011200015,
+        "last_aggregate_trade_id": 858905440,
+        "last_trade_timestamp_ms": 1787097599972,
+        "row_count": 114281,
+        "source_name": "BNBUSDT-aggTrades-2026-08-18.zip",
+        "source_sha256": "8c67eea214eaf93416b1b7a118a11046a86632506e3d626698247927ea3de885",
+        "symbol": "BNBUSDT",
+        "timestamp_unit": "milliseconds",
+        "venue": "um_futures"
+      }
+    ],
+    "prediction_event_count": 9801,
+    "replay_rounds": 284,
+    "spot": [
+      {
+        "availability_lag_ms": 250,
+        "first_aggregate_trade_id": 849802848,
+        "first_trade_timestamp_ms": 1787011200233,
+        "last_aggregate_trade_id": 849899100,
+        "last_trade_timestamp_ms": 1787097593847,
+        "row_count": 96253,
+        "source_name": "BNBUSDT-aggTrades-2026-08-18.zip",
+        "source_sha256": "f96df6ca059bae8575c022d21677bfa8dfe86a94273eea6ba551715cf1473bcb",
+        "symbol": "BNBUSDT",
+        "timestamp_unit": "auto",
+        "venue": "spot"
+      }
+    ]
+  },
+  "source_run_id": 32481332419,
+  "source_sha": "2cb5dcb374880b20e4b6f859991bea92dce6ba95",
+  "source_window": {
+    "end_timestamp": 1787097600,
+    "market": "BNBUSD",
+    "start_timestamp": 1787011200
+  },
+  "step_outcomes": {
+    "binance_download": "success",
+    "binance_ingest": "success",
+    "campaign": "success",
+    "campaign_semantics": "success",
+    "schema": "success",
+    "source": "success",
+    "source_artifact": "success"
+  },
+  "success": true,
+  "workflow_outcome": "success"
+}
