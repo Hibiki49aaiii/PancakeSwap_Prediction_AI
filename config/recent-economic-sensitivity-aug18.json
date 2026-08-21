@@ -1,0 +1,68 @@
+{
+  "scenarios": [
+    {
+      "name": "baseline",
+      "stake_wei": 10000000000000000,
+      "bet_gas_wei": 50000000000000,
+      "claim_gas_wei": 30000000000000,
+      "inclusion_latency_seconds": 2,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "optimistic-low-cost",
+      "stake_wei": 10000000000000000,
+      "bet_gas_wei": 25000000000000,
+      "claim_gas_wei": 15000000000000,
+      "inclusion_latency_seconds": 1,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "low-stake",
+      "stake_wei": 5000000000000000,
+      "bet_gas_wei": 50000000000000,
+      "claim_gas_wei": 30000000000000,
+      "inclusion_latency_seconds": 2,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "high-stake",
+      "stake_wei": 20000000000000000,
+      "bet_gas_wei": 50000000000000,
+      "claim_gas_wei": 30000000000000,
+      "inclusion_latency_seconds": 2,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "high-gas",
+      "stake_wei": 10000000000000000,
+      "bet_gas_wei": 100000000000000,
+      "claim_gas_wei": 60000000000000,
+      "inclusion_latency_seconds": 2,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "slow-inclusion",
+      "stake_wei": 10000000000000000,
+      "bet_gas_wei": 50000000000000,
+      "claim_gas_wei": 30000000000000,
+      "inclusion_latency_seconds": 5,
+      "min_expected_value_wei": 0
+    },
+    {
+      "name": "strict-ev",
+      "stake_wei": 10000000000000000,
+      "bet_gas_wei": 50000000000000,
+      "claim_gas_wei": 30000000000000,
+      "inclusion_latency_seconds": 2,
+      "min_expected_value_wei": 100000000000000
+    },
+    {
+      "name": "combined-stress",
+      "stake_wei": 5000000000000000,
+      "bet_gas_wei": 100000000000000,
+      "claim_gas_wei": 60000000000000,
+      "inclusion_latency_seconds": 5,
+      "min_expected_value_wei": 100000000000000
+    }
+  ]
+}
