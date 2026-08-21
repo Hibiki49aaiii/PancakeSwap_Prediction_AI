@@ -14,6 +14,7 @@ class AvailablePrice:
     source_timestamp_ms: int
     available_at_ms: int
     price_e8: int
+    source_order: tuple[int, ...] = ()
 
     def validate(self) -> None:
         if self.source_timestamp_ms < 0 or self.available_at_ms < 0:
@@ -22,6 +23,8 @@ class AvailablePrice:
             raise ValueError("price must be positive")
         if self.available_at_ms < self.source_timestamp_ms:
             raise ValueError("price cannot become available before its source timestamp")
+        if any(value < 0 for value in self.source_order):
+            raise ValueError("source ordering values must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,19 +68,22 @@ def latest_available_price(
         key=lambda item: (
             item.source_timestamp_ms,
             item.available_at_ms,
+            item.source_order,
             item.price_e8,
             item.source,
         )
     )
     selected = eligible[-1]
-    same_timestamp = [
+    same_identity = [
         item
         for item in eligible
-        if item.source_timestamp_ms == selected.source_timestamp_ms
+        if item.source == selected.source
+        and item.source_timestamp_ms == selected.source_timestamp_ms
         and item.available_at_ms == selected.available_at_ms
+        and item.source_order == selected.source_order
     ]
-    if len({item.price_e8 for item in same_timestamp}) > 1:
-        raise ValueError("conflicting prices share the same source and availability timestamp")
+    if len({item.price_e8 for item in same_identity}) > 1:
+        raise ValueError("conflicting prices share the same source event identity")
     return selected
 
 
@@ -107,10 +113,16 @@ def chainlink_available_prices(
                 source_timestamp_ms=source_timestamp_ms,
                 available_at_ms=available_at_ms,
                 price_e8=current,
+                source_order=(event.block_number, event.tx_index, event.log_index),
             )
         )
     observations.sort(
-        key=lambda item: (item.source_timestamp_ms, item.available_at_ms, item.price_e8)
+        key=lambda item: (
+            item.source_timestamp_ms,
+            item.available_at_ms,
+            item.source_order,
+            item.price_e8,
+        )
     )
     return tuple(observations)
 
@@ -124,11 +136,17 @@ def binance_available_prices(
             source_timestamp_ms=trade.trade_timestamp_ms,
             available_at_ms=max(trade.trade_timestamp_ms, trade.event_timestamp_ms),
             price_e8=trade.price_e8,
+            source_order=(trade.aggregate_trade_id,),
         )
         for trade in trades
     ]
     observations.sort(
-        key=lambda item: (item.source_timestamp_ms, item.available_at_ms, item.price_e8)
+        key=lambda item: (
+            item.source_timestamp_ms,
+            item.available_at_ms,
+            item.source_order,
+            item.price_e8,
+        )
     )
     return tuple(observations)
 
