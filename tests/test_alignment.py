@@ -2,6 +2,7 @@ import pytest
 
 from pancake_prediction.alignment import (
     AvailablePrice,
+    binance_available_prices,
     build_aligned_alpha_feature_row,
     build_aligned_alpha_inputs,
     latest_available_price,
@@ -52,13 +53,48 @@ def test_latest_price_rejects_observation_not_available_before_cutoff() -> None:
     assert selected.price_e8 == 100
 
 
-def test_latest_price_rejects_conflicting_same_timestamp_values() -> None:
+def test_latest_price_rejects_conflicting_same_source_event_identity() -> None:
     observations = (
-        AvailablePrice("spot", 9_900, 9_950, 100),
-        AvailablePrice("spot", 9_900, 9_950, 101),
+        AvailablePrice("spot", 9_900, 9_950, 100, (7,)),
+        AvailablePrice("spot", 9_900, 9_950, 101, (7,)),
     )
     with pytest.raises(ValueError, match="conflicting prices"):
         latest_available_price(observations, decision_timestamp_ms=10_000)
+
+
+def test_latest_price_uses_source_order_for_equal_timestamps() -> None:
+    observations = (
+        AvailablePrice("spot", 9_900, 9_950, 101, (8,)),
+        AvailablePrice("spot", 9_900, 9_950, 100, (7,)),
+    )
+    selected = latest_available_price(observations, decision_timestamp_ms=10_000)
+    assert selected is not None
+    assert selected.price_e8 == 101
+    assert selected.source_order == (8,)
+
+
+def test_binance_equal_millisecond_prices_follow_aggregate_trade_id() -> None:
+    observations = binance_available_prices(
+        (
+            _trade(
+                100,
+                trade_timestamp_ms=9_900,
+                event_timestamp_ms=9_950,
+                price_e8=60_000_000_000,
+            ),
+            _trade(
+                101,
+                trade_timestamp_ms=9_900,
+                event_timestamp_ms=9_950,
+                price_e8=60_100_000_000,
+            ),
+        ),
+        source="binance-spot",
+    )
+    selected = latest_available_price(observations, decision_timestamp_ms=10_000)
+    assert selected is not None
+    assert selected.price_e8 == 60_100_000_000
+    assert selected.source_order == (101,)
 
 
 def test_alignment_excludes_trade_published_after_decision() -> None:
