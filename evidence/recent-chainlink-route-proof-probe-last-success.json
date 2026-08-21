@@ -9,7 +9,7 @@
   "archive_state_required": false,
   "attempts": [
     {
-      "elapsed_ms": 124221,
+      "elapsed_ms": 98789,
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success",
@@ -51,7 +51,7 @@
     "timeout_s": 10.0
   },
   "selected": {
-    "elapsed_ms": 124221,
+    "elapsed_ms": 98789,
     "endpoint": "https://rpc-bsc.48.club",
     "error": null,
     "outcome": "success",
@@ -70,9 +70,9 @@
     }
   },
   "signing_enabled": false,
-  "source_event_sha": "d58bce9d8c2a1f9ccd0388e9281d673942e74a2e",
-  "source_run_id": 32481038826,
-  "source_sha": "d58bce9d8c2a1f9ccd0388e9281d673942e74a2e",
+  "source_event_sha": "a831220e32173a78e879df4024e60f4ffcba6e19",
+  "source_run_id": 32481332181,
+  "source_sha": "a831220e32173a78e879df4024e60f4ffcba6e19",
   "step_outcomes": {
     "artifact": "success",
     "probe": "success"
