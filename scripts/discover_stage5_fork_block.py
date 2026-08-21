@@ -21,6 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # This RPC is read-only fork-source discovery; transaction submission remains
+    # confined to LocalForkRpcClient on the later loopback Anvil process.
     point = discover_fork_block(
         JsonRpcClient(str(args.rpc_url)),
         market=str(args.market),
