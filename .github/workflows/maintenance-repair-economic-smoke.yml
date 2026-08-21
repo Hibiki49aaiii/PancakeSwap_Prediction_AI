@@ -1,0 +1,134 @@
+name: maintenance-repair-economic-smoke
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/maintenance-repair-economic-smoke.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair-and-rerun:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+          fetch-depth: 0
+
+      - name: Replace nested-heredoc persistence block
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/recent-economic-smoke.yml')
+          text = path.read_text(encoding='utf-8')
+          start_marker = '      - name: Persist smoke evidence\n'
+          end_marker = '      - name: Upload smoke artifacts\n'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''      - name: Persist smoke evidence
+        if: always() && !cancelled()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-economic-smoke-2026-08-18-to-19-latest.json
+          if python -c 'import json, pathlib; payload=json.loads(pathlib.Path("evidence/recent-economic-smoke-2026-08-18-to-19-latest.json").read_text()); raise SystemExit(0 if payload.get("success") is True else 1)'; then
+            cp evidence/recent-economic-smoke-2026-08-18-to-19-latest.json evidence/recent-economic-smoke-2026-08-18-to-19-last-success.json
+            python -c 'import json, pathlib; path=pathlib.Path("evidence/recent-economic-smoke-2026-08-18-to-19-last-success.json"); payload=json.loads(path.read_text()); payload["evidence_role"]="last_success"; path.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\\n")'
+            git add evidence/recent-economic-smoke-2026-08-18-to-19-last-success.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'Recent economic smoke evidence unchanged.'
+          else
+            git commit -m 'fix: persist recent economic smoke evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+'''
+          updated = text[:start] + replacement + text[end:]
+          path.write_text(updated, encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/recent-economic-smoke.yml
+          git commit -m 'fix: repair recent economic evidence persistence'
+          git fetch origin agent/v0.7-alpha-research
+          git rebase origin/agent/v0.7-alpha-research
+          git push origin HEAD:agent/v0.7-alpha-research
+
+      - name: Dispatch economic-only retry from proven one-day source
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DISPATCH_SHA="$(git rev-parse HEAD)"
+          gh workflow run recent-economic-smoke.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref agent/v0.7-alpha-research \
+            -f source_run_id=32481332419
+          RUN_ID=''
+          for _ in $(seq 1 15); do
+            RUN_ID="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow recent-economic-smoke.yml \
+              --branch agent/v0.7-alpha-research \
+              --event workflow_dispatch \
+              --limit 10 \
+              --json databaseId,headSha \
+              --jq ".[] | select(.headSha == \"$DISPATCH_SHA\") | .databaseId" \
+              | head -n 1)"
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test -n "$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "dispatch_sha=$DISPATCH_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Persist retry identity and remove maintenance workflow
+        env:
+          ECONOMIC_RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          DISPATCH_SHA: ${{ steps.dispatch.outputs.dispatch_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'evidence_version': 1,
+              'state': 'running',
+              'purpose': 'economic_only_retry_from_persisted_one_day_source',
+              'economic_run_id': int(os.environ['ECONOMIC_RUN_ID']),
+              'dispatch_sha': os.environ['DISPATCH_SHA'],
+              'source_run_id': 32481332419,
+              'profitability_gate_eligible': False,
+              'signing_enabled': False,
+              'live_broadcast': False,
+          }
+          Path('evidence/recent-economic-smoke-running.json').write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          git add evidence/recent-economic-smoke-running.json
+          git rm .github/workflows/maintenance-repair-economic-smoke.yml
+          git commit -m 'chore: record economic retry run'
+          git fetch origin agent/v0.7-alpha-research
+          git rebase origin/agent/v0.7-alpha-research
+          git push origin HEAD:agent/v0.7-alpha-research
