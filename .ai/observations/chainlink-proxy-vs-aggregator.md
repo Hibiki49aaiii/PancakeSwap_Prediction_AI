@@ -1,87 +1,106 @@
 # Chainlink Proxy Identity and Event-Emitter Identity Are Distinct
 Status: observation
-Date: 2026-08-20
+Date: 2026-08-21
 Source case: `../cases/2026-08-20-v0-7-research-readiness/`
 Confidence: high
 
 ## Context
 
-PancakeSwap Prediction exposes an `oracle()` address that is used to obtain the settlement price. For BNBUSD, that address is a Chainlink proxy. Historical/recent feature collection needs the actual Chainlink `AnswerUpdated` events that carry feed updates.
+PancakeSwap Prediction exposes an `oracle()` address used for settlement. For BNBUSD, that address is a Chainlink proxy, while `AnswerUpdated` is emitted by the proxy's underlying aggregator. Recent research collection must bind both identities to the exact campaign window without pretending a public RPC has historical-state capabilities it does not have.
 
 ## Observation
 
-Do not assume the address returned by Prediction `oracle()` is the address that emits `AnswerUpdated`. Treat the Prediction oracle proxy and the Chainlink underlying aggregator as separate identities.
-
-Route proof also needs to match the temporal semantics of the campaign. There are now two deliberately distinct proof modes:
+Do not assume the address returned by Prediction `oracle()` emits `AnswerUpdated`. Treat the Prediction oracle proxy and Chainlink underlying aggregator as separate identities, and choose a route-proof method whose temporal and RPC-capability assumptions are explicit.
 
 ### Current-route / latest-state proof
 
-For a recent window when only current state is available:
+A latest-state proof may read today's Prediction `oracle()` and Chainlink `aggregator()`, capture a post-read head, then stateless-scan `NewOracle` and `AggregatorConfirmed` backward to the requested start. This is valid only if the entire requested interval through the observed head is scanned with no route changes.
 
-1. read the latest Prediction `oracle()` proxy;
-2. read that proxy's latest `aggregator()` implementation;
-3. capture a post-read head;
-4. stateless-scan Prediction `NewOracle` from the window start through that head;
-5. stateless-scan the proxy `AggregatorConfirmed` over the same range;
-6. reject the route if either change event is present;
-7. collect `AnswerUpdated` from the proven underlying aggregator, not the proxy.
+### Fixed window-end state proof is capability-dependent
 
-This proves that today's route can be traced back to the requested start only when no relevant change exists through the observed head.
+A fixed campaign can in principle read `oracle()` and `aggregator()` at the exact window-end block and scan changes only inside the window. That keeps proof cost stationary, but it requires historical/recent state at that exact block.
 
-### Fixed-window proof
+The Aug 18–19 BNBUSD window empirically showed that this assumption does not hold across the current unauthenticated public routes used by the project:
 
-For a fixed historical/recent research window whose end-block state is still readable:
+- `https://rpc-bsc.48.club`: historical block-tagged `eth_call` returned `not supported`;
+- `https://bsc-mainnet.public.blastapi.io`: GitHub runner received HTTP 403;
+- `https://bsc-dataseed.bnbchain.org`: historical call failed with `missing trie node`.
 
-1. read Prediction `oracle()` at the exact window-end block;
-2. read that proxy's `aggregator()` at the same block;
-3. stateless-scan Prediction `NewOracle` only across `[from_block, to_block]`;
-4. stateless-scan proxy `AggregatorConfirmed` only across `[from_block, to_block]`;
-5. reject the route if either change event is present;
-6. collect `AnswerUpdated` from the proven underlying aggregator inside the same source window.
+Therefore the one-day public source must not claim that fixed window-end state is available.
 
-A fixed-window proof must not expand to the present chain head every time it is re-run. Otherwise a constant historical campaign acquires an ever-growing RPC workload and can eventually fail because of time/rate limits unrelated to the source window itself. If the endpoint cannot read state at the window-end block, fail closed or use another source; do not silently substitute today's route for the historical route.
+### Persisted route anchor + backward change scan
 
-Both change-scan modes must remain stateless rather than using resumable collector checkpoints because a failed route proof must remain a failed proof on repeated execution.
+A previously persisted successful later-window route proof can instead serve as a fixed anchor when all of the following hold:
+
+1. the anchor evidence itself is successful and contains real Chainlink events;
+2. its Prediction proxy and underlying aggregator identities agree across the proof and collected-event metadata;
+3. its exact bytes are SHA-256 bound into the new proof;
+4. the anchor block is at or after the source-window end;
+5. Prediction `NewOracle` is statelessly scanned from the source start through the anchor block;
+6. proxy `AggregatorConfirmed` is statelessly scanned over the same fixed interval;
+7. either change event causes a fail-closed rejection.
+
+This establishes that the later proven route extends backward across the requested source window without any historical `eth_call`, without reading the current head, and without making a fixed campaign's proof range grow over time.
+
+Change scans must remain stateless rather than resumable; a failed route proof must remain failed on repeated execution.
 
 ## Evidence
 
-- `evidence/recent-public-chainlink-smoke-2026-08-19.json` records a successful public two-hour BNBUSD source smoke with no archive-state requirement.
-- The Prediction oracle proxy was `0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee`.
-- The proven underlying Chainlink aggregator was `0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280`.
-- The two-hour latest-state proof found `new_oracle_events=0` and `aggregator_confirmed_events=0` from block `116844485` through post-read head `116982209`.
-- Collecting from the underlying aggregator inserted 218 Chainlink `AnswerUpdated` events for the requested two-hour window; the same run inserted 910 Prediction events and produced deterministic replay evidence for 25 rounds.
-- An earlier implementation queried `AnswerUpdated` at the proxy and produced zero Chainlink events despite reporting the route as collected. The current script rejects a requested Chainlink run unless real `AnswerUpdated` events are inserted.
-- Commit `7fc3d330dccfcf545a952ddcf13a33449f09eed0` adds the fixed-window route proof while preserving the existing latest-state proof.
-- Commit `e08cd28a228d4d4ae89848e3ad2b4c78e9a66bf3` switches the fixed Aug 18–19 bootstrap to the window-bound proof.
-- Commit `6961af4965f73a6e36ed0e0233e7dabf887ec287` adds tests proving the fixed-window path does not read the current head and still rejects in-window `NewOracle` / `AggregatorConfirmed` changes.
-- Normal PR CI run 919 passed with 309 tests, 87% coverage, Ruff/mypy/Bandit/pip-audit green, plus ClickHouse integration, Gitleaks, and the pinned legacy 144k-round audit.
+The persisted anchor is `evidence/recent-public-chainlink-smoke-2026-08-19.json`:
 
-The fixed Aug 18–19 one-day Chainlink source remains an empirical gate until its own current `last-success` evidence exists; the green software tests establish implementation behavior, not external-source success.
+- anchor block: `116844485`;
+- Prediction oracle proxy: `0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee`;
+- Chainlink aggregator: `0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280`;
+- 218 real `AnswerUpdated` events in the successful two-hour source run;
+- anchor evidence SHA-256 used by the Aug 18 proof: `88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3`.
+
+`evidence/recent-chainlink-route-proof-probe-last-success.json` records successful external run `32481332181` on `https://rpc-bsc.48.club`:
+
+- source start: block `116556542`;
+- source end: block `116748497`;
+- proof through anchor: block `116844485`;
+- `new_oracle_events=0`;
+- `aggregator_confirmed_events=0`;
+- `historical_state_required=false`;
+- method `persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range`;
+- artifact and semantic probe both succeeded.
+
+Implementation lineage:
+
+- `ec50ca7b2e48ed5f85f3e7fb5dce37bc9693cbbc`: anchored stateless route proof;
+- `a490b7d80260b3be420250b55668420844a1b7d1`: typed `ChainlinkRouteAnchor` and bootstrap integration;
+- `10768c3f3ceda7608d268ac33bcfad5de31d01ec`: package-level exact-byte anchor evidence loader;
+- `a831220e32173a78e879df4024e60f4ffcba6e19`: CLI uses the packaged anchor loader;
+- normal PR CI run `951` passed with 315 tests and 87% coverage, plus Ruff, mypy, Bandit, pip-audit, ClickHouse integration, Gitleaks, and the pinned 144k-round audit.
+
+The complete one-day Prediction + Chainlink source remains a separate empirical gate until its own `last-success` evidence exists. Successful route proof alone does not prove full collection, economic-pipeline success, or profitability.
 
 ## Why it matters
 
-Querying the proxy for feed-update events can silently yield an empty Chainlink feature stream while the Prediction side appears healthy. Separately, proving a fixed historical window by scanning from that window all the way to today's head makes source validation non-stationary and increasingly expensive. Tracking both identities and selecting the proof semantics that match the campaign turns the oracle route into an auditable, bounded, fail-closed source contract.
+Querying the proxy for feed updates can silently produce an empty feature stream. Requiring unavailable historical state can also make a logically valid recent source permanently uncollectable. A SHA-bound later route anchor plus fixed backward change scans preserves route identity, bounded work, reproducibility, and fail-closed semantics without overstating public RPC capabilities.
 
 ## Applicability
 
 - recent PancakeSwap Prediction + Chainlink collection;
-- fixed historical/recent source windows that can read route state at their end block;
-- Chainlink EACAggregatorProxy-style feeds where events are emitted by an underlying aggregator;
-- any source manifest or feature pipeline that needs to bind settlement oracle identity to the actual event-emitting contract.
+- fixed recent windows where logs remain available but historical contract state does not;
+- Chainlink proxy/aggregator architectures with explicit route-change events;
+- source manifests that must bind an event emitter to a persisted route proof.
 
 ## Exceptions / Limitations
 
-Neither proof establishes the complete historical route timeline before its declared start. A window containing `NewOracle` or `AggregatorConfirmed` requires historical route reconstruction rather than assuming one stable route. The fixed-window method also requires the source to support state reads at the window-end block. Public endpoint capability and retention can change, so the real external-source gate must be re-run and recorded separately from unit/CI success.
+An anchored proof does not reconstruct a window containing a route change. If `NewOracle` or `AggregatorConfirmed` appears between the source start and anchor, the single-route proof is invalid and historical route reconstruction is required. It also does not establish source completeness outside the explicitly scanned interval, nor does it satisfy the deployment-era historical-source gate.
 
 ## Related files
 
 - `src/pancake_prediction/public_collector.py`
 - `src/pancake_prediction/recent_bootstrap.py`
+- `src/pancake_prediction/chainlink_anchor.py`
 - `scripts/run_recent_public_bootstrap.py`
-- `tests/test_public_collector.py`
-- `.github/workflows/recent-public-chainlink-smoke.yml`
+- `tests/test_chainlink_route_anchor.py`
+- `.github/workflows/recent-chainlink-route-proof-probe.yml`
 - `.github/workflows/recent-public-chainlink-day.yml`
 - `evidence/recent-public-chainlink-smoke-2026-08-19.json`
+- `evidence/recent-chainlink-route-proof-probe-last-success.json`
 
 ## Related cases
 
