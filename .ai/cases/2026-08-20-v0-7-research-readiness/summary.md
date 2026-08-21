@@ -1,79 +1,139 @@
 # v0.7 Research Readiness and Historical-Source Gate
 
-Status: active / partially unblocked
-Date: 2026-08-20
+Status: active / bounded recent path proven; full historical gate blocked
+Date: 2026-08-22
 Related PR: #1 (`agent/v0.7-alpha-research` -> `main`)
-Validated source revision for current paced public-RPC implementation: `b4514d85ac7ccd3505994d205404bfbf7e5cb198`
-Latest persisted quality evidence for that revision: 304 tests passed, 87% coverage, `ready=true`.
+Latest verified normal CI: run `32504281549` (#1010), 320 tests passed, 87% coverage, all quality/integration/security jobs green.
 
 ## Problem
 
-The repository needs source-bound canonical Prediction and Chainlink data before a real OOS economic campaign can be treated as evidence. The complete deployment-era historical campaign remains blocked because the authenticated full-history BSC source gate is not configured, but bounded recent collection is no longer blocked in the same way.
+The repository requires source-bound canonical Prediction, active Chainlink, checksum-verified Binance market data, and leakage-safe OOS evaluation before economic output can be treated as research evidence. The complete deployment-era campaign is still blocked because the authenticated full-history BSC source gate is not configured.
 
-## Context
+Bounded recent validation is no longer blocked: one-day source, one-day economic plumbing, one-day sensitivity/ablation, and local-fork Stage 5B readiness have all produced persisted empirical evidence.
 
-PR #1 implements the v0.7 leakage-safe research/economic-validation foundation. The full pipeline expects canonical BSC history, active Chainlink oracle routing, checksum-verified Binance Spot/Perp slices, availability-aware features, purged/embargoed OOS modeling/calibration, independent pool projection, and explicit transaction economics.
-
-## Current root causes / boundaries
+## Current boundaries
 
 ### Full historical campaign
 
-`evidence/archive-rpc-preflight.json` remains `configured=false` / `archive_ready=false` because `BSC_ARCHIVE_RPC_URL` is not configured. Public-source probing has shown that historical state access, historical logs, recent logs, and sustained collector behavior are separate capabilities; no unauthenticated public source has yet proved the complete deployment-era Prediction + Chainlink workload.
+`BSC_ARCHIVE_RPC_URL` is still not configured. Public-source probing showed that historical state, historical logs, recent logs, and sustained collection are independent capabilities. No unauthenticated public source has proved the complete deployment-era Prediction + Chainlink workload.
 
-### Recent public Prediction collection
+This gate remains fail-closed.
 
-A former accidental dependency in timestamp-to-block resolution made recent collection probe arbitrary old headers. Replacing the genesis-to-head search with head-local exponential backoff plus local binary search enabled public recent collection without pretending the node is archival.
+### Recent Prediction + Chainlink route
 
-The two-hour Aug 19 smoke first proved this route. After adding explicit RPC pacing, six-attempt retry handling, and HTTP 429 `Retry-After` support without weakening canonical block-hash validation, the fixed Aug 18–19 one-day Prediction bootstrap also succeeded on `https://rpc-bsc.48.club`.
+Recent timestamp-to-block resolution now stays local to the requested window instead of probing arbitrary old headers.
 
-Persisted one-day Prediction evidence records approximately 192k scanned blocks, 14,496 canonical Prediction events, 8,673 bets, 282 StartRound / 282 LockRound / 282 EndRound events, and deterministic replay evidence for 284 rounds.
+Prediction `oracle()` is a Chainlink proxy while `AnswerUpdated` is emitted by the underlying aggregator. Historical block-tagged state reads for the Aug 18 window were unavailable on the tested public routes, so the working recent proof uses a persisted successful Aug 19 route anchor plus fixed stateless backward scans for `NewOracle` and `AggregatorConfirmed`.
 
-### Recent Chainlink collection
+The fixed anchor is:
 
-The first recent Chainlink implementation exposed a separate identity problem: Prediction `oracle()` returns a Chainlink proxy, while `AnswerUpdated` is emitted by the underlying aggregator. The corrected route proves both the Prediction oracle proxy and the proxy's `aggregator()` implementation are unchanged across the requested window, then collects `AnswerUpdated` from the proven underlying aggregator.
+- block `116844485`;
+- proxy `0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee`;
+- aggregator `0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280`;
+- anchor evidence SHA-256 `88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3`.
 
-A two-hour Aug 19 public smoke proved that route with 218 real `AnswerUpdated` events. One-day Prediction + Chainlink validation is maintained as a separate gate; do not infer it from Prediction-only one-day success.
+One-day source run `32481332419` proved:
 
-## Current solution / status
+- blocks `116556542..116748497`;
+- 14,496 canonical Prediction events;
+- 8,673 bets;
+- 282 Start / 282 Lock / 282 End events;
+- 284 replay rounds;
+- 2,615 real Chainlink `AnswerUpdated` events;
+- zero route-change events in the fixed proof range.
 
-- Full historical source gate: still fail-closed and blocked.
-- Public two-hour recent Prediction collection: proven.
-- Public one-day recent Prediction collection: proven with paced/retry-aware RPC policy.
-- Public two-hour recent Prediction + Chainlink collection: proven with real `AnswerUpdated` events from the underlying aggregator.
-- Public one-day recent Prediction + Chainlink collection: separate empirical gate; use its own `latest` / `last-success` evidence rather than inferring from shorter runs.
-- Research/signing safety boundary: unchanged.
-- Current software quality gate for the paced RPC source revision: green.
+### One-day economic OOS plumbing
 
-Recent public-source success is a bounded source/readiness result. It does not replace the complete historical gate and is not profitability evidence.
+The source-bound Aug 18 economic campaign proved non-vacuous plumbing:
 
-## Related files
+- 268 research rows from 284 candidate rounds;
+- 4 purged/embargoed OOS folds;
+- 159 scored OOS samples;
+- 230 independent pool projections;
+- exact Spot/Perp provenance with 250 ms lags;
+- Chainlink availability lag 1000 ms.
 
-- `evidence/archive-rpc-preflight.json`
-- `evidence/public-archive-candidate-probe.json`
-- `evidence/public-blast-bootstrap-smoke.json`
-- `evidence/recent-public-bootstrap-smoke-2026-08-19-last-success.json`
-- `evidence/recent-public-bootstrap-2026-08-18-to-19.json`
-- `evidence/recent-public-chainlink-smoke-2026-08-19-last-success.json`
-- `evidence/recent-public-chainlink-2026-08-18-to-19-latest.json`
+The original economic GitHub job failed only after successful analytical computation because its repository-persistence shell used a broken nested heredoc. Recovered evidence is artifact/SHA bound and preserves the original job failure provenance. The canonical persist step has been repaired.
+
+Probability evidence remains weak: the baseline Brier skill score is `-0.12435269318908326`, so positive one-day PnL is not treated as alpha evidence.
+
+### One-day sensitivity and ablation
+
+`evidence/recent-economic-robustness-2026-08-18-to-19-last-success.json` records a successful robustness gate:
+
+- 8/8 exact economic scenarios evaluated non-vacuously;
+- all 8 happened to produce positive one-day PnL;
+- worst case `combined-stress`: `19007678140802798` wei PnL, `25343` ppm ROI;
+- 5 feature-family ablation variants over 159 common OOS epochs.
+
+The full feature set was not uniquely best. Removing `round_history` improved both one-day probability-loss metrics and realized PnL; removing `settlement_source` improved Brier/Brier-skill while reducing PnL. This blocks any claim that the current feature set is proven optimal.
+
+### Stage 5B
+
+Observed run `32494992355` proved the local-fork execution-readiness gate:
+
+- loopback Anvil BSC fork only;
+- restart, dropped/replaced, reorg, and non-loopback rejection scenarios passed;
+- unresolved intents 0;
+- `signing_enabled=false`;
+- `live_broadcast=false`.
+
+No funded/mainnet execution path is introduced.
+
+## Current expansion
+
+A separate Aug 16–19 UTC recent source gate was added in commit `d1c8bf083f3338eef89ece956f58593e39d78945`.
+
+Run `32503882364` is currently collecting the three-day Prediction + Chainlink window. Its identity is persisted in `evidence/recent-public-chainlink-2026-08-16-to-19-running.json`.
+
+The three-day gate requires:
+
+- exact Aug 16–19 timestamps;
+- real Prediction and Chainlink events;
+- at least 800 replay/Start/Lock/End rounds;
+- exact persisted anchor identity and digest;
+- zero `NewOracle` / `AggregatorConfirmed` route changes;
+- artifact publication before success evidence.
+
+No three-day economic result is claimed until that source gate succeeds.
+
+## Interpretation boundary
+
+Current evidence establishes software correctness, bounded recent data acquisition, economic-pipeline robustness, and local-fork execution-readiness as separate claims.
+
+It does **not** establish durable profitability because:
+
+- the sample is short;
+- probability skill is negative on the one-day window;
+- the full feature set is not stable as the best ablation variant;
+- broader recent regimes have not yet been evaluated;
+- the full historical-source gate remains unsatisfied.
+
+All current economic evidence keeps `profitability_gate_eligible=false` and `full_historical_gate_satisfied=false`.
+
+## Next steps
+
+1. Complete and validate the Aug 16–19 source gate.
+2. Run a larger three-day source-bound OOS campaign.
+3. Repeat sensitivity/ablation and compare calibration and feature stability against the one-day evidence.
+4. Add pre-window warmup only if observed skip patterns justify it.
+5. Expand across additional recent regimes.
+6. Prove an authenticated complete historical source before deployment-era profitability interpretation.
+
+## Related evidence
+
 - `evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json`
+- `evidence/recent-economic-smoke-2026-08-18-to-19-last-success.json`
+- `evidence/recent-economic-robustness-2026-08-18-to-19-last-success.json`
+- `evidence/stage5b-fork-last-success.json`
+- `evidence/recent-public-chainlink-2026-08-16-to-19-running.json`
 - `evidence/quality-gate.json`
-- `src/pancake_prediction/rpc.py`
-- `src/pancake_prediction/recent_bootstrap.py`
-- `src/pancake_prediction/public_collector.py`
-- `scripts/run_recent_public_bootstrap.py`
-- `.github/workflows/recent-public-bootstrap.yml`
-- `.github/workflows/recent-public-chainlink-day.yml`
-- `.github/workflows/archive-rpc-preflight.yml`
-- `.github/workflows/historical-bootstrap.yml`
 
-## Related tests / commits
+## Related observations
 
-- `b4514d85ac7ccd3505994d205404bfbf7e5cb198`: paced public-RPC implementation validated by normal CI.
-- GitHub Actions run 867: complete success for that source revision.
-- `evidence/quality-gate.json`: 304 passed tests, 87% coverage, `ready=true` for that source SHA.
-- `2d9edc2fc0fc8d571613c385042724008b5e2855`: persisted successful Aug 18–19 public Prediction bootstrap evidence.
-- `6ad31bb4629468d45e98171b99d013970fa31c7d`: localize recent timestamp header search.
-- `8b42f3c002c43b9c80fa4f65fd1718dd603b3664`: regression coverage for bounded recent header search.
-- `394f67c6ca2f3fec33049759bdb37e3590401ae3`: enforce archive RPC preflight gate after evidence persistence.
-- `5af84bbca184e6f785282bde1580591afa8a55d4`: fail historical bootstrap when archive credential is absent.
-- `61df8e8731b92ea7f30e6011fde02cdd6d0bdd28`: prevent cancelled quality runs from overwriting current evidence and bind checks to trigger SHA.
+- `../../observations/archive-capability-must-be-probed.md`
+- `../../observations/recent-bootstrap-must-search-headers-locally.md`
+- `../../observations/chainlink-proxy-vs-aggregator.md`
+- `../../observations/source-native-order-breaks-timestamp-ties.md`
+- `../../observations/evidence-persist-failure-is-not-analytical-failure.md`
+- `../../observations/one-day-economic-robustness-is-not-alpha-proof.md`
