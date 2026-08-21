@@ -54,7 +54,7 @@
     "start_loopback_fork": null,
     "verification": null
   },
-  "evidence_role": "latest_attempt",
+  "evidence_role": "last_success",
   "evidence_version": 1,
   "fork_block_number": 117252043,
   "interpretation": "Observed execution-readiness evidence is limited to an impersonated-account Anvil fork bound to 127.0.0.1. It grants no signing authority and is not funded/mainnet execution evidence.",
