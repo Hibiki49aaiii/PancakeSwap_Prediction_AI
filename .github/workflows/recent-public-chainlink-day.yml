@@ -12,6 +12,7 @@ on:
       - src/pancake_prediction/recent_bootstrap.py
       - src/pancake_prediction/collector.py
       - src/pancake_prediction/rpc.py
+      - evidence/recent-public-chainlink-smoke-2026-08-19.json
   workflow_dispatch:
 
 permissions:
@@ -45,6 +46,44 @@ jobs:
           echo "source_run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "source_event_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Publish one-day source run identity
+        env:
+          SOURCE_RUN_ID: ${{ steps.source_identity.outputs.source_run_id }}
+          SOURCE_SHA: ${{ steps.source_identity.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source_identity.outputs.source_event_sha }}
+        run: |
+          mkdir -p evidence
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "evidence_version": 1,
+              "state": "running",
+              "purpose": "public_recent_prediction_chainlink_one_day",
+              "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
+              "source_sha": os.environ["SOURCE_SHA"],
+              "source_event_sha": os.environ["SOURCE_EVENT_SHA"],
+              "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+              "anchor_evidence_path": "evidence/recent-public-chainlink-smoke-2026-08-19.json",
+              "signing_enabled": False,
+              "live_broadcast": False,
+          }
+          Path("evidence/recent-public-chainlink-2026-08-18-to-19-running.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-public-chainlink-2026-08-18-to-19-running.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record one-day Chainlink source run'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
       - name: Run one-day public Prediction plus Chainlink bootstrap
         id: bootstrap
         continue-on-error: true
@@ -60,6 +99,7 @@ jobs:
             --confirmations 64 \
             --chunk-size 2000 \
             --include-chainlink \
+            --chainlink-route-anchor-evidence evidence/recent-public-chainlink-smoke-2026-08-19.json \
             2> >(tee artifacts/recent-public-chainlink-2026-08-18-to-19.err >&2)
       - name: Validate one-day source files
         id: source_files
@@ -131,14 +171,23 @@ jobs:
           bootstrap_outcome = os.environ.get("BOOTSTRAP_OUTCOME", "skipped")
           source_files_outcome = os.environ.get("SOURCE_FILES_OUTCOME", "skipped")
           artifact_outcome = os.environ.get("ARTIFACT_OUTCOME", "skipped")
-          gate_success = all(
-              outcome == "success"
-              for outcome in (
-                  bootstrap_outcome,
-                  source_files_outcome,
-                  artifact_outcome,
-              )
+          anchor = payload.get("chainlink_route_anchor") or {}
+          semantic_success = (
+              payload.get("success") is True
+              and payload.get("chainlink_collected") is True
+              and payload.get("route_proof_mode")
+                  == "persisted_evidence_anchor_backward_change_scan"
+              and isinstance(anchor, dict)
+              and isinstance(anchor.get("evidence_sha256"), str)
+              and len(anchor.get("evidence_sha256", "")) == 64
           )
+          gate_success = (
+              semantic_success
+              and bootstrap_outcome == "success"
+              and source_files_outcome == "success"
+              and artifact_outcome == "success"
+          )
+          payload["semantic_success"] = semantic_success
           payload["workflow_outcome"] = "success" if gate_success else "failure"
           payload["gate_success"] = gate_success
           payload["step_outcomes"] = {
@@ -174,45 +223,23 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-public-chainlink-2026-08-18-to-19-latest.json
-          if [ "$BOOTSTRAP_OUTCOME" = success ] && \
-             [ "$SOURCE_FILES_OUTCOME" = success ] && \
-             [ "$ARTIFACT_OUTCOME" = success ]; then
+          GATE_SUCCESS="$(python -c 'import json; print("true" if json.load(open("evidence/recent-public-chainlink-2026-08-18-to-19-latest.json"))["gate_success"] else "false")')"
+          if [ "$GATE_SUCCESS" = true ]; then
             cp evidence/recent-public-chainlink-2026-08-18-to-19-latest.json \
               evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json
-            python - <<'PY'
-            import json
-            from pathlib import Path
-
-            path = Path("evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json")
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["evidence_role"] = "last_success"
-            path.write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            PY
+            python -c 'import json; p="evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json"; d=json.load(open(p)); d["evidence_role"]="last_success"; open(p,"w").write(json.dumps(d,indent=2,sort_keys=True)+"\n")'
             git add evidence/recent-public-chainlink-2026-08-18-to-19-last-success.json
           fi
-          if git diff --cached --quiet; then
-            echo 'One-day Chainlink evidence unchanged.'
-          else
+          if ! git diff --cached --quiet; then
             git commit -m 'chore: record one-day public Chainlink evidence'
-            git pull --rebase origin agent/v0.7-alpha-research
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
       - name: Enforce one-day Chainlink gate
         if: always() && !cancelled()
-        env:
-          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
-          SOURCE_FILES_OUTCOME: ${{ steps.source_files.outcome }}
-          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
         run: |
-          if [ "$BOOTSTRAP_OUTCOME" != success ] || \
-             [ "$SOURCE_FILES_OUTCOME" != success ] || \
-             [ "$ARTIFACT_OUTCOME" != success ]; then
-            echo "One-day public Prediction + Chainlink gate failed: bootstrap=$BOOTSTRAP_OUTCOME source_files=$SOURCE_FILES_OUTCOME artifact=$ARTIFACT_OUTCOME" >&2
-            exit 2
-          fi
+          python -c 'import json; d=json.load(open("evidence/recent-public-chainlink-2026-08-18-to-19-latest.json")); assert d.get("gate_success") is True, "one-day Chainlink semantic gate did not clear"'
 
   economic-smoke:
     needs: bootstrap
