@@ -1,10 +1,10 @@
 {
-  "evidence_version": 1,
+  "evidence_version": 2,
   "live_broadcast": false,
-  "purpose": "fixed_window_chainlink_route_state_and_change_scan_probe",
+  "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
   "signing_enabled": false,
-  "source_event_sha": "24d188066b64e6b8845ac28f2f823b963d0c9e28",
-  "source_run_id": 32398487009,
-  "source_sha": "24d188066b64e6b8845ac28f2f823b963d0c9e28",
+  "source_event_sha": "03b73c88046b3216f3a535058a0e81b4ac939eca",
+  "source_run_id": 32480745127,
+  "source_sha": "03b73c88046b3216f3a535058a0e81b4ac939eca",
   "state": "running"
 }
