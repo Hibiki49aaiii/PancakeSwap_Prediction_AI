@@ -1,0 +1,17 @@
+{
+  "anchor_block": 116844485,
+  "anchor_evidence_path": "evidence/recent-public-chainlink-smoke-2026-08-19.json",
+  "evidence_version": 1,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "profitability_gate_eligible": false,
+  "purpose": "public_recent_prediction_chainlink_three_day",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1786838400,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "signing_enabled": false,
+  "source_event_sha": "d1c8bf083f3338eef89ece956f58593e39d78945",
+  "source_run_id": 32503882364,
+  "source_sha": "d1c8bf083f3338eef89ece956f58593e39d78945",
+  "state": "running"
+}
