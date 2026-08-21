@@ -1,0 +1,323 @@
+name: recent-public-chainlink-three-day
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/recent-public-chainlink-three-day.yml
+      - scripts/run_recent_public_bootstrap.py
+      - src/pancake_prediction/public_collector.py
+      - src/pancake_prediction/recent_bootstrap.py
+      - src/pancake_prediction/collector.py
+      - src/pancake_prediction/rpc.py
+      - src/pancake_prediction/chainlink_anchor.py
+      - evidence/recent-public-chainlink-smoke-2026-08-19.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: recent-public-chainlink-three-day-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+
+      - name: Capture source identity
+        id: source_identity
+        run: |
+          echo "source_run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_event_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Publish three-day source run identity
+        env:
+          SOURCE_RUN_ID: ${{ steps.source_identity.outputs.source_run_id }}
+          SOURCE_SHA: ${{ steps.source_identity.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source_identity.outputs.source_event_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "evidence_version": 1,
+              "state": "running",
+              "purpose": "public_recent_prediction_chainlink_three_day",
+              "market": "BNBUSD",
+              "requested_start_timestamp": 1786838400,
+              "requested_end_timestamp": 1787097600,
+              "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
+              "source_sha": os.environ["SOURCE_SHA"],
+              "source_event_sha": os.environ["SOURCE_EVENT_SHA"],
+              "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+              "anchor_evidence_path": "evidence/recent-public-chainlink-smoke-2026-08-19.json",
+              "anchor_block": 116844485,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "profitability_gate_eligible": False,
+          }
+          Path("evidence/recent-public-chainlink-2026-08-16-to-19-running.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-public-chainlink-2026-08-16-to-19-running.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record three-day Chainlink source run'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+      - name: Run three-day public Prediction plus Chainlink bootstrap
+        id: bootstrap
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p artifacts evidence
+          python scripts/run_recent_public_bootstrap.py \
+            --market BNBUSD \
+            --database artifacts/bnbusd-public-chainlink-2026-08-16-to-19.sqlite \
+            --output artifacts/recent-public-chainlink-2026-08-16-to-19.json \
+            --start-timestamp 1786838400 \
+            --end-timestamp 1787097600 \
+            --confirmations 64 \
+            --chunk-size 2000 \
+            --include-chainlink \
+            --chainlink-route-anchor-evidence evidence/recent-public-chainlink-smoke-2026-08-19.json \
+            2> >(tee artifacts/recent-public-chainlink-2026-08-16-to-19.err >&2)
+
+      - name: Validate three-day source semantics
+        id: semantics
+        if: always() && !cancelled()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          test -s artifacts/recent-public-chainlink-2026-08-16-to-19.json
+          test -s artifacts/bnbusd-public-chainlink-2026-08-16-to-19.sqlite
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("artifacts/recent-public-chainlink-2026-08-16-to-19.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          if payload.get("success") is not True:
+              raise SystemExit("three-day bootstrap report is not successful")
+          if payload.get("market") != "BNBUSD":
+              raise SystemExit("three-day market mismatch")
+          if payload.get("requested_start_timestamp") != 1786838400:
+              raise SystemExit("three-day start timestamp mismatch")
+          if payload.get("requested_end_timestamp") != 1787097600:
+              raise SystemExit("three-day end timestamp mismatch")
+          if payload.get("chainlink_collected") is not True:
+              raise SystemExit("three-day source has no Chainlink collection")
+          if payload.get("archive_state_required") is not False:
+              raise SystemExit("three-day public source unexpectedly requires archive state")
+          if payload.get("route_proof_mode") != "persisted_evidence_anchor_backward_change_scan":
+              raise SystemExit("three-day route proof mode mismatch")
+
+          anchor = payload.get("chainlink_route_anchor") or {}
+          if anchor.get("anchor_block") != 116844485:
+              raise SystemExit("three-day anchor block mismatch")
+          if anchor.get("oracle_proxy") != "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee":
+              raise SystemExit("three-day oracle proxy mismatch")
+          if anchor.get("chainlink_aggregator") != "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280":
+              raise SystemExit("three-day Chainlink aggregator mismatch")
+          if anchor.get("evidence_sha256") != "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3":
+              raise SystemExit("three-day anchor evidence digest mismatch")
+
+          selected = payload.get("selected") or {}
+          report = selected.get("report") or {}
+          if report.get("authoritative_prediction_events") is not True:
+              raise SystemExit("three-day Prediction source is not authoritative")
+          if report.get("chainlink_collected") is not True:
+              raise SystemExit("three-day report has no Chainlink collection")
+
+          block_range = report.get("block_range") or {}
+          collection = report.get("collection") or {}
+          proof = report.get("oracle_stability_proof") or {}
+          quality = report.get("quality") or {}
+          from_block = int(block_range.get("from_block", 0))
+          to_block = int(block_range.get("to_block", 0))
+          if from_block <= 0 or to_block <= from_block:
+              raise SystemExit("three-day source block range is invalid")
+          if block_range.get("requested_start_timestamp") != 1786838400:
+              raise SystemExit("three-day block-range start mismatch")
+          if block_range.get("requested_end_timestamp") != 1787097600:
+              raise SystemExit("three-day block-range end mismatch")
+          if int(collection.get("from_block", 0)) != from_block:
+              raise SystemExit("three-day collection start block mismatch")
+          if int(collection.get("to_block", 0)) != to_block:
+              raise SystemExit("three-day collection end block mismatch")
+          if int(collection.get("prediction_events_inserted", 0)) <= 0:
+              raise SystemExit("three-day source has no Prediction events")
+          if int(collection.get("chainlink_events_inserted", 0)) <= 0:
+              raise SystemExit("three-day source has no Chainlink AnswerUpdated events")
+          if int(report.get("replay_rounds", 0)) < 800:
+              raise SystemExit("three-day replay is unexpectedly small")
+          if int(quality.get("starts", 0)) < 800:
+              raise SystemExit("three-day StartRound count is unexpectedly small")
+          if int(quality.get("locks", 0)) < 800:
+              raise SystemExit("three-day LockRound count is unexpectedly small")
+          if int(quality.get("ends", 0)) < 800:
+              raise SystemExit("three-day EndRound count is unexpectedly small")
+          if int(quality.get("duplicate_canonical_heights", -1)) != 0:
+              raise SystemExit("three-day source has duplicate canonical heights")
+
+          if proof.get("method") != "persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range":
+              raise SystemExit("three-day route proof method mismatch")
+          if int(proof.get("from_block", 0)) != from_block:
+              raise SystemExit("three-day route proof start mismatch")
+          if int(proof.get("through_block", 0)) != to_block:
+              raise SystemExit("three-day route proof source end mismatch")
+          if int(proof.get("proof_through_block", 0)) != 116844485:
+              raise SystemExit("three-day route proof anchor end mismatch")
+          if int(proof.get("anchor_block", 0)) != 116844485:
+              raise SystemExit("three-day route proof anchor mismatch")
+          if proof.get("anchor_evidence_sha256") != "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3":
+              raise SystemExit("three-day route proof digest mismatch")
+          if proof.get("oracle") != "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee":
+              raise SystemExit("three-day proof oracle mismatch")
+          if proof.get("chainlink_aggregator") != "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280":
+              raise SystemExit("three-day proof aggregator mismatch")
+          if int(proof.get("new_oracle_events", -1)) != 0:
+              raise SystemExit("three-day Prediction oracle route changed")
+          if int(proof.get("aggregator_confirmed_events", -1)) != 0:
+              raise SystemExit("three-day Chainlink aggregator route changed")
+          if proof.get("historical_state_required") is not False:
+              raise SystemExit("three-day route proof unexpectedly requires historical state")
+          PY
+
+      - name: Upload three-day source artifacts
+        id: artifact
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-public-chainlink-three-day-${{ github.run_id }}
+          path: |
+            artifacts/recent-public-chainlink-2026-08-16-to-19.json
+            artifacts/bnbusd-public-chainlink-2026-08-16-to-19.sqlite
+            artifacts/recent-public-chainlink-2026-08-16-to-19.err
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Persist three-day source evidence
+        if: always() && !cancelled()
+        env:
+          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          SEMANTICS_OUTCOME: ${{ steps.semantics.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
+          SOURCE_RUN_ID: ${{ steps.source_identity.outputs.source_run_id || github.run_id }}
+          SOURCE_SHA: ${{ steps.source_identity.outputs.source_sha || github.sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source_identity.outputs.source_event_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("artifacts/recent-public-chainlink-2026-08-16-to-19.json")
+          error_path = Path("artifacts/recent-public-chainlink-2026-08-16-to-19.err")
+          if report_path.is_file() and report_path.read_text(encoding="utf-8").strip():
+              try:
+                  payload = json.loads(report_path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  payload = {
+                      "evidence_version": 6,
+                      "market": "BNBUSD",
+                      "requested_start_timestamp": 1786838400,
+                      "requested_end_timestamp": 1787097600,
+                      "success": False,
+                      "chainlink_requested": True,
+                      "chainlink_collected": False,
+                      "source_report_json_error": str(exc),
+                      "signing_enabled": False,
+                      "live_broadcast": False,
+                  }
+          else:
+              payload = {
+                  "evidence_version": 6,
+                  "market": "BNBUSD",
+                  "requested_start_timestamp": 1786838400,
+                  "requested_end_timestamp": 1787097600,
+                  "success": False,
+                  "chainlink_requested": True,
+                  "chainlink_collected": False,
+                  "source_report_missing": True,
+                  "signing_enabled": False,
+                  "live_broadcast": False,
+              }
+
+          outcomes = {
+              "bootstrap": os.environ.get("BOOTSTRAP_OUTCOME", "skipped"),
+              "semantics": os.environ.get("SEMANTICS_OUTCOME", "skipped"),
+              "artifact": os.environ.get("ARTIFACT_OUTCOME", "skipped"),
+          }
+          gate_success = all(value == "success" for value in outcomes.values())
+          payload["semantic_success"] = outcomes["semantics"] == "success"
+          payload["workflow_outcome"] = "success" if gate_success else "failure"
+          payload["gate_success"] = gate_success
+          payload["step_outcomes"] = outcomes
+          payload["evidence_role"] = "latest_attempt"
+          payload["purpose"] = "public_recent_prediction_chainlink_three_day"
+          payload["profitability_gate_eligible"] = False
+          payload["full_historical_gate_satisfied"] = False
+          payload["source_run_id"] = int(os.environ["SOURCE_RUN_ID"])
+          payload["source_sha"] = os.environ["SOURCE_SHA"]
+          payload["source_event_sha"] = os.environ["SOURCE_EVENT_SHA"]
+          payload["signing_enabled"] = False
+          payload["live_broadcast"] = False
+          if error_path.is_file():
+              text = error_path.read_text(encoding="utf-8", errors="replace").strip()
+              payload["bootstrap_error_tail"] = text[-4000:] if text else None
+          else:
+              payload["bootstrap_error_tail"] = None
+
+          out = Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json")
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-public-chainlink-2026-08-16-to-19-latest.json
+          if python -c 'import json, pathlib; p=json.loads(pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json").read_text()); raise SystemExit(0 if p.get("gate_success") is True else 1)'; then
+            cp evidence/recent-public-chainlink-2026-08-16-to-19-latest.json evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json
+            python -c 'import json, pathlib; p=pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json"); d=json.loads(p.read_text()); d["evidence_role"]="last_success"; p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")'
+            git add evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record three-day public Chainlink evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+      - name: Enforce three-day Chainlink gate
+        if: always() && !cancelled()
+        run: |
+          python -c 'import json; d=json.load(open("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json")); assert d.get("gate_success") is True, "three-day Chainlink semantic gate did not clear"'
