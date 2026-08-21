@@ -1,0 +1,11 @@
+{
+  "evidence_version": 1,
+  "live_broadcast": false,
+  "purpose": "observed_stage5b_loopback_bsc_fork_gate",
+  "signing_enabled": false,
+  "source_event_sha": "6bfe78c76e270a125b2e17d526b33754af00048a",
+  "source_run_id": 32482113174,
+  "source_sha": "6bfe78c76e270a125b2e17d526b33754af00048a",
+  "state": "running",
+  "transaction_endpoint_scope": "loopback_local_fork_only"
+}
