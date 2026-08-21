@@ -213,10 +213,10 @@ def main() -> int:
                 }
             )
 
+    report_payload = None if success is None else success.get("report")
     chainlink_collected = bool(
-        success is not None
-        and isinstance(success.get("report"), dict)
-        and success["report"].get("chainlink_collected") is True
+        isinstance(report_payload, dict)
+        and report_payload.get("chainlink_collected") is True
     )
     payload = {
         "evidence_version": 6,
