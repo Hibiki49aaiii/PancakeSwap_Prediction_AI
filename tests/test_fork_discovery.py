@@ -94,6 +94,38 @@ def test_discovery_skips_safe_head_outside_betting_window() -> None:
     assert point.block_timestamp == 1_299
 
 
+def test_discovery_requires_explicit_lock_headroom() -> None:
+    rpc = _FakeRpc(
+        timestamps={106: 1_295, 105: 1_240},
+        rounds={
+            106: (700, 1_000, 1_300),
+            105: (700, 1_000, 1_300),
+        },
+    )
+    point = discover_fork_block(
+        rpc,
+        market="BNBUSD",
+        lookback_blocks=20,
+        confirmation_lag=4,
+        min_seconds_before_lock=60,
+    )
+    assert point.block_number == 105
+    assert point.block_timestamp == 1_240
+    assert point.round_lock_timestamp - point.block_timestamp == 60
+
+
+def test_discovery_rejects_negative_lock_headroom() -> None:
+    rpc = _FakeRpc()
+    with pytest.raises(ValueError, match="min_seconds_before_lock"):
+        discover_fork_block(
+            rpc,
+            market="BNBUSD",
+            lookback_blocks=20,
+            confirmation_lag=4,
+            min_seconds_before_lock=-1,
+        )
+
+
 def test_discovery_skips_uninitialized_or_mismatched_round_state() -> None:
     rpc = _FakeRpc(
         timestamps={106: 1_100, 105: 1_099, 104: 1_098},
@@ -139,4 +171,23 @@ def test_discovery_fails_closed_without_confirmed_bettable_state() -> None:
             market="BNBUSD",
             lookback_blocks=3,
             confirmation_lag=4,
+        )
+
+
+def test_discovery_fails_closed_when_only_near_lock_blocks_exist() -> None:
+    rpc = _FakeRpc(
+        timestamps={106: 1_295, 105: 1_294, 104: 1_293},
+        rounds={
+            106: (700, 1_000, 1_300),
+            105: (700, 1_000, 1_300),
+            104: (700, 1_000, 1_300),
+        },
+    )
+    with pytest.raises(RuntimeError, match="at least 60s before lock"):
+        discover_fork_block(
+            rpc,
+            market="BNBUSD",
+            lookback_blocks=3,
+            confirmation_lag=4,
+            min_seconds_before_lock=60,
         )
