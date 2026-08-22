@@ -2,6 +2,7 @@
   "archive_state_required": false,
   "attempts": [
     {
+      "authenticated": false,
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success"
@@ -10,7 +11,7 @@
   "chainlink_collected": false,
   "chainlink_requested": false,
   "chainlink_route_anchor": null,
-  "evidence_version": 6,
+  "evidence_version": 7,
   "live_broadcast": false,
   "market": "BNBUSD",
   "requested_end_timestamp": 1787097600,
@@ -20,9 +21,11 @@
     "backoff_s": 1.5,
     "min_interval_s": 0.15,
     "retries": 6,
+    "source_mode": "authenticated_then_public",
     "timeout_s": 20.0
   },
   "selected": {
+    "authenticated": false,
     "endpoint": "https://rpc-bsc.48.club",
     "report": {
       "authoritative_prediction_events": true,
@@ -30,7 +33,7 @@
         "confirmations": 64,
         "from_block": 116556542,
         "from_block_timestamp": 1787011200,
-        "head_block": 117440797,
+        "head_block": 117453389,
         "requested_end_timestamp": 1787097600,
         "requested_start_timestamp": 1787011200,
         "to_block": 116748497,
@@ -68,5 +71,6 @@
     }
   },
   "signing_enabled": false,
+  "source_requirement": null,
   "success": true
 }
