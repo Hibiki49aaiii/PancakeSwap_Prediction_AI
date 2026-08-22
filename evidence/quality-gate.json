@@ -7,6 +7,6 @@
   "pytest": "failure",
   "pytest_passed": null,
   "ready": false,
-  "ruff": "failure",
-  "source_sha": "40938b3e390b634b4b8a1e1d2dc299d6e70dc1d0"
+  "ruff": "success",
+  "source_sha": "2f1e27f51f42a4cfd3a5f82ca7374e9b884b3b4f"
 }
