@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -34,10 +36,51 @@ PUBLIC_BSC_ENDPOINTS = (
     "https://public.1rpc.io/bnb",
 )
 
+AUTHENTICATED_RPC_ENV_ORDER = (
+    "BSC_LOG_RPC_URL",
+    "BSC_ARCHIVE_RPC_URL",
+)
+
 PUBLIC_RPC_TIMEOUT_S = 20.0
 PUBLIC_RPC_RETRIES = 6
 PUBLIC_RPC_BACKOFF_S = 1.5
 PUBLIC_RPC_MIN_INTERVAL_S = 0.15
+
+
+@dataclass(frozen=True, slots=True)
+class RpcCandidate:
+    label: str
+    url: str
+    authenticated: bool
+
+
+def authenticated_rpc_candidates(environ: dict[str, str] | os._Environ[str]) -> tuple[RpcCandidate, ...]:
+    candidates: list[RpcCandidate] = []
+    for variable in AUTHENTICATED_RPC_ENV_ORDER:
+        value = environ.get(variable, "").strip()
+        if value:
+            candidates.append(
+                RpcCandidate(
+                    label=f"env:{variable}",
+                    url=value,
+                    authenticated=True,
+                )
+            )
+    return tuple(candidates)
+
+
+def rpc_candidates(
+    *,
+    require_authenticated: bool,
+    environ: dict[str, str] | os._Environ[str],
+) -> tuple[RpcCandidate, ...]:
+    authenticated = authenticated_rpc_candidates(environ)
+    if require_authenticated:
+        return authenticated
+    return authenticated + tuple(
+        RpcCandidate(label=endpoint, url=endpoint, authenticated=False)
+        for endpoint in PUBLIC_BSC_ENDPOINTS
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +108,14 @@ def build_parser() -> argparse.ArgumentParser:
             "will be extended backward using stateless change-event scans"
         ),
     )
+    parser.add_argument(
+        "--require-authenticated-rpc",
+        action="store_true",
+        help=(
+            "use only BSC_LOG_RPC_URL then BSC_ARCHIVE_RPC_URL; never fall back to "
+            "known public endpoints"
+        ),
+    )
     return parser
 
 
@@ -85,6 +136,10 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         parser.error(f"invalid Chainlink route anchor evidence: {exc}")
 
+    candidates = rpc_candidates(
+        require_authenticated=bool(args.require_authenticated_rpc),
+        environ=os.environ,
+    )
     attempts: list[dict[str, object]] = []
     success: dict[str, object] | None = None
 
@@ -93,15 +148,27 @@ def main() -> int:
         "retries": PUBLIC_RPC_RETRIES,
         "backoff_s": PUBLIC_RPC_BACKOFF_S,
         "min_interval_s": PUBLIC_RPC_MIN_INTERVAL_S,
+        "source_mode": (
+            "authenticated_only"
+            if bool(args.require_authenticated_rpc)
+            else "authenticated_then_public"
+        ),
     }
 
-    for endpoint in PUBLIC_BSC_ENDPOINTS:
+    source_requirement: dict[str, object] | None = None
+    if bool(args.require_authenticated_rpc) and not candidates:
+        source_requirement = {
+            "classification": "AUTHENTICATED_RPC_REQUIRED",
+            "accepted_env": list(AUTHENTICATED_RPC_ENV_ORDER),
+        }
+
+    for candidate in candidates:
         if args.database.exists():
             args.database.unlink()
         try:
             report = run_recent_prediction_bootstrap(
                 JsonRpcClient(
-                    endpoint,
+                    candidate.url,
                     timeout_s=PUBLIC_RPC_TIMEOUT_S,
                     retries=PUBLIC_RPC_RETRIES,
                     backoff_s=PUBLIC_RPC_BACKOFF_S,
@@ -122,12 +189,14 @@ def main() -> int:
                     "from the proven underlying aggregator"
                 )
             success = {
-                "endpoint": endpoint,
+                "endpoint": candidate.label,
+                "authenticated": candidate.authenticated,
                 "report": report.as_dict(),
             }
             attempts.append(
                 {
-                    "endpoint": endpoint,
+                    "endpoint": candidate.label,
+                    "authenticated": candidate.authenticated,
                     "outcome": "success",
                     "error": None,
                 }
@@ -135,7 +204,8 @@ def main() -> int:
             break
         except Exception as exc:
             attempt: dict[str, object] = {
-                "endpoint": endpoint,
+                "endpoint": candidate.label,
+                "authenticated": candidate.authenticated,
                 "outcome": "failure",
                 "error": f"{type(exc).__name__}: {exc}",
             }
@@ -152,13 +222,14 @@ def main() -> int:
         and report_payload.get("chainlink_collected") is True
     )
     payload = {
-        "evidence_version": 6,
+        "evidence_version": 7,
         "market": market,
         "requested_start_timestamp": args.start_timestamp,
         "requested_end_timestamp": args.end_timestamp,
         "success": success is not None,
         "attempts": attempts,
         "selected": success,
+        "source_requirement": source_requirement,
         "rpc_policy": rpc_policy,
         "archive_state_required": False,
         "chainlink_requested": bool(args.include_chainlink),
