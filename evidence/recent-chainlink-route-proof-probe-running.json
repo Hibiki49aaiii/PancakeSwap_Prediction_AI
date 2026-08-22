@@ -3,8 +3,8 @@
   "live_broadcast": false,
   "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
   "signing_enabled": false,
-  "source_event_sha": "15b657cc418fec1e8b7cc6b32dcb0bc4f399581a",
-  "source_run_id": 32579000835,
-  "source_sha": "15b657cc418fec1e8b7cc6b32dcb0bc4f399581a",
+  "source_event_sha": "d8b98fa3e88df04a2a3bc246ed2eae7975c4777e",
+  "source_run_id": 32579039386,
+  "source_sha": "19f69a0398643af5f35d7f9d660a470213351d8e",
   "state": "running"
 }
