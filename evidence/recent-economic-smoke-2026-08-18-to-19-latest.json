@@ -10,7 +10,7 @@
     "batches": 3,
     "first_aggregate_trade_id": 858791160,
     "first_trade_timestamp_ms": 1787011200015,
-    "ingest_version": 1787412762631553245,
+    "ingest_version": 1787417752999191621,
     "last_aggregate_trade_id": 858905440,
     "last_trade_timestamp_ms": 1787097599972,
     "market": "BNBUSD",
@@ -26,7 +26,7 @@
     "batches": 2,
     "first_aggregate_trade_id": 849802848,
     "first_trade_timestamp_ms": 1787011200233,
-    "ingest_version": 1787412760710944181,
+    "ingest_version": 1787417751739739779,
     "last_aggregate_trade_id": 849899100,
     "last_trade_timestamp_ms": 1787097593847,
     "market": "BNBUSD",
@@ -276,15 +276,15 @@
     "spot_query_start_ms": 1787011140000,
     "spot_source_count": 1
   },
-  "chainlink_artifact_sha256": "1d23d3e538162ec44c79397347aaec351b173ea91d83e417288d6727e6287666",
-  "chainlink_database_sha256": "1c095ff0b726088535bccc494abbc93ad6f4876f6ca9140af65eef6c07bfbcd0",
+  "chainlink_artifact_sha256": "a4b5710f9a85b3a1ddccf10e66dc30fa18ad6bdf8a2bdafb4e5f121a4f13e993",
+  "chainlink_database_sha256": "c39679931d40f31497cedeb389f973da60ff7defcd465ac792d55bf3ce4d7bbe",
   "economic_assumptions": {
     "bet_gas_wei": 50000000000000,
     "claim_gas_wei": 30000000000000,
     "inclusion_latency_seconds": 2,
     "stake_wei": 10000000000000000
   },
-  "economic_source_sha": "0225fc445a090d149649bb82208a41af282b38df",
+  "economic_source_sha": "ec3b8df2cf127b26a771ab7142083b941aca148d",
   "errors": {
     "binance_download": null,
     "binance_ingest": null,
@@ -312,7 +312,7 @@
   "purpose": "recent_source_bound_economic_pipeline_smoke",
   "signing_enabled": false,
   "source_current_run": true,
-  "source_event_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
+  "source_event_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
   "source_run": {
     "actor": {
       "avatar_url": "https://avatars.githubusercontent.com/u/86287098?v=4",
@@ -335,14 +335,14 @@
       "url": "https://api.github.com/users/Hibiki49aaiii",
       "user_view_type": "public"
     },
-    "artifacts_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583/artifacts",
-    "cancel_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583/cancel",
-    "check_suite_id": 88303350599,
-    "check_suite_node_id": "CS_kwDOT7HUi88AAAAUj0ozRw",
-    "check_suite_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/check-suites/88303350599",
+    "artifacts_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684/artifacts",
+    "cancel_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684/cancel",
+    "check_suite_id": 88313315171,
+    "check_suite_node_id": "CS_kwDOT7HUi88AAAAUj-I_Yw",
+    "check_suite_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/check-suites/88313315171",
     "conclusion": null,
-    "created_at": "2026-08-22T14:44:16Z",
-    "display_title": "fix: preserve RpcResponseError compatibility for log diagnostics",
+    "created_at": "2026-08-22T16:07:50Z",
+    "display_title": "refactor: use shared recent RPC selection module",
     "event": "push",
     "head_branch": "agent/v0.7-alpha-research",
     "head_commit": {
@@ -354,10 +354,10 @@
         "email": "86287098+Hibiki49aaiii@users.noreply.github.com",
         "name": "Hibiki49aaiii"
       },
-      "id": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
-      "message": "fix: preserve RpcResponseError compatibility for log diagnostics",
-      "timestamp": "2026-08-22T14:44:15Z",
-      "tree_id": "e3d73a54c0cec5f9ab8af158585fe08946943fde"
+      "id": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+      "message": "refactor: use shared recent RPC selection module",
+      "timestamp": "2026-08-22T16:07:48Z",
+      "tree_id": "ec0e03ea25a5bf940f1cc682642eacab7ed4c85c"
     },
     "head_repository": {
       "archive_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/{archive_format}{/ref}",
@@ -427,13 +427,13 @@
       "trees_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/git/trees{/sha}",
       "url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI"
     },
-    "head_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
-    "html_url": "https://github.com/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583",
-    "id": 32579584583,
-    "jobs_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583/jobs",
-    "logs_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583/logs",
+    "head_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+    "html_url": "https://github.com/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684",
+    "id": 32583778684,
+    "jobs_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684/jobs",
+    "logs_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684/logs",
     "name": "recent-public-chainlink-day",
-    "node_id": "WFR_kwLOT7HUi88AAAAHleUCRw",
+    "node_id": "WFR_kwLOT7HUi88AAAAHliUBfA",
     "path": ".github/workflows/recent-public-chainlink-day.yml",
     "previous_attempt_url": null,
     "pull_requests": [
@@ -454,7 +454,7 @@
             "name": "PancakeSwap_Prediction_AI",
             "url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI"
           },
-          "sha": "0225fc445a090d149649bb82208a41af282b38df"
+          "sha": "ec3b8df2cf127b26a771ab7142083b941aca148d"
         },
         "id": 4296224834,
         "number": 1,
@@ -463,9 +463,9 @@
     ],
     "referenced_workflows": [
       {
-        "path": "Hibiki49aaiii/PancakeSwap_Prediction_AI/.github/workflows/recent-economic-smoke.yml@ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
+        "path": "Hibiki49aaiii/PancakeSwap_Prediction_AI/.github/workflows/recent-economic-smoke.yml@d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
         "ref": "refs/heads/agent/v0.7-alpha-research",
-        "sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7"
+        "sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5"
       }
     ],
     "repository": {
@@ -536,10 +536,10 @@
       "trees_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/git/trees{/sha}",
       "url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI"
     },
-    "rerun_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583/rerun",
+    "rerun_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684/rerun",
     "run_attempt": 1,
-    "run_number": 24,
-    "run_started_at": "2026-08-22T14:44:16Z",
+    "run_number": 28,
+    "run_started_at": "2026-08-22T16:07:50Z",
     "status": "in_progress",
     "triggering_actor": {
       "avatar_url": "https://avatars.githubusercontent.com/u/86287098?v=4",
@@ -562,13 +562,13 @@
       "url": "https://api.github.com/users/Hibiki49aaiii",
       "user_view_type": "public"
     },
-    "updated_at": "2026-08-22T15:32:15Z",
-    "url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32579584583",
+    "updated_at": "2026-08-22T16:55:01Z",
+    "url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/runs/32583778684",
     "workflow_id": 338502126,
     "workflow_url": "https://api.github.com/repos/Hibiki49aaiii/PancakeSwap_Prediction_AI/actions/workflows/338502126"
   },
-  "source_run_id": 32579584583,
-  "source_sha": "3f1547bb81ebf39119d96c323ad8798c621c752d",
+  "source_run_id": 32583778684,
+  "source_sha": "dbba0d951c1986465598e808577c403028c30a5d",
   "source_window": {
     "end_timestamp": 1787097600,
     "market": "BNBUSD",
@@ -584,6 +584,6 @@
     "source_artifact": "success"
   },
   "success": true,
-  "trigger_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
+  "trigger_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
   "workflow_outcome": "success"
 }
