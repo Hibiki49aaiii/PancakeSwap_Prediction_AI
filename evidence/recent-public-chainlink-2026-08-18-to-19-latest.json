@@ -1,27 +1,110 @@
 {
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": null,
+      "outcome": "success"
+    }
+  ],
   "bootstrap_error_tail": null,
-  "chainlink_collected": false,
+  "chainlink_collected": true,
   "chainlink_requested": true,
+  "chainlink_route_anchor": {
+    "anchor_block": 116844485,
+    "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+    "evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+    "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+  },
   "evidence_role": "latest_attempt",
   "evidence_version": 6,
-  "gate_success": false,
+  "gate_success": true,
   "live_broadcast": false,
   "market": "BNBUSD",
   "profitability_gate_eligible": false,
   "purpose": "public_recent_prediction_chainlink_one_day",
   "requested_end_timestamp": 1787097600,
   "requested_start_timestamp": 1787011200,
-  "semantic_success": false,
-  "signing_enabled": false,
-  "source_event_sha": "d8b98fa3e88df04a2a3bc246ed2eae7975c4777e",
-  "source_report_missing": true,
-  "source_run_id": 32579039547,
-  "source_sha": "19f69a0398643af5f35d7f9d660a470213351d8e",
-  "step_outcomes": {
-    "artifact": "failure",
-    "bootstrap": "skipped",
-    "source_files": "failure"
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "timeout_s": 20.0
   },
-  "success": false,
-  "workflow_outcome": "failure"
+  "selected": {
+    "endpoint": "https://rpc-bsc.48.club",
+    "report": {
+      "authoritative_prediction_events": true,
+      "block_range": {
+        "confirmations": 64,
+        "from_block": 116556542,
+        "from_block_timestamp": 1787011200,
+        "head_block": 117442253,
+        "requested_end_timestamp": 1787097600,
+        "requested_start_timestamp": 1787011200,
+        "to_block": 116748497,
+        "to_block_timestamp": 1787097599
+      },
+      "chainlink_collected": true,
+      "collection": {
+        "chainlink_collector_run_id": 2,
+        "chainlink_event_addresses": [
+          "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280"
+        ],
+        "chainlink_events_inserted": 2615,
+        "collector_run_id": 1,
+        "from_block": 116556542,
+        "include_chainlink": true,
+        "market": "BNBUSD",
+        "oracle_addresses": [
+          "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+        ],
+        "prediction_analytic_only": false,
+        "prediction_events_inserted": 14496,
+        "reorg_blocks_detected": [],
+        "to_block": 116748497
+      },
+      "database": "artifacts/bnbusd-public-chainlink-2026-08-18-to-19.sqlite",
+      "market": "BNBUSD",
+      "oracle_stability_proof": {
+        "aggregator_confirmed_events": 0,
+        "anchor_block": 116844485,
+        "anchor_evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+        "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+        "from_block": 116556542,
+        "historical_state_required": false,
+        "method": "persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range",
+        "new_oracle_events": 0,
+        "oracle": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee",
+        "proof_through_block": 116844485,
+        "through_block": 116748497
+      },
+      "quality": {
+        "bets": 8673,
+        "duplicate_canonical_heights": 0,
+        "ends": 282,
+        "locks": 282,
+        "market": "BNBUSD",
+        "reorgs": 0,
+        "starts": 282,
+        "unresolved_started_rounds": 2
+      },
+      "replay_input_digest": "655042bf56cd2a6cef457dfaba913d853e9a02d34c23462dbb487732eb69da8a",
+      "replay_output_digest": "52a353fe3e48ddc0645cb08c1c03ee1cea01c8ba16b6e370ebf1e593f245d0b9",
+      "replay_rounds": 284
+    }
+  },
+  "semantic_success": true,
+  "signing_enabled": false,
+  "source_event_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
+  "source_run_id": 32579584583,
+  "source_sha": "3f1547bb81ebf39119d96c323ad8798c621c752d",
+  "step_outcomes": {
+    "artifact": "success",
+    "bootstrap": "success",
+    "source_files": "success"
+  },
+  "success": true,
+  "workflow_outcome": "success"
 }
