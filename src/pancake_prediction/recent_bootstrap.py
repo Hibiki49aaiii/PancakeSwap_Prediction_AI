@@ -9,12 +9,46 @@ from .contracts import Market
 from .public_collector import PublicHistoricalCollector
 from .quality import QualityReport, build_quality_report
 from .replay import ReplaySnapshot, build_replay_snapshot
+from .rpc import RpcError
 from .store import EventStore
 
 
 class RecentBootstrapRpc(ReadOnlyRpc, Protocol):
     def block_number(self) -> int: ...
     def block(self, number: int) -> dict[str, Any]: ...
+
+
+class RecentSourceRetentionError(RpcError):
+    """The provider's retained header window starts after the requested timestamp."""
+
+    def __init__(
+        self,
+        *,
+        requested_timestamp: int,
+        first_available_block: int,
+        first_available_timestamp: int,
+        last_unavailable_block: int,
+    ) -> None:
+        self.requested_timestamp = requested_timestamp
+        self.first_available_block = first_available_block
+        self.first_available_timestamp = first_available_timestamp
+        self.last_unavailable_block = last_unavailable_block
+        super().__init__(
+            "provider retention excludes requested timestamp: "
+            f"requested_timestamp={requested_timestamp} "
+            f"first_available_block={first_available_block} "
+            f"first_available_timestamp={first_available_timestamp} "
+            f"last_unavailable_block={last_unavailable_block}"
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "classification": "PROVIDER_RETENTION",
+            "requested_timestamp": self.requested_timestamp,
+            "first_available_block": self.first_available_block,
+            "first_available_timestamp": self.first_available_timestamp,
+            "last_unavailable_block": self.last_unavailable_block,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +118,38 @@ def _block_timestamp(rpc: RecentBootstrapRpc, block_number: int) -> int:
         raise ValueError(f"block {block_number} has an invalid timestamp") from exc
 
 
+def _is_block_not_found_error(exc: RpcError) -> bool:
+    return str(exc).startswith("block not found: ")
+
+
+def _first_available_block_after_gap(
+    rpc: RecentBootstrapRpc,
+    *,
+    unavailable_block: int,
+    available_block: int,
+) -> tuple[int, int, int]:
+    """Resolve a contiguous pruned-header boundary between known unavailable/available blocks."""
+
+    if unavailable_block < 0 or available_block < 0:
+        raise ValueError("block bounds must be non-negative")
+    if unavailable_block >= available_block:
+        raise ValueError("unavailable_block must be lower than available_block")
+
+    low = unavailable_block
+    high = available_block
+    while low + 1 < high:
+        mid = (low + high) // 2
+        try:
+            _block_timestamp(rpc, mid)
+        except RpcError as exc:
+            if not _is_block_not_found_error(exc):
+                raise
+            low = mid
+        else:
+            high = mid
+    return high, _block_timestamp(rpc, high), low
+
+
 def first_block_at_or_after(
     rpc: RecentBootstrapRpc,
     timestamp: int,
@@ -115,7 +181,7 @@ def recent_search_lower_bound(
     *,
     upper_block: int,
 ) -> int:
-    """Find a nearby lower bound without probing arbitrary old block headers."""
+    """Find a nearby lower bound while distinguishing pruning from target retention loss."""
 
     if timestamp < 0 or upper_block < 0:
         raise ValueError("timestamp and upper_block must be non-negative")
@@ -125,12 +191,36 @@ def recent_search_lower_bound(
     if upper_block == 0:
         return 0
 
+    last_available_block = upper_block
     distance = 1
     while True:
         candidate = max(0, upper_block - distance)
-        candidate_timestamp = _block_timestamp(rpc, candidate)
+        try:
+            candidate_timestamp = _block_timestamp(rpc, candidate)
+        except RpcError as exc:
+            if not _is_block_not_found_error(exc):
+                raise
+            (
+                first_available_block,
+                first_available_timestamp,
+                last_unavailable_block,
+            ) = _first_available_block_after_gap(
+                rpc,
+                unavailable_block=candidate,
+                available_block=last_available_block,
+            )
+            if first_available_timestamp > timestamp:
+                raise RecentSourceRetentionError(
+                    requested_timestamp=timestamp,
+                    first_available_block=first_available_block,
+                    first_available_timestamp=first_available_timestamp,
+                    last_unavailable_block=last_unavailable_block,
+                ) from exc
+            return first_available_block
+
         if candidate == 0 or candidate_timestamp < timestamp:
             return candidate
+        last_available_block = candidate
         distance *= 2
 
 
