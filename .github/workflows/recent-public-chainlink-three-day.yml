@@ -1,4 +1,4 @@
-name: recent-public-chainlink-three-day
+name: recent-authenticated-chainlink-three-day
 
 on:
   push:
@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: recent-public-chainlink-three-day-${{ github.ref }}
+  group: recent-authenticated-chainlink-three-day-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,9 +32,11 @@ jobs:
         with:
           ref: agent/v0.7-alpha-research
           fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install project
         run: pip install -e .
 
@@ -59,21 +61,24 @@ jobs:
           from pathlib import Path
 
           payload = {
-              "evidence_version": 1,
+              "evidence_version": 2,
               "state": "running",
-              "purpose": "public_recent_prediction_chainlink_three_day",
+              "purpose": "authenticated_recent_prediction_chainlink_three_day",
               "market": "BNBUSD",
               "requested_start_timestamp": 1786838400,
               "requested_end_timestamp": 1787097600,
               "source_run_id": int(os.environ["SOURCE_RUN_ID"]),
               "source_sha": os.environ["SOURCE_SHA"],
               "source_event_sha": os.environ["SOURCE_EVENT_SHA"],
+              "source_mode": "authenticated_only",
+              "accepted_rpc_env": ["BSC_LOG_RPC_URL", "BSC_ARCHIVE_RPC_URL"],
               "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
               "anchor_evidence_path": "evidence/recent-public-chainlink-smoke-2026-08-19.json",
               "anchor_block": 116844485,
               "signing_enabled": False,
               "live_broadcast": False,
               "profitability_gate_eligible": False,
+              "full_historical_gate_satisfied": False,
           }
           Path("evidence/recent-public-chainlink-2026-08-16-to-19-running.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -84,18 +89,22 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-public-chainlink-2026-08-16-to-19-running.json
           if ! git diff --cached --quiet; then
-            git commit -m 'chore: record three-day Chainlink source run'
+            git commit -m 'chore: record authenticated three-day source run'
             git fetch origin agent/v0.7-alpha-research
             git rebase origin/agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
 
-      - name: Run three-day public Prediction plus Chainlink bootstrap
+      - name: Run authenticated three-day Prediction plus Chainlink bootstrap
         id: bootstrap
         continue-on-error: true
+        env:
+          BSC_LOG_RPC_URL: ${{ secrets.BSC_LOG_RPC_URL }}
+          BSC_ARCHIVE_RPC_URL: ${{ secrets.BSC_ARCHIVE_RPC_URL }}
         run: |
           set -o pipefail
           mkdir -p artifacts evidence
+          : > artifacts/recent-public-chainlink-2026-08-16-to-19.err
           python scripts/run_recent_public_bootstrap.py \
             --market BNBUSD \
             --database artifacts/bnbusd-public-chainlink-2026-08-16-to-19.sqlite \
@@ -106,6 +115,7 @@ jobs:
             --chunk-size 2000 \
             --include-chainlink \
             --chainlink-route-anchor-evidence evidence/recent-public-chainlink-smoke-2026-08-19.json \
+            --require-authenticated-rpc \
             2> >(tee artifacts/recent-public-chainlink-2026-08-16-to-19.err >&2)
 
       - name: Validate three-day source semantics
@@ -136,9 +146,13 @@ jobs:
           if payload.get("chainlink_collected") is not True:
               raise SystemExit("three-day source has no Chainlink collection")
           if payload.get("archive_state_required") is not False:
-              raise SystemExit("three-day public source unexpectedly requires archive state")
+              raise SystemExit("three-day source unexpectedly requires historical state")
           if payload.get("route_proof_mode") != "persisted_evidence_anchor_backward_change_scan":
               raise SystemExit("three-day route proof mode mismatch")
+          if (payload.get("rpc_policy") or {}).get("source_mode") != "authenticated_only":
+              raise SystemExit("three-day source is not authenticated-only")
+          if payload.get("source_requirement") is not None:
+              raise SystemExit("three-day authenticated RPC requirement was not satisfied")
 
           anchor = payload.get("chainlink_route_anchor") or {}
           if anchor.get("anchor_block") != 116844485:
@@ -151,6 +165,16 @@ jobs:
               raise SystemExit("three-day anchor evidence digest mismatch")
 
           selected = payload.get("selected") or {}
+          if selected.get("authenticated") is not True:
+              raise SystemExit("three-day selected source is not authenticated")
+          if selected.get("endpoint") not in {
+              "env:BSC_LOG_RPC_URL",
+              "env:BSC_ARCHIVE_RPC_URL",
+          }:
+              raise SystemExit("three-day selected source label is invalid")
+          if str(selected.get("endpoint", "")).startswith(("http://", "https://")):
+              raise SystemExit("three-day evidence leaked an RPC URL")
+
           report = selected.get("report") or {}
           if report.get("authoritative_prediction_events") is not True:
               raise SystemExit("three-day Prediction source is not authoritative")
@@ -176,7 +200,7 @@ jobs:
           if int(collection.get("prediction_events_inserted", 0)) <= 0:
               raise SystemExit("three-day source has no Prediction events")
           if int(collection.get("chainlink_events_inserted", 0)) <= 0:
-              raise SystemExit("three-day source has no Chainlink AnswerUpdated events")
+              raise SystemExit("three-day source has no Chainlink events")
           if int(report.get("replay_rounds", 0)) < 800:
               raise SystemExit("three-day replay is unexpectedly small")
           if int(quality.get("starts", 0)) < 800:
@@ -218,7 +242,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: recent-public-chainlink-three-day-${{ github.run_id }}
+          name: recent-authenticated-chainlink-three-day-${{ github.run_id }}
           path: |
             artifacts/recent-public-chainlink-2026-08-16-to-19.json
             artifacts/bnbusd-public-chainlink-2026-08-16-to-19.sqlite
@@ -249,29 +273,25 @@ jobs:
                   payload = json.loads(report_path.read_text(encoding="utf-8"))
               except json.JSONDecodeError as exc:
                   payload = {
-                      "evidence_version": 6,
+                      "evidence_version": 7,
                       "market": "BNBUSD",
                       "requested_start_timestamp": 1786838400,
                       "requested_end_timestamp": 1787097600,
                       "success": False,
-                      "chainlink_requested": True,
-                      "chainlink_collected": False,
                       "source_report_json_error": str(exc),
-                      "signing_enabled": False,
-                      "live_broadcast": False,
                   }
           else:
               payload = {
-                  "evidence_version": 6,
+                  "evidence_version": 7,
                   "market": "BNBUSD",
                   "requested_start_timestamp": 1786838400,
                   "requested_end_timestamp": 1787097600,
                   "success": False,
-                  "chainlink_requested": True,
-                  "chainlink_collected": False,
                   "source_report_missing": True,
-                  "signing_enabled": False,
-                  "live_broadcast": False,
+                  "source_requirement": {
+                      "classification": "AUTHENTICATED_RPC_REQUIRED",
+                      "accepted_env": ["BSC_LOG_RPC_URL", "BSC_ARCHIVE_RPC_URL"],
+                  },
               }
 
           outcomes = {
@@ -285,7 +305,7 @@ jobs:
           payload["gate_success"] = gate_success
           payload["step_outcomes"] = outcomes
           payload["evidence_role"] = "latest_attempt"
-          payload["purpose"] = "public_recent_prediction_chainlink_three_day"
+          payload["purpose"] = "authenticated_recent_prediction_chainlink_three_day"
           payload["profitability_gate_eligible"] = False
           payload["full_historical_gate_satisfied"] = False
           payload["source_run_id"] = int(os.environ["SOURCE_RUN_ID"])
@@ -302,22 +322,37 @@ jobs:
           out = Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json")
           out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add evidence/recent-public-chainlink-2026-08-16-to-19-latest.json
-          if python -c 'import json, pathlib; p=json.loads(pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json").read_text()); raise SystemExit(0 if p.get("gate_success") is True else 1)'; then
+          if python -c 'import json, pathlib; d=json.loads(pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json").read_text()); raise SystemExit(0 if d.get("gate_success") is True else 1)'; then
             cp evidence/recent-public-chainlink-2026-08-16-to-19-latest.json evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json
-            python -c 'import json, pathlib; p=pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json"); d=json.loads(p.read_text()); d["evidence_role"]="last_success"; p.write_text(json.dumps(d,indent=2,sort_keys=True)+"\n")'
+            python -c 'import json, pathlib; p=pathlib.Path("evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json"); d=json.loads(p.read_text()); d["evidence_role"]="last_success"; p.write_text(json.dumps(d, indent=2, sort_keys=True)+"\n")'
             git add evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json
           fi
           if ! git diff --cached --quiet; then
-            git commit -m 'chore: record three-day public Chainlink evidence'
+            git commit -m 'chore: record authenticated three-day Chainlink source evidence'
             git fetch origin agent/v0.7-alpha-research
             git rebase origin/agent/v0.7-alpha-research
             git push origin HEAD:agent/v0.7-alpha-research
           fi
 
-      - name: Enforce three-day Chainlink gate
+      - name: Enforce authenticated three-day Chainlink gate
         if: always() && !cancelled()
         run: |
-          python -c 'import json; d=json.load(open("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json")); assert d.get("gate_success") is True, "three-day Chainlink semantic gate did not clear"'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("evidence/recent-public-chainlink-2026-08-16-to-19-latest.json")
+          if not path.is_file():
+              raise SystemExit("three-day source evidence was not persisted")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if payload.get("gate_success") is not True:
+              requirement = payload.get("source_requirement") or {}
+              classification = requirement.get("classification")
+              if classification:
+                  raise SystemExit(f"three-day source gate blocked: {classification}")
+              raise SystemExit("three-day authenticated source gate failed")
+          PY
