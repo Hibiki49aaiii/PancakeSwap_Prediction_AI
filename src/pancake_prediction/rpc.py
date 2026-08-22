@@ -37,6 +37,50 @@ class RpcResponseError(RpcError):
         super().__init__(f"{method}: JSON-RPC error{code_text}: {message}")
 
 
+class RpcLogQueryError(RpcError):
+    """Preserve the exact failing eth_getLogs query after adaptive splitting."""
+
+    def __init__(
+        self,
+        response_error: RpcResponseError,
+        *,
+        address: str,
+        from_block: int,
+        to_block: int,
+        topic0s: tuple[str, ...] | None,
+    ) -> None:
+        self.response_error = response_error
+        self.code = response_error.code
+        self.address = address.lower()
+        self.from_block = from_block
+        self.to_block = to_block
+        self.topic0s = topic0s
+        super().__init__(
+            f"eth_getLogs query failed address={self.address} "
+            f"blocks={from_block}..{to_block} topics={0 if topic0s is None else len(topic0s)}: "
+            f"{response_error}"
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        is_single_block = self.from_block == self.to_block
+        return {
+            "classification": (
+                "PROVIDER_LOG_LIMIT"
+                if self.code == -32005 and is_single_block
+                else "RPC_LOG_ERROR"
+            ),
+            "rpc_code": self.code,
+            "address": self.address,
+            "from_block": self.from_block,
+            "to_block": self.to_block,
+            "range_blocks": self.to_block - self.from_block + 1,
+            "topic0_count": 0 if self.topic0s is None else len(self.topic0s),
+            "topic0s": [] if self.topic0s is None else list(self.topic0s),
+            "single_block_reached": is_single_block,
+            "provider_message": str(self.response_error),
+        }
+
+
 @dataclass(slots=True)
 class JsonRpcClient:
     url: str
@@ -154,7 +198,16 @@ class JsonRpcClient:
         }
         if topic0s:
             filter_["topics"] = [list(topic0s)]
-        result = self.call("eth_getLogs", [filter_])
+        try:
+            result = self.call("eth_getLogs", [filter_])
+        except RpcResponseError as exc:
+            raise RpcLogQueryError(
+                exc,
+                address=address,
+                from_block=from_block,
+                to_block=to_block,
+                topic0s=topic0s,
+            ) from exc
         return cast(list[dict[str, Any]], result)
 
     def get_code(self, address: str, block: int | str = "latest") -> str:
