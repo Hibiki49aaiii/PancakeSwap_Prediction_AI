@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, cast
 
 import pytest
@@ -39,6 +40,20 @@ class PrunedHeaderRpc:
         }
 
 
+class AdvancingRetentionRpc(PrunedHeaderRpc):
+    """Simulate a retention edge whose boundary block vanishes after one read."""
+
+    def __init__(self, *, first_available: int) -> None:
+        super().__init__(first_available=first_available)
+        self.read_counts: Counter[int] = Counter()
+
+    def block(self, number: int) -> dict[str, Any]:
+        self.read_counts[number] += 1
+        if number == self.first_available and self.read_counts[number] > 1:
+            raise RpcError(f"block not found: {number}")
+        return super().block(number)
+
+
 def test_recent_range_recovers_from_overshoot_into_pruned_headers() -> None:
     header_rpc = PrunedHeaderRpc(first_available=995)
     rpc = cast(RecentBootstrapRpc, header_rpc)
@@ -74,6 +89,28 @@ def test_recent_range_fails_closed_when_retention_starts_after_target() -> None:
         "first_available_timestamp": 1_005,
         "last_unavailable_block": 1_004,
     }
+
+
+def test_recent_range_keeps_boundary_timestamp_if_retention_advances() -> None:
+    header_rpc = AdvancingRetentionRpc(first_available=995)
+    rpc = cast(RecentBootstrapRpc, header_rpc)
+
+    with pytest.raises(RecentSourceRetentionError) as exc_info:
+        resolve_timestamp_block_range(
+            rpc,
+            start_timestamp=990,
+            end_timestamp=1_010,
+            confirmations=0,
+        )
+
+    assert exc_info.value.as_dict() == {
+        "classification": "PROVIDER_RETENTION",
+        "requested_timestamp": 990,
+        "first_available_block": 995,
+        "first_available_timestamp": 995,
+        "last_unavailable_block": 994,
+    }
+    assert header_rpc.read_counts[995] == 1
 
 
 def test_recent_range_does_not_reclassify_unrelated_rpc_errors_as_retention() -> None:
