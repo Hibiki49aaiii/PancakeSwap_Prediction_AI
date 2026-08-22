@@ -5,8 +5,8 @@
   "purpose": "public_recent_prediction_chainlink_one_day",
   "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
   "signing_enabled": false,
-  "source_event_sha": "6c4e786b092fdbb14419a71d16acd6c32f5931e9",
-  "source_run_id": 32500749175,
-  "source_sha": "6c4e786b092fdbb14419a71d16acd6c32f5931e9",
+  "source_event_sha": "15b657cc418fec1e8b7cc6b32dcb0bc4f399581a",
+  "source_run_id": 32579000969,
+  "source_sha": "15b657cc418fec1e8b7cc6b32dcb0bc4f399581a",
   "state": "running"
 }
