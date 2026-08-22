@@ -3,43 +3,50 @@
 Status: observation
 Confidence: high
 Observed: 2026-08-22
-Related source run: `32503882364`
+Original source run: `32503882364`
+Post-fix public source run: `32579584466`
+Authenticated-source requirement run: `32583688315`
 Related audit commit: `9abde60af8519eabe180a19fed6ebae8365f31ae`
 Retention fix commit: `15b657cc418fec1e8b7cc6b32dcb0bc4f399581a`
-Retention regression-test commit: `2488c2aaa7eef299e6e43375f3f9a7e04841c379`
-Structured source-failure commit: `d8b98fa3e88df04a2a3bc246ed2eae7975c4777e`
-Structured eth_getLogs diagnostic commit: `08f762e7f84f3ab070b9db4cea9d270cf8647d10`
-Log-diagnostic regression-test commit: `052f6c959d7376d984039585d328af39ac42c31d`
+Moving-retention fix commit: `d478e21f91a870c3200ef843090fa802c39c1bb2`
+Authenticated workflow commit: `acd2a66337e3275a26f313dbcf50fc9cd1038cf8`
 
 ## Observation
 
-A head-local exponential timestamp-to-block search can still fail incorrectly on a pruned recent-header provider if its next doubled probe overshoots past the provider's retention boundary before the requested timestamp has been resolved.
+A head-local exponential timestamp-to-block search can fail incorrectly on a pruned recent-header provider if its next doubled probe overshoots past the retention boundary before the requested timestamp is resolved.
 
-For the Aug 16–19 BNBUSD source attempt, the exact requested start block is `116172651` at timestamp `1786838400`. The failed 48.club attempt had already read block `116216724`, whose timestamp is 2026-08-16 05:30:39 UTC and is therefore later than the requested start. The next exponential step jumped to `115168148`, where the provider returned `block not found`.
+For Aug 16–19 BNBUSD, the exact requested start block is `116172651` at timestamp `1786838400`. The original 48.club attempt had already read block `116216724`, which is 5h30m39s after the requested start, then jumped to `115168148` and received `block not found`. That failure combined a code-level overshoot with provider pruning.
 
-The latter error proves that the old search crossed the provider retention boundary; it does not by itself prove that the requested start block was unavailable at that run time. Failing the endpoint immediately at the overshot probe therefore conflated a search-algorithm defect with provider retention.
+The retention-aware resolver now searches the unavailable/available boundary first. It resumes timestamp search only when the first available header is old enough for the requested timestamp; otherwise it fails closed as `PROVIDER_RETENTION`. Unrelated HTTP/RPC failures are not reclassified.
 
-## Required behavior
+## Moving retention edge
 
-When an exponential header probe returns the exact null-header / `block not found` condition while a newer candidate is already known to be readable:
+Post-fix public run `32579584466` exposed a second timing edge: 48.club's first retained block can advance while boundary search is running. A boundary block that had just been readable disappeared when the resolver re-read it after binary-search convergence (`block not found: 116290181`).
 
-1. treat only that specific missing-header condition as a retention-boundary candidate;
-2. binary-search between the known unavailable block and the known available block for the first available header;
-3. if the first available header timestamp is at or before the requested timestamp, use that block as the lower bound for the normal timestamp binary search;
-4. if the first available header timestamp is later than the requested timestamp, fail closed as `PROVIDER_RETENTION` and preserve the requested timestamp, first available block/timestamp, and last unavailable block;
-5. propagate unrelated RPC/HTTP failures unchanged rather than reclassifying them as retention.
+The resolver therefore preserves the timestamp from the last successful boundary read instead of re-reading the exact retention edge. This prevents a moving retention window from turning a valid structured retention diagnosis back into an unstructured RPC failure. It does not make 48.club capable of serving Aug 16; the measured retention boundary remains newer than the requested start.
 
-This behavior does not make an under-retained provider acceptable; it separates an unnecessary overshoot from genuine inability to serve the requested window.
+## BNB dataseed provider-log limit
 
-## Independent provider-limit finding
+The independent audit and post-fix run established that BNB public dataseed `eth_getLogs -32005: limit exceeded` survives adaptive range halving down to a single block and a single topic for Prediction `NewOracle`, proxy `AggregatorConfirmed`, and aggregator `AnswerUpdated`. This also reproduces on current blocks.
 
-The same independent audit showed that the BNB public dataseed `eth_getLogs` error `-32005: limit exceeded` is a separate provider capability boundary. It reproduces at a single block with a single topic for Prediction `NewOracle`, proxy `AggregatorConfirmed`, and aggregator `AnswerUpdated`, including current blocks. Therefore range halving and topic partitioning cannot recover that endpoint at the minimum query unit. Existing singleton fail-closed behavior is correct and must not be weakened.
+The RPC layer preserves address, block range, topic set, JSON-RPC code, and single-block status. A terminal single-block `-32005` is `PROVIDER_LOG_LIMIT`; it is not treated as HTTP rate limiting and is not bypassed by dropping route/event completeness checks.
 
-The RPC layer now preserves the exact failing `eth_getLogs` address, block range, topic set, JSON-RPC code, and whether the collector reached a single-block query. A single-block `-32005` is classified as `PROVIDER_LOG_LIMIT`; larger failing ranges remain split-eligible and are not prematurely classified as the terminal provider limit.
+## Public three-day source decision
+
+Run `32579584466` showed that the current unauthenticated source set cannot complete the Aug 16–19 gate:
+
+- 48.club: retention window newer than the target and moving during the probe;
+- BNB dataseed family / NodeReal public: terminal single-block `PROVIDER_LOG_LIMIT`;
+- other attempted public routes: HTTP 403, 429, 521, or equivalent external capability failure.
+
+Repeated public-only retries therefore add no evidence. The Three-day workflow now requires an authenticated/log-capable source and accepts, in order, `BSC_LOG_RPC_URL` then `BSC_ARCHIVE_RPC_URL`. Raw secret URLs are not persisted; Evidence stores only symbolic labels such as `env:BSC_LOG_RPC_URL`.
+
+Authenticated-source run `32583688315` had no configured candidate and correctly failed fast with `AUTHENTICATED_RPC_REQUIRED`, `attempts=[]`, and no public fallback. This is a configuration blocker, not source success.
 
 ## Evidence boundary
 
-- A corrected retention-aware resolver is software correctness evidence, not evidence that a provider retains the requested source window.
-- A structured `PROVIDER_RETENTION` result is a successful diagnosis of an unavailable source, not source-gate success.
-- A singleton `PROVIDER_LOG_LIMIT` is an external capability failure, not permission to skip route-change or event-completeness checks.
+- Correct retention handling is software-correctness evidence, not proof that a provider retains the requested window.
+- `PROVIDER_RETENTION` and `PROVIDER_LOG_LIMIT` are successful diagnoses of unavailable sources, not source-gate success.
+- `AUTHENTICATED_RPC_REQUIRED` means the public-source search space used here is exhausted for this fixed window; it does not prove any particular paid provider will satisfy the gate.
+- Using `BSC_ARCHIVE_RPC_URL` for this recent three-day log gate does not by itself satisfy the separate full deployment-era historical-source gate.
 - None of these findings provide profitability evidence or alter signing/live-broadcast safety boundaries.
