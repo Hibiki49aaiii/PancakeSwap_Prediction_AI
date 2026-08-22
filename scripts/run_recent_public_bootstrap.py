@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -54,7 +55,7 @@ class RpcCandidate:
     authenticated: bool
 
 
-def authenticated_rpc_candidates(environ: dict[str, str] | os._Environ[str]) -> tuple[RpcCandidate, ...]:
+def authenticated_rpc_candidates(environ: Mapping[str, str]) -> tuple[RpcCandidate, ...]:
     candidates: list[RpcCandidate] = []
     for variable in AUTHENTICATED_RPC_ENV_ORDER:
         value = environ.get(variable, "").strip()
@@ -72,7 +73,7 @@ def authenticated_rpc_candidates(environ: dict[str, str] | os._Environ[str]) -> 
 def rpc_candidates(
     *,
     require_authenticated: bool,
-    environ: dict[str, str] | os._Environ[str],
+    environ: Mapping[str, str],
 ) -> tuple[RpcCandidate, ...]:
     authenticated = authenticated_rpc_candidates(environ)
     if require_authenticated:
