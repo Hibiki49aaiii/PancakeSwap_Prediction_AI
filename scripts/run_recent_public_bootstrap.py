@@ -3,14 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from pancake_prediction.chainlink_anchor import load_chainlink_route_anchor
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.recent_bootstrap import run_recent_prediction_bootstrap
+from pancake_prediction.recent_rpc_selection import (
+    authenticated_rpc_requirement,
+    recent_rpc_candidates,
+)
 from pancake_prediction.rpc import JsonRpcClient
 
 # BNB Chain documents that eth_getLogs is disabled on its public Mainnet
@@ -37,51 +39,10 @@ PUBLIC_BSC_ENDPOINTS = (
     "https://public.1rpc.io/bnb",
 )
 
-AUTHENTICATED_RPC_ENV_ORDER = (
-    "BSC_LOG_RPC_URL",
-    "BSC_ARCHIVE_RPC_URL",
-)
-
 PUBLIC_RPC_TIMEOUT_S = 20.0
 PUBLIC_RPC_RETRIES = 6
 PUBLIC_RPC_BACKOFF_S = 1.5
 PUBLIC_RPC_MIN_INTERVAL_S = 0.15
-
-
-@dataclass(frozen=True, slots=True)
-class RpcCandidate:
-    label: str
-    url: str
-    authenticated: bool
-
-
-def authenticated_rpc_candidates(environ: Mapping[str, str]) -> tuple[RpcCandidate, ...]:
-    candidates: list[RpcCandidate] = []
-    for variable in AUTHENTICATED_RPC_ENV_ORDER:
-        value = environ.get(variable, "").strip()
-        if value:
-            candidates.append(
-                RpcCandidate(
-                    label=f"env:{variable}",
-                    url=value,
-                    authenticated=True,
-                )
-            )
-    return tuple(candidates)
-
-
-def rpc_candidates(
-    *,
-    require_authenticated: bool,
-    environ: Mapping[str, str],
-) -> tuple[RpcCandidate, ...]:
-    authenticated = authenticated_rpc_candidates(environ)
-    if require_authenticated:
-        return authenticated
-    return authenticated + tuple(
-        RpcCandidate(label=endpoint, url=endpoint, authenticated=False)
-        for endpoint in PUBLIC_BSC_ENDPOINTS
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,9 +98,10 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         parser.error(f"invalid Chainlink route anchor evidence: {exc}")
 
-    candidates = rpc_candidates(
+    candidates = recent_rpc_candidates(
         require_authenticated=bool(args.require_authenticated_rpc),
         environ=os.environ,
+        public_endpoints=PUBLIC_BSC_ENDPOINTS,
     )
     attempts: list[dict[str, object]] = []
     success: dict[str, object] | None = None
@@ -156,12 +118,11 @@ def main() -> int:
         ),
     }
 
-    source_requirement: dict[str, object] | None = None
-    if bool(args.require_authenticated_rpc) and not candidates:
-        source_requirement = {
-            "classification": "AUTHENTICATED_RPC_REQUIRED",
-            "accepted_env": list(AUTHENTICATED_RPC_ENV_ORDER),
-        }
+    source_requirement = (
+        authenticated_rpc_requirement(candidates)
+        if bool(args.require_authenticated_rpc)
+        else None
+    )
 
     for candidate in candidates:
         if args.database.exists():
