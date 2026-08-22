@@ -37,7 +37,7 @@ class RpcResponseError(RpcError):
         super().__init__(f"{method}: JSON-RPC error{code_text}: {message}")
 
 
-class RpcLogQueryError(RpcError):
+class RpcLogQueryError(RpcResponseError):
     """Preserve the exact failing eth_getLogs query after adaptive splitting."""
 
     def __init__(
@@ -50,15 +50,18 @@ class RpcLogQueryError(RpcError):
         topic0s: tuple[str, ...] | None,
     ) -> None:
         self.response_error = response_error
+        self.method = response_error.method
         self.code = response_error.code
+        self.data = response_error.data
         self.address = address.lower()
         self.from_block = from_block
         self.to_block = to_block
         self.topic0s = topic0s
-        super().__init__(
+        RpcError.__init__(
+            self,
             f"eth_getLogs query failed address={self.address} "
             f"blocks={from_block}..{to_block} topics={0 if topic0s is None else len(topic0s)}: "
-            f"{response_error}"
+            f"{response_error}",
         )
 
     def as_dict(self) -> dict[str, object]:
