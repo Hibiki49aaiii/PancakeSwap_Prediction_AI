@@ -10,8 +10,8 @@
   "requested_start_timestamp": 1786838400,
   "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
   "signing_enabled": false,
-  "source_event_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
-  "source_run_id": 32579584466,
-  "source_sha": "3f1547bb81ebf39119d96c323ad8798c621c752d",
+  "source_event_sha": "d478e21f91a870c3200ef843090fa802c39c1bb2",
+  "source_run_id": 32583466927,
+  "source_sha": "d478e21f91a870c3200ef843090fa802c39c1bb2",
   "state": "running"
 }
