@@ -128,7 +128,13 @@ def _first_available_block_after_gap(
     unavailable_block: int,
     available_block: int,
 ) -> tuple[int, int, int]:
-    """Resolve a contiguous pruned-header boundary between known unavailable/available blocks."""
+    """Resolve a contiguous pruned-header boundary between known unavailable/available blocks.
+
+    The provider may advance its retention boundary while this search is in
+    progress. Keep the timestamp from the most recent successful read instead
+    of re-reading the final boundary block after convergence; an exact-edge
+    block can legitimately disappear between those two operations.
+    """
 
     if unavailable_block < 0 or available_block < 0:
         raise ValueError("block bounds must be non-negative")
@@ -137,17 +143,19 @@ def _first_available_block_after_gap(
 
     low = unavailable_block
     high = available_block
+    high_timestamp = _block_timestamp(rpc, high)
     while low + 1 < high:
         mid = (low + high) // 2
         try:
-            _block_timestamp(rpc, mid)
+            mid_timestamp = _block_timestamp(rpc, mid)
         except RpcError as exc:
             if not _is_block_not_found_error(exc):
                 raise
             low = mid
         else:
             high = mid
-    return high, _block_timestamp(rpc, high), low
+            high_timestamp = mid_timestamp
+    return high, high_timestamp, low
 
 
 def first_block_at_or_after(
