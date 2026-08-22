@@ -134,13 +134,17 @@ def main() -> int:
             )
             break
         except Exception as exc:
-            attempts.append(
-                {
-                    "endpoint": endpoint,
-                    "outcome": "failure",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            )
+            attempt: dict[str, object] = {
+                "endpoint": endpoint,
+                "outcome": "failure",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            detail_builder = getattr(exc, "as_dict", None)
+            if callable(detail_builder):
+                details = detail_builder()
+                if isinstance(details, dict):
+                    attempt["error_details"] = details
+            attempts.append(attempt)
 
     report_payload = None if success is None else success.get("report")
     chainlink_collected = bool(
