@@ -2,6 +2,7 @@
   "archive_state_required": false,
   "attempts": [
     {
+      "authenticated": false,
       "endpoint": "https://rpc-bsc.48.club",
       "error": null,
       "outcome": "success"
@@ -17,7 +18,7 @@
     "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
   },
   "evidence_role": "last_success",
-  "evidence_version": 6,
+  "evidence_version": 7,
   "gate_success": true,
   "live_broadcast": false,
   "market": "BNBUSD",
@@ -30,9 +31,11 @@
     "backoff_s": 1.5,
     "min_interval_s": 0.15,
     "retries": 6,
+    "source_mode": "authenticated_then_public",
     "timeout_s": 20.0
   },
   "selected": {
+    "authenticated": false,
     "endpoint": "https://rpc-bsc.48.club",
     "report": {
       "authoritative_prediction_events": true,
@@ -40,7 +43,7 @@
         "confirmations": 64,
         "from_block": 116556542,
         "from_block_timestamp": 1787011200,
-        "head_block": 117442253,
+        "head_block": 117453388,
         "requested_end_timestamp": 1787097600,
         "requested_start_timestamp": 1787011200,
         "to_block": 116748497,
@@ -97,9 +100,10 @@
   },
   "semantic_success": true,
   "signing_enabled": false,
-  "source_event_sha": "ce5cb356d1ebed12e88cc899ec8155d80b92e9d7",
-  "source_run_id": 32579584583,
-  "source_sha": "3f1547bb81ebf39119d96c323ad8798c621c752d",
+  "source_event_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+  "source_requirement": null,
+  "source_run_id": 32583778684,
+  "source_sha": "dbba0d951c1986465598e808577c403028c30a5d",
   "step_outcomes": {
     "artifact": "success",
     "bootstrap": "success",
