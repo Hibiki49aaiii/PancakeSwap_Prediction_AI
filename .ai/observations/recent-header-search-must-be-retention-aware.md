@@ -5,8 +5,11 @@ Confidence: high
 Observed: 2026-08-22
 Related source run: `32503882364`
 Related audit commit: `9abde60af8519eabe180a19fed6ebae8365f31ae`
-Fix commit: `15b657cc418fec1e8b7cc6b32dcb0bc4f399581a`
-Regression-test commit: `2488c2aaa7eef299e6e43375f3f9a7e04841c379`
+Retention fix commit: `15b657cc418fec1e8b7cc6b32dcb0bc4f399581a`
+Retention regression-test commit: `2488c2aaa7eef299e6e43375f3f9a7e04841c379`
+Structured source-failure commit: `d8b98fa3e88df04a2a3bc246ed2eae7975c4777e`
+Structured eth_getLogs diagnostic commit: `08f762e7f84f3ab070b9db4cea9d270cf8647d10`
+Log-diagnostic regression-test commit: `052f6c959d7376d984039585d328af39ac42c31d`
 
 ## Observation
 
@@ -31,6 +34,8 @@ This behavior does not make an under-retained provider acceptable; it separates 
 ## Independent provider-limit finding
 
 The same independent audit showed that the BNB public dataseed `eth_getLogs` error `-32005: limit exceeded` is a separate provider capability boundary. It reproduces at a single block with a single topic for Prediction `NewOracle`, proxy `AggregatorConfirmed`, and aggregator `AnswerUpdated`, including current blocks. Therefore range halving and topic partitioning cannot recover that endpoint at the minimum query unit. Existing singleton fail-closed behavior is correct and must not be weakened.
+
+The RPC layer now preserves the exact failing `eth_getLogs` address, block range, topic set, JSON-RPC code, and whether the collector reached a single-block query. A single-block `-32005` is classified as `PROVIDER_LOG_LIMIT`; larger failing ranges remain split-eligible and are not prematurely classified as the terminal provider limit.
 
 ## Evidence boundary
 
