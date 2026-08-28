@@ -113,6 +113,18 @@ def _is_digest(value: str) -> bool:
     return len(value) == 64 and all(char in "0123456789abcdef" for char in value.lower())
 
 
+def _strict_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
+def _strict_string(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a non-empty string")
+    return value
+
+
 def _canonical_json(payload: Mapping[str, object]) -> str:
     return json.dumps(
         dict(payload),
@@ -357,7 +369,7 @@ class ShadowLedgerStore:
         raw_record = event.payload.get("record")
         if not isinstance(raw_record, dict):
             raise ValueError("shadow prediction record payload is invalid")
-        return _prediction_from_payload(raw_record)
+        return prediction_from_payload(raw_record)
 
     def append_settlement(self, record: ShadowSettlementRecord) -> ShadowLedgerEvent:
         with self._connect() as connection:
@@ -418,7 +430,7 @@ class ShadowLedgerStore:
                 continue
             try:
                 if event.kind == "prediction":
-                    record = _prediction_from_payload(raw_record)
+                    record = prediction_from_payload(raw_record)
                     validate_research_prediction(record, purge_rounds=purge_rounds)
                     if record.market != event.market or record.epoch != event.epoch:
                         raise ValueError("prediction identity does not match event columns")
@@ -427,7 +439,7 @@ class ShadowLedgerStore:
                         raise ValueError("duplicate prediction identity")
                     predictions[key] = record
                 elif event.kind == "settlement":
-                    record = _settlement_from_payload(raw_record)
+                    record = settlement_from_payload(raw_record)
                     prediction = predictions.get((record.market, record.epoch))
                     if prediction is None:
                         raise ValueError("settlement appears before its prediction")
@@ -508,46 +520,66 @@ class ShadowLedgerStore:
         )
 
 
-def _prediction_from_payload(payload: Mapping[str, object]) -> ResearchPredictionRecord:
+def prediction_from_payload(payload: Mapping[str, object]) -> ResearchPredictionRecord:
     metadata = payload.get("metadata")
     if metadata is not None and not isinstance(metadata, dict):
         raise ValueError("prediction metadata must be an object")
     expected_value = payload.get("expected_value_wei")
-    if expected_value is not None and (
-        isinstance(expected_value, bool) or not isinstance(expected_value, int)
-    ):
-        raise ValueError("expected_value_wei must be an integer or null")
+    if expected_value is not None:
+        expected_value = _strict_int(expected_value, field="expected_value_wei")
     return ResearchPredictionRecord(
-        market=str(payload["market"]),
-        epoch=int(payload["epoch"]),
-        decision_timestamp_ms=int(payload["decision_timestamp_ms"]),
-        model_id=str(payload["model_id"]),
-        feature_set_id=str(payload["feature_set_id"]),
-        raw_probability_ppm=int(payload["raw_probability_ppm"]),
-        calibrated_probability_ppm=int(payload["calibrated_probability_ppm"]),
+        market=_strict_string(payload.get("market"), field="market"),
+        epoch=_strict_int(payload.get("epoch"), field="epoch"),
+        decision_timestamp_ms=_strict_int(
+            payload.get("decision_timestamp_ms"),
+            field="decision_timestamp_ms",
+        ),
+        model_id=_strict_string(payload.get("model_id"), field="model_id"),
+        feature_set_id=_strict_string(
+            payload.get("feature_set_id"),
+            field="feature_set_id",
+        ),
+        raw_probability_ppm=_strict_int(
+            payload.get("raw_probability_ppm"),
+            field="raw_probability_ppm",
+        ),
+        calibrated_probability_ppm=_strict_int(
+            payload.get("calibrated_probability_ppm"),
+            field="calibrated_probability_ppm",
+        ),
         expected_value_wei=expected_value,
-        action=str(payload["action"]),
-        feature_digest=str(payload["feature_digest"]),
-        train_max_epoch=int(payload["train_max_epoch"]),
+        action=_strict_string(payload.get("action"), field="action"),
+        feature_digest=_strict_string(
+            payload.get("feature_digest"),
+            field="feature_digest",
+        ),
+        train_max_epoch=_strict_int(
+            payload.get("train_max_epoch"),
+            field="train_max_epoch",
+        ),
         metadata=metadata,
     )
 
 
-def _settlement_from_payload(payload: Mapping[str, object]) -> ShadowSettlementRecord:
+def settlement_from_payload(payload: Mapping[str, object]) -> ShadowSettlementRecord:
     metadata = payload.get("metadata")
     if metadata is not None and not isinstance(metadata, dict):
         raise ValueError("settlement metadata must be an object")
     realized_pnl = payload.get("realized_pnl_wei")
-    if realized_pnl is not None and (
-        isinstance(realized_pnl, bool) or not isinstance(realized_pnl, int)
-    ):
-        raise ValueError("realized_pnl_wei must be an integer or null")
+    if realized_pnl is not None:
+        realized_pnl = _strict_int(realized_pnl, field="realized_pnl_wei")
     return ShadowSettlementRecord(
-        market=str(payload["market"]),
-        epoch=int(payload["epoch"]),
-        settled_timestamp_ms=int(payload["settled_timestamp_ms"]),
-        outcome=str(payload["outcome"]),
-        result_source_digest=str(payload["result_source_digest"]),
+        market=_strict_string(payload.get("market"), field="market"),
+        epoch=_strict_int(payload.get("epoch"), field="epoch"),
+        settled_timestamp_ms=_strict_int(
+            payload.get("settled_timestamp_ms"),
+            field="settled_timestamp_ms",
+        ),
+        outcome=_strict_string(payload.get("outcome"), field="outcome"),
+        result_source_digest=_strict_string(
+            payload.get("result_source_digest"),
+            field="result_source_digest",
+        ),
         realized_pnl_wei=realized_pnl,
         metadata=metadata,
     )
