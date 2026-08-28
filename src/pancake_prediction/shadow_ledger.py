@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import cast
 
 from .research_ledger import ResearchPredictionRecord, validate_research_prediction
 
@@ -256,7 +257,7 @@ class ShadowLedgerStore:
         market: str,
         epoch: int,
     ) -> sqlite3.Row | None:
-        return connection.execute(
+        row = connection.execute(
             """
             SELECT sequence, kind, market, epoch, payload_json, previous_digest, event_digest
             FROM shadow_ledger_events
@@ -264,6 +265,7 @@ class ShadowLedgerStore:
             """,
             (kind, market, epoch),
         ).fetchone()
+        return cast(sqlite3.Row | None, row)
 
     def _append(
         self,
@@ -295,7 +297,10 @@ class ShadowLedgerStore:
         ).fetchone()
         if max_row is None:
             raise ValueError("could not inspect shadow ledger event state")
-        if int(max_row["max_sequence"]) != event_count or int(max_row["count"]) != event_count:
+        if (
+            int(max_row["max_sequence"]) != event_count
+            or int(max_row["count"]) != event_count
+        ):
             raise ValueError("shadow ledger state/event count mismatch before append")
         if not _is_digest(head_digest):
             raise ValueError("shadow ledger head digest is invalid")
@@ -314,6 +319,8 @@ class ShadowLedgerStore:
             """,
             (kind, market, epoch, payload_json, head_digest, digest),
         )
+        if cursor.lastrowid is None:
+            raise ValueError("shadow ledger insert did not return a row id")
         sequence = int(cursor.lastrowid)
         if sequence != event_count + 1:
             raise ValueError("shadow ledger sequence is not contiguous")
@@ -438,26 +445,46 @@ class ShadowLedgerStore:
                 continue
             try:
                 if event.kind == "prediction":
-                    record = prediction_from_payload(raw_record)
-                    validate_research_prediction(record, purge_rounds=purge_rounds)
-                    if record.market != event.market or record.epoch != event.epoch:
+                    prediction_record = prediction_from_payload(raw_record)
+                    validate_research_prediction(
+                        prediction_record,
+                        purge_rounds=purge_rounds,
+                    )
+                    if (
+                        prediction_record.market != event.market
+                        or prediction_record.epoch != event.epoch
+                    ):
                         raise ValueError("prediction identity does not match event columns")
-                    key = (record.market, record.epoch)
-                    if key in predictions:
+                    prediction_key = (
+                        prediction_record.market,
+                        prediction_record.epoch,
+                    )
+                    if prediction_key in predictions:
                         raise ValueError("duplicate prediction identity")
-                    predictions[key] = record
+                    predictions[prediction_key] = prediction_record
                 elif event.kind == "settlement":
-                    record = settlement_from_payload(raw_record)
-                    prediction = predictions.get((record.market, record.epoch))
+                    settlement_record = settlement_from_payload(raw_record)
+                    prediction = predictions.get(
+                        (settlement_record.market, settlement_record.epoch)
+                    )
                     if prediction is None:
                         raise ValueError("settlement appears before its prediction")
-                    validate_shadow_settlement(record, prediction=prediction)
-                    if record.market != event.market or record.epoch != event.epoch:
+                    validate_shadow_settlement(
+                        settlement_record,
+                        prediction=prediction,
+                    )
+                    if (
+                        settlement_record.market != event.market
+                        or settlement_record.epoch != event.epoch
+                    ):
                         raise ValueError("settlement identity does not match event columns")
-                    key = (record.market, record.epoch)
-                    if key in settlements:
+                    settlement_key = (
+                        settlement_record.market,
+                        settlement_record.epoch,
+                    )
+                    if settlement_key in settlements:
                         raise ValueError("duplicate settlement identity")
-                    settlements[key] = record
+                    settlements[settlement_key] = settlement_record
                 else:
                     raise ValueError(f"unsupported shadow ledger event kind: {event.kind}")
             except (KeyError, TypeError, ValueError) as exc:
@@ -475,7 +502,9 @@ class ShadowLedgerStore:
         settled_keys = set(settlements)
         actionable = [item for item in predictions.values() if item.action != "skip"]
         settled_actionable = [
-            item for key, item in predictions.items() if key in settled_keys and item.action != "skip"
+            item
+            for key, item in predictions.items()
+            if key in settled_keys and item.action != "skip"
         ]
 
         probability_errors: list[float] = []
