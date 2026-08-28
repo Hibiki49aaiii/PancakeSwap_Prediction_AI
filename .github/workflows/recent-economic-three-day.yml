@@ -1,0 +1,610 @@
+name: recent-economic-three-day
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Exact recent-authenticated-chainlink-three-day run ID that published the source artifact
+        required: true
+        type: string
+      source_sha:
+        description: Exact checkout SHA used by the three-day Chainlink collector
+        required: true
+        type: string
+      source_event_sha:
+        description: Event head SHA for the three-day Chainlink workflow run
+        required: true
+        type: string
+      source_current_run:
+        description: True when consuming an artifact published by an earlier job in this same workflow run
+        required: true
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Optional source run ID; it must match persisted three-day Chainlink last-success evidence
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: recent-economic-three-day-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  economic-three-day:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+
+      - name: Resolve three-day Chainlink source identity
+        id: source
+        continue-on-error: true
+        env:
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_SOURCE_EVENT_SHA: ${{ inputs.source_event_sha }}
+          SOURCE_CURRENT_RUN: ${{ inputs.source_current_run || false }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/source evidence
+          exec 2> >(tee artifacts/recent-economic-three-day-source.err >&2)
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def validate_sha(value: str, *, field: str) -> str:
+              normalized = value.strip().lower()
+              if len(normalized) != 40 or any(char not in "0123456789abcdef" for char in normalized):
+                  raise SystemExit(f"{field} is not a 40-character Git SHA")
+              return normalized
+
+          current_run = os.environ.get("SOURCE_CURRENT_RUN", "false").lower() == "true"
+          supplied_run = os.environ.get("INPUT_SOURCE_RUN_ID", "").strip()
+          supplied_sha = os.environ.get("INPUT_SOURCE_SHA", "").strip()
+          supplied_event_sha = os.environ.get("INPUT_SOURCE_EVENT_SHA", "").strip()
+
+          if current_run:
+              if not supplied_run.isdigit():
+                  raise SystemExit("current-run source requires a numeric source_run_id")
+              run_id = int(supplied_run)
+              if run_id != int(os.environ["GITHUB_RUN_ID"]):
+                  raise SystemExit("current-run source_run_id must equal GITHUB_RUN_ID")
+              source_sha = validate_sha(supplied_sha, field="source_sha")
+              source_event_sha = validate_sha(supplied_event_sha, field="source_event_sha")
+          else:
+              evidence_path = Path(
+                  "evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json"
+              )
+              if not evidence_path.exists():
+                  raise SystemExit("three-day Chainlink last-success evidence is not available")
+              payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+              if payload.get("workflow_outcome") != "success" or payload.get("success") is not True:
+                  raise SystemExit("persisted three-day Chainlink evidence is not successful")
+              if payload.get("chainlink_collected") is not True:
+                  raise SystemExit("persisted three-day Chainlink evidence has no Chainlink collection")
+              if payload.get("requested_start_timestamp") != 1786838400:
+                  raise SystemExit("unexpected three-day Chainlink start timestamp")
+              if payload.get("requested_end_timestamp") != 1787097600:
+                  raise SystemExit("unexpected three-day Chainlink end timestamp")
+              run_id = int(payload["source_run_id"])
+              source_sha = validate_sha(str(payload.get("source_sha", "")), field="source_sha")
+              persisted_event_sha = str(payload.get("source_event_sha", "")).strip()
+              source_event_sha = (
+                  validate_sha(persisted_event_sha, field="source_event_sha")
+                  if persisted_event_sha
+                  else ""
+              )
+              if supplied_run and int(supplied_run) != run_id:
+                  raise SystemExit(
+                      "manual source_run_id must match persisted three-day Chainlink last-success evidence"
+                  )
+
+          Path("artifacts/source-run-id.txt").write_text(f"{run_id}\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"source_run_id={run_id}\n")
+              handle.write(f"source_sha={source_sha}\n")
+              handle.write(f"source_event_sha={source_event_sha}\n")
+              handle.write(f"source_current_run={'true' if current_run else 'false'}\n")
+          PY
+          SOURCE_RUN_ID="$(cat artifacts/source-run-id.txt)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+            > artifacts/source-run.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path("artifacts/source-run.json").read_text(encoding="utf-8"))
+          if int(payload.get("id", 0)) != int(Path("artifacts/source-run-id.txt").read_text().strip()):
+              raise SystemExit("source workflow run ID mismatch")
+          if payload.get("name") != "recent-authenticated-chainlink-three-day":
+              raise SystemExit(f"unexpected source workflow: {payload.get('name')!r}")
+          if payload.get("head_branch") != "agent/v0.7-alpha-research":
+              raise SystemExit(f"unexpected source branch: {payload.get('head_branch')!r}")
+
+          event_sha = str(payload.get("head_sha", "")).strip().lower()
+          if len(event_sha) != 40 or any(char not in "0123456789abcdef" for char in event_sha):
+              raise SystemExit("source workflow event head SHA is invalid")
+          current_run = os.environ.get("SOURCE_CURRENT_RUN", "false").lower() == "true"
+          supplied_event_sha = os.environ.get("INPUT_SOURCE_EVENT_SHA", "").strip().lower()
+          if current_run:
+              if event_sha != supplied_event_sha:
+                  raise SystemExit("current-run source event SHA mismatch")
+              if payload.get("status") not in {"in_progress", "completed"}:
+                  raise SystemExit(f"unexpected current source run status: {payload.get('status')!r}")
+              if payload.get("conclusion") not in {None, "success", "failure"}:
+                  raise SystemExit(
+                      f"current source run already has invalid conclusion: {payload.get('conclusion')!r}"
+                  )
+          else:
+              if payload.get("status") != "completed":
+                  raise SystemExit("persisted source workflow run is not completed")
+              if payload.get("conclusion") in {
+                  "cancelled",
+                  "timed_out",
+                  "action_required",
+                  "stale",
+              }:
+                  raise SystemExit(
+                      f"persisted source workflow ended unusably: {payload.get('conclusion')!r}"
+                  )
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          existing = os.environ.get("INPUT_SOURCE_EVENT_SHA", "").strip()
+          if not existing:
+              with output_path.open("a", encoding="utf-8") as handle:
+                  handle.write(f"source_event_sha={event_sha}\n")
+          PY
+
+      - name: Download exact three-day Chainlink artifact
+        id: source_artifact
+        if: steps.source.outcome == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-three-day-source-artifact.err >&2)
+          downloaded=0
+          for attempt in $(seq 1 6); do
+            rm -rf artifacts/source
+            mkdir -p artifacts/source
+            if gh run download "$SOURCE_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "recent-authenticated-chainlink-three-day-${SOURCE_RUN_ID}" \
+              --dir artifacts/source; then
+              downloaded=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$downloaded" -ne 1 ]; then
+            echo 'Could not download the exact three-day Chainlink artifact.' >&2
+            exit 2
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("artifacts/source/recent-public-chainlink-2026-08-16-to-19.json")
+          database_path = Path("artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite")
+          if not report_path.is_file() or not database_path.is_file():
+              raise SystemExit("source artifact is missing its report or SQLite database")
+          payload = json.loads(report_path.read_text(encoding="utf-8"))
+          if payload.get("success") is not True or payload.get("chainlink_collected") is not True:
+              raise SystemExit("downloaded source artifact is not a successful Chainlink collection")
+          if payload.get("requested_start_timestamp") != 1786838400:
+              raise SystemExit("downloaded source artifact start timestamp mismatch")
+          if payload.get("requested_end_timestamp") != 1787097600:
+              raise SystemExit("downloaded source artifact end timestamp mismatch")
+          selected = payload.get("selected") or {}
+          report = selected.get("report") or {}
+          collection = report.get("collection") or {}
+          if int(collection.get("chainlink_events_inserted", 0)) <= 0:
+              raise SystemExit("downloaded source artifact contains no Chainlink AnswerUpdated events")
+          if int(report.get("replay_rounds", 0)) < 800:
+              raise SystemExit("downloaded source artifact has fewer than 800 replay rounds")
+          PY
+
+      - name: Apply ClickHouse schema
+        id: schema
+        if: steps.source_artifact.outcome == 'success'
+        continue-on-error: true
+        run: |
+          exec 2> >(tee artifacts/recent-economic-three-day-schema.err >&2)
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient("http://127.0.0.1:8123")
+          text = Path("sql/clickhouse/v0_7_core.sql").read_text(encoding="utf-8")
+          sql = "\n".join(
+              line for line in text.splitlines() if not line.lstrip().startswith("--")
+          )
+          for statement in sql.split(";"):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+          pcs-clickhouse schema-check > artifacts/recent-economic-three-day-schema.json
+
+      - name: Download official Binance Aug 16-18 Spot and USD-M Perp archives
+        id: binance_download
+        if: steps.schema.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-three-day-binance-download.err >&2)
+          mkdir -p /tmp/binance/spot /tmp/binance/perp
+          for day in 16 17 18; do
+            name="BNBUSDT-aggTrades-2026-08-${day}.zip"
+            spot_base="https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/$name"
+            perp_base="https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$spot_base" \
+              -o "/tmp/binance/spot/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$spot_base.CHECKSUM" \
+              -o "/tmp/binance/spot/$name.CHECKSUM"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$perp_base" \
+              -o "/tmp/binance/perp/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$perp_base.CHECKSUM" \
+              -o "/tmp/binance/perp/$name.CHECKSUM"
+          done
+      - name: Verify and ingest three days of Binance archives with positive availability lag
+        id: binance_ingest
+        if: steps.binance_download.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-three-day-binance-ingest.err >&2)
+          for day in 16 17 18; do
+            name="BNBUSDT-aggTrades-2026-08-${day}.zip"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/spot/$name" \
+              --checksum "/tmp/binance/spot/$name.CHECKSUM" \
+              --venue spot \
+              --timestamp-unit auto \
+              --availability-lag-ms 250 \
+              > "artifacts/recent-economic-three-day-spot-${day}-ingest.json"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/perp/$name" \
+              --checksum "/tmp/binance/perp/$name.CHECKSUM" \
+              --venue um_futures \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms 250 \
+              > "artifacts/recent-economic-three-day-perp-${day}-ingest.json"
+          done
+      - name: Run source-bound three-day economic OOS campaign
+        id: campaign
+        if: steps.binance_ingest.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pcs-clickhouse campaign-evaluate \
+            --market BNBUSD \
+            --db artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite \
+            --spot-timestamp-unit auto \
+            --spot-availability-lag-ms 250 \
+            --perp-timestamp-unit milliseconds \
+            --perp-availability-lag-ms 250 \
+            --chainlink-availability-lag-ms 1000 \
+            --max-chainlink-age-ms 300000 \
+            --feature-lead-seconds 20 \
+            --stake-wei 10000000000000000 \
+            --bet-gas-wei 50000000000000 \
+            --claim-gas-wei 30000000000000 \
+            --inclusion-latency-seconds 2 \
+            --min-expected-value-wei 0 \
+            --min-train-rounds 300 \
+            --test-rounds 100 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 60 \
+            --pool-min-train-rounds 150 \
+            --pool-window-rounds 400 \
+            2> >(tee artifacts/recent-economic-three-day-campaign.err >&2) \
+            | tee artifacts/recent-economic-three-day-campaign.json
+
+      - name: Validate non-vacuous OOS campaign semantics
+        id: campaign_semantics
+        if: steps.campaign.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-three-day-semantic-validation.err >&2)
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          campaign_path = Path("artifacts/recent-economic-three-day-campaign.json")
+          payload = json.loads(campaign_path.read_text(encoding="utf-8"))
+          dataset = payload.get("dataset") or {}
+          evaluation = payload.get("evaluation") or {}
+          probability = evaluation.get("probability_metrics") or {}
+          manifest = payload.get("campaign_manifest") or {}
+          assumptions = payload.get("assumptions") or {}
+          spot_sources = manifest.get("spot_sources") or []
+          perp_sources = manifest.get("perp_sources") or []
+
+          checks = {
+              "research_feature_rows_positive": int(dataset.get("research_feature_rows", 0)) > 0,
+              "fold_count_positive": int(evaluation.get("fold_count", 0)) >= 1,
+              "direction_signal_count_positive": int(
+                  evaluation.get("direction_signal_count", 0)
+              ) > 0,
+              "pool_projection_count_positive": int(
+                  evaluation.get("pool_projection_count", 0)
+              ) > 0,
+              "joint_epoch_count_positive": int(evaluation.get("joint_epoch_count", 0)) > 0,
+              "n_scored_positive": int(probability.get("n_scored", 0)) > 0,
+              "spot_provenance_present": len(spot_sources) > 0,
+              "perp_provenance_present": len(perp_sources) > 0,
+              "spot_lag_exact": assumptions.get("spot_availability_lag_ms") == 250,
+              "perp_lag_exact": assumptions.get("perp_availability_lag_ms") == 250,
+              "chainlink_lag_exact": assumptions.get("chainlink_availability_lag_ms") == 1000,
+              "spot_source_lags_exact": bool(spot_sources)
+              and all(item.get("availability_lag_ms") == 250 for item in spot_sources),
+              "perp_source_lags_exact": bool(perp_sources)
+              and all(item.get("availability_lag_ms") == 250 for item in perp_sources),
+          }
+          summary = {
+              "checks": checks,
+              "ready": all(checks.values()),
+              "research_feature_rows": int(dataset.get("research_feature_rows", 0)),
+              "skipped_no_aligned_market_data": int(
+                  dataset.get("skipped_no_aligned_market_data", 0)
+              ),
+              "fold_count": int(evaluation.get("fold_count", 0)),
+              "direction_signal_count": int(evaluation.get("direction_signal_count", 0)),
+              "pool_projection_count": int(evaluation.get("pool_projection_count", 0)),
+              "joint_epoch_count": int(evaluation.get("joint_epoch_count", 0)),
+              "n_scored": int(probability.get("n_scored", 0)),
+              "spot_source_count": len(spot_sources),
+              "perp_source_count": len(perp_sources),
+              "spot_query_start_ms": dataset.get("spot_query_start_ms"),
+              "perp_query_start_ms": dataset.get("perp_query_start_ms"),
+              "query_end_ms": dataset.get("query_end_ms"),
+          }
+          Path("artifacts/recent-economic-three-day-semantic-validation.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not summary["ready"]:
+              failed = [name for name, passed in checks.items() if not passed]
+              raise SystemExit(
+                  "economic smoke is vacuous or provenance-incomplete: " + ", ".join(failed)
+              )
+          PY
+
+      - name: Build bounded smoke evidence
+        if: always() && !cancelled()
+        env:
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
+          SOURCE_ARTIFACT_OUTCOME: ${{ steps.source_artifact.outcome }}
+          SCHEMA_OUTCOME: ${{ steps.schema.outcome }}
+          BINANCE_DOWNLOAD_OUTCOME: ${{ steps.binance_download.outcome }}
+          BINANCE_INGEST_OUTCOME: ${{ steps.binance_ingest.outcome }}
+          CAMPAIGN_OUTCOME: ${{ steps.campaign.outcome }}
+          CAMPAIGN_SEMANTICS_OUTCOME: ${{ steps.campaign_semantics.outcome }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source.outputs.source_event_sha }}
+          SOURCE_CURRENT_RUN: ${{ steps.source.outputs.source_current_run }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def load_optional_json(path: str):
+              source = Path(path)
+              if not source.exists() or not source.read_text(encoding="utf-8").strip():
+                  return None
+              try:
+                  return json.loads(source.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  return {"json_error": str(exc)}
+
+          def load_error(path: str):
+              source = Path(path)
+              if not source.exists():
+                  return None
+              text = source.read_text(encoding="utf-8", errors="replace").strip()
+              return text[-4000:] if text else None
+
+          def optional_sha256(path: str):
+              source = Path(path)
+              if not source.is_file():
+                  return None
+              digest = hashlib.sha256()
+              with source.open("rb") as handle:
+                  while chunk := handle.read(1024 * 1024):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          outcomes = {
+              "source": os.environ.get("SOURCE_OUTCOME", "skipped"),
+              "source_artifact": os.environ.get("SOURCE_ARTIFACT_OUTCOME", "skipped"),
+              "schema": os.environ.get("SCHEMA_OUTCOME", "skipped"),
+              "binance_download": os.environ.get("BINANCE_DOWNLOAD_OUTCOME", "skipped"),
+              "binance_ingest": os.environ.get("BINANCE_INGEST_OUTCOME", "skipped"),
+              "campaign": os.environ.get("CAMPAIGN_OUTCOME", "skipped"),
+              "campaign_semantics": os.environ.get(
+                  "CAMPAIGN_SEMANTICS_OUTCOME", "skipped"
+              ),
+          }
+          smoke_ready = all(value == "success" for value in outcomes.values())
+          source_run_raw = os.environ.get("SOURCE_RUN_ID", "").strip()
+          source_run_id = int(source_run_raw) if source_run_raw.isdigit() else None
+          source_sha = os.environ.get("SOURCE_SHA", "").strip() or None
+          source_event_sha = os.environ.get("SOURCE_EVENT_SHA", "").strip() or None
+          payload = {
+              "evidence_version": 5,
+              "evidence_role": "latest_attempt",
+              "purpose": "recent_source_bound_economic_three_day_oos",
+              "success": smoke_ready,
+              "profitability_gate_eligible": False,
+              "full_historical_gate_satisfied": False,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "workflow_outcome": "success" if smoke_ready else "failure",
+              "step_outcomes": outcomes,
+              "source_run_id": source_run_id,
+              "source_sha": source_sha,
+              "source_event_sha": source_event_sha,
+              "source_current_run": os.environ.get("SOURCE_CURRENT_RUN") == "true",
+              "source_run": load_optional_json("artifacts/source-run.json"),
+              "trigger_sha": os.environ.get("TRIGGER_SHA"),
+              "economic_source_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "source_window": {
+                  "market": "BNBUSD",
+                  "start_timestamp": 1786838400,
+                  "end_timestamp": 1787097600,
+              },
+              "availability_assumptions_ms": {
+                  "spot": 250,
+                  "um_futures": 250,
+                  "chainlink": 1000,
+                  "max_chainlink_age": 300000,
+              },
+              "economic_assumptions": {
+                  "stake_wei": 10000000000000000,
+                  "bet_gas_wei": 50000000000000,
+                  "claim_gas_wei": 30000000000000,
+                  "inclusion_latency_seconds": 2,
+              },
+              "oos_smoke_config": {
+                  "min_train_rounds": 300,
+                  "test_rounds": 100,
+                  "purge_rounds": 2,
+                  "embargo_rounds": 2,
+                  "calibration_rounds": 60,
+                  "pool_min_train_rounds": 150,
+                  "pool_window_rounds": 400,
+              },
+              "chainlink_artifact_sha256": optional_sha256(
+                  "artifacts/source/recent-public-chainlink-2026-08-16-to-19.json"
+              ),
+              "chainlink_database_sha256": optional_sha256(
+                  "artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite"
+              ),
+              "binance_spot_ingest": load_optional_json(
+                  "artifacts/recent-economic-three-day-spot-ingest.json"
+              ),
+              "binance_perp_ingest": load_optional_json(
+                  "artifacts/recent-economic-three-day-perp-ingest.json"
+              ),
+              "campaign": load_optional_json(
+                  "artifacts/recent-economic-three-day-campaign.json"
+              ),
+              "campaign_semantics": load_optional_json(
+                  "artifacts/recent-economic-three-day-semantic-validation.json"
+              ),
+              "errors": {
+                  "source": load_error("artifacts/recent-economic-three-day-source.err"),
+                  "source_artifact": load_error(
+                      "artifacts/recent-economic-three-day-source-artifact.err"
+                  ),
+                  "schema": load_error("artifacts/recent-economic-three-day-schema.err"),
+                  "binance_download": load_error(
+                      "artifacts/recent-economic-three-day-binance-download.err"
+                  ),
+                  "binance_ingest": load_error(
+                      "artifacts/recent-economic-three-day-binance-ingest.err"
+                  ),
+                  "campaign": load_error("artifacts/recent-economic-three-day-campaign.err"),
+                  "campaign_semantics": load_error(
+                      "artifacts/recent-economic-three-day-semantic-validation.err"
+                  ),
+              },
+              "interpretation": (
+                  "Three-day OOS evidence: validates exact-source binding, checksum-verified three-day Binance inputs, "
+                  "non-vacuous purged/embargoed OOS evaluation, and explicit costs on a larger recent sample. "
+                  "It is not profitability evidence and does not satisfy the full historical source gate."
+              ),
+          }
+          out = Path("evidence/recent-economic-three-day-2026-08-16-to-19-latest.json")
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Persist smoke evidence
+        if: always() && !cancelled()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-economic-three-day-2026-08-16-to-19-latest.json
+          if python -c 'import json, pathlib; payload=json.loads(pathlib.Path("evidence/recent-economic-three-day-2026-08-16-to-19-latest.json").read_text()); raise SystemExit(0 if payload.get("success") is True else 1)'; then
+            cp evidence/recent-economic-three-day-2026-08-16-to-19-latest.json evidence/recent-economic-three-day-2026-08-16-to-19-last-success.json
+            python -c 'import json, pathlib; path=pathlib.Path("evidence/recent-economic-three-day-2026-08-16-to-19-last-success.json"); payload=json.loads(path.read_text()); payload["evidence_role"]="last_success"; path.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n")'
+            git add evidence/recent-economic-three-day-2026-08-16-to-19-last-success.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'Recent economic smoke evidence unchanged.'
+          else
+            git commit -m 'chore: record recent economic smoke evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+      - name: Upload smoke artifacts
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-economic-three-day-${{ github.run_id }}
+          path: |
+            artifacts/source-run.json
+            artifacts/source/recent-public-chainlink-2026-08-16-to-19.json
+            artifacts/recent-economic-three-day-*.json
+            artifacts/recent-economic-three-day-*.err
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce economic smoke result
+        if: always() && !cancelled()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("evidence/recent-economic-three-day-2026-08-16-to-19-latest.json").read_text()
+          )
+          if payload.get("success") is not True:
+              raise SystemExit(
+                  "Recent source-bound economic pipeline smoke failed; inspect persisted latest evidence."
+              )
+          PY
