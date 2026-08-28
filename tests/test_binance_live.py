@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 
 import pytest
@@ -34,7 +34,7 @@ class FakeClickHouse:
     def insert_json_rows(
         self,
         table: str,
-        rows: Iterator[Mapping[str, object]],
+        rows: Iterable[Mapping[str, object]],
         *,
         batch_size: int,
     ) -> ClickHouseInsertReport:
