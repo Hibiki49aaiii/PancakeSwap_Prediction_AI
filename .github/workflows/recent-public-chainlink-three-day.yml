@@ -382,3 +382,15 @@ jobs:
       source_run_id: ${{ needs.bootstrap.outputs.source_run_id }}
       source_sha: ${{ needs.bootstrap.outputs.source_sha }}
       source_event_sha: ${{ needs.bootstrap.outputs.source_event_sha }}
+
+  economic-window-comparison:
+    needs:
+      - bootstrap
+      - economic-three-day
+      - economic-robustness-three-day
+    if: ${{ needs.bootstrap.result == 'success' && needs.economic-three-day.result == 'success' && needs.economic-robustness-three-day.result == 'success' }}
+    uses: ./.github/workflows/recent-economic-window-comparison.yml
+    with:
+      source_run_id: ${{ needs.bootstrap.outputs.source_run_id }}
+      source_sha: ${{ needs.bootstrap.outputs.source_sha }}
+      source_event_sha: ${{ needs.bootstrap.outputs.source_event_sha }}
