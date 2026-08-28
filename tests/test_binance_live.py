@@ -8,6 +8,7 @@ import pytest
 from pancake_prediction.binance_live import (
     BinanceLiveError,
     BinanceRestPage,
+    inspect_binance_live_coverage,
     latest_binance_live_cursor,
     sync_binance_live_aggtrades,
 )
@@ -321,3 +322,57 @@ def test_latest_live_cursor_is_parameterized() -> None:
         "timestamp_unit": "milliseconds",
         "availability_lag_ms": 25,
     }
+
+def test_live_coverage_is_source_bound_and_parameterized() -> None:
+    clickhouse = FakeClickHouse(
+        cursor_rows=(
+            {
+                "row_count": 3,
+                "first_available_at_ms": 1_000,
+                "last_available_at_ms": 2_000,
+            },
+        )
+    )
+    coverage = inspect_binance_live_coverage(
+        clickhouse,
+        market="BNBUSD",
+        venue="spot",
+        availability_lag_ms=25,
+        timestamp_unit="auto",
+    )
+
+    assert coverage.row_count == 3
+    assert coverage.first_available_at_ms == 1_000
+    assert coverage.last_available_at_ms == 2_000
+    query, parameters = clickhouse.queries[0]
+    assert "source_name={source_name:String}" in query
+    assert parameters == {
+        "venue": "spot",
+        "symbol": "BNBUSDT",
+        "timestamp_unit": "auto",
+        "availability_lag_ms": 25,
+        "source_name": "binance-rest:spot",
+    }
+
+
+def test_live_coverage_empty_lineage_has_no_available_timestamp() -> None:
+    clickhouse = FakeClickHouse(
+        cursor_rows=(
+            {
+                "row_count": 0,
+                "first_available_at_ms": 0,
+                "last_available_at_ms": 0,
+            },
+        )
+    )
+    coverage = inspect_binance_live_coverage(
+        clickhouse,
+        market="BNBUSD",
+        venue="um_futures",
+        availability_lag_ms=250,
+    )
+
+    assert coverage.row_count == 0
+    assert coverage.first_available_at_ms is None
+    assert coverage.last_available_at_ms is None
+
