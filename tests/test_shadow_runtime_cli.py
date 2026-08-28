@@ -88,7 +88,7 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
         assert received_binance is binance
         captured.update(
             {
-                "market": getattr(market, "symbol"),
+                "market": market.symbol,  # type: ignore[attr-defined]
                 "canonical_database": canonical_database,
                 "shadow_database": shadow_database,
                 "config": config,
