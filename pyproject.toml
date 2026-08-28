@@ -15,6 +15,7 @@ dependencies = []
 [project.scripts]
 pcs-prediction = "pancake_prediction.cli:main"
 pcs-clickhouse = "pancake_prediction.clickhouse_cli:main"
+pcs-shadow-runtime = "pancake_prediction.shadow_runtime_cli:main"
 
 [project.optional-dependencies]
 dev = [
