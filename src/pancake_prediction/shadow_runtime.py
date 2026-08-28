@@ -284,7 +284,6 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
-        purge_rounds=selected.inference.purge_rounds,
             purge_rounds=selected.inference.purge_rounds,
         )
 
@@ -339,7 +338,6 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
-        purge_rounds=selected.inference.purge_rounds,
             purge_rounds=selected.inference.purge_rounds,
             reason=str(exc),
         )
@@ -368,7 +366,6 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
-        purge_rounds=selected.inference.purge_rounds,
             purge_rounds=selected.inference.purge_rounds,
         )
 
