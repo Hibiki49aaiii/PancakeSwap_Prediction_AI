@@ -514,15 +514,16 @@ class ShadowLedgerStore:
         observed_pnl_wei = 0
         for key, settlement in settlements.items():
             prediction = predictions.get(key)
-            if prediction is None or settlement.outcome == "tie":
+            if prediction is None:
                 continue
-            target = 1.0 if settlement.outcome == "bull" else 0.0
-            probability = prediction.calibrated_probability_ppm / 1_000_000
-            probability_errors.append((probability - target) ** 2)
-            if prediction.action in {"bull", "bear"}:
-                direction_total += 1
-                if prediction.action == settlement.outcome:
-                    direction_correct += 1
+            if settlement.outcome != "tie":
+                target = 1.0 if settlement.outcome == "bull" else 0.0
+                probability = prediction.calibrated_probability_ppm / 1_000_000
+                probability_errors.append((probability - target) ** 2)
+                if prediction.action in {"bull", "bear"}:
+                    direction_total += 1
+                    if prediction.action == settlement.outcome:
+                        direction_correct += 1
             if (
                 prediction.action in {"bull", "bear"}
                 and settlement.realized_pnl_wei is not None
