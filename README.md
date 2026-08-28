@@ -72,7 +72,7 @@ Shadow -> Fork -> Tiny Live gate
 | 1 | Deterministic replay | Implemented and unit-tested foundation |
 | 2 | Leakage-safe, cost-aware backtest | Implemented and unit-tested foundation |
 | 3 | Purged walk-forward / OOS evaluation | Implemented and unit-tested foundation |
-| 4 | Paper / Shadow | Append-only hash-chained ledger, single-target leakage-safe inference, campaign gate, CLI and Evidence builder implemented; real long-running campaign not yet completed |
+| 4 | Paper / Shadow | Continuous no-signing runtime implemented: anchored BSC + prospective Binance sync, deadline-safe inference, append-only ledger, reconciliation, campaign gate and Evidence; real long-running campaign not yet completed |
 | 5A | Durable execution fault model | Fork-only durable intent/reconciliation state machine implemented and adversarially unit-tested |
 | 5B | BSC fork execution | Loopback-only transaction adapter and recovery drills implemented; observed local BSC-fork campaign evidence is persisted in evidence/stage5b-fork-last-success.json |
 | 6A | Tiny-live readiness / safety preflight | Not implemented as an executable live gate |
@@ -100,7 +100,7 @@ pcs-prediction historical-bootstrap \
   --db artifacts/bnbusd-history.sqlite
 ```
 
-Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, appended, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands, while pcs-clickhouse shadow-infer binds canonical research inputs to one prospective target decision. See docs/STAGE4_SHADOW.md.
+Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands. pcs-prediction shadow-chain-sync and pcs-clickhouse binance-live-sync maintain prospective source data, pcs-clickhouse shadow-infer performs a single target cycle, and pcs-shadow-runtime composes continuous Stage 4 collection, reconciliation and deadline-safe inference. See docs/STAGE4_SHADOW.md.
 
 The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
 
