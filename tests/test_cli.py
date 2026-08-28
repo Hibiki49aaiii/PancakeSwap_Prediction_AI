@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from pancake_prediction import cli
 from pancake_prediction.contracts import Market
 from pancake_prediction.historical_preflight import HistoricalPreflightResult
+from pancake_prediction.replay import ReplaySnapshot, RoundRecord
 from pancake_prediction.rpc_probe import ArchiveProbeResult
 
 SENDER = "0x" + "11" * 20
@@ -261,8 +263,6 @@ def test_cli_shadow_ledger_prediction_settlement_and_audit(
         "realized_pnl_wei": 100,
         "metadata": {"source": "canonical-test"},
     }
-    from pathlib import Path
-
     Path(prediction_path).write_text(json.dumps(prediction), encoding="utf-8")
     Path(settlement_path).write_text(json.dumps(settlement), encoding="utf-8")
 
@@ -362,4 +362,122 @@ def test_cli_shadow_ledger_rejects_negative_purge_rounds(
             ]
         )
     assert exc_info.value.code == 2
+
+def test_cli_shadow_reconcile_uses_canonical_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    shadow_db = tmp_path / "shadow.sqlite3"
+    prediction_path = tmp_path / "prediction.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "market": "BNBUSD",
+                "epoch": 10,
+                "decision_timestamp_ms": 1_280_000,
+                "model_id": "shadow-wf-v1",
+                "feature_set_id": "full-v1",
+                "raw_probability_ppm": 620_000,
+                "calibrated_probability_ppm": 600_000,
+                "expected_value_wei": 10,
+                "action": "bull",
+                "feature_digest": "a" * 64,
+                "train_max_epoch": 7,
+                "metadata": {
+                    "stake_wei": 100,
+                    "bet_gas_wei": 2,
+                    "claim_gas_wei": 1,
+                    "treasury_fee_bps": 300,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        cli.main(
+            [
+                "shadow-append-prediction",
+                "--db",
+                str(shadow_db),
+                "--record",
+                str(prediction_path),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    round_record = RoundRecord(
+        epoch=10,
+        start_block=100,
+        start_timestamp=1_000,
+        lock_block=200,
+        lock_timestamp=1_300,
+        lock_round_id=1_000,
+        lock_price=30_000_000_000,
+        end_block=300,
+        end_timestamp=1_600,
+        close_round_id=2_000,
+        close_price=30_100_000_000,
+        bull_amount_wei=1_000,
+        bear_amount_wei=1_000,
+        total_amount_wei=2_000,
+        bet_count=10,
+        reward_base_cal_amount_wei=1_000,
+        reward_amount_wei=1_940,
+        treasury_amount_wei=60,
+        label="bull",
+        issues=(),
+    )
+    replay = ReplaySnapshot(
+        format_version=1,
+        market="BNBUSD",
+        input_digest="b" * 64,
+        rounds=(round_record,),
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_replay_snapshot",
+        lambda path, market: replay,
+    )
+
+    assert (
+        cli.main(
+            [
+                "shadow-reconcile",
+                "--shadow-db",
+                str(shadow_db),
+                "--canonical-db",
+                str(tmp_path / "canonical.sqlite3"),
+                "--market",
+                "BNBUSD",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reconciliation"]["appended_settlement_count"] == 1
+    assert payload["reconciliation"]["unresolved_count"] == 0
+    assert payload["audit"]["integrity_ready"] is True
+    assert payload["audit"]["settlement_count"] == 1
+    assert payload["audit"]["observed_pnl_wei"] == 82
+
+    assert (
+        cli.main(
+            [
+                "shadow-reconcile",
+                "--shadow-db",
+                str(shadow_db),
+                "--canonical-db",
+                str(tmp_path / "canonical.sqlite3"),
+                "--market",
+                "BNBUSD",
+            ]
+        )
+        == 0
+    )
+    retry = json.loads(capsys.readouterr().out)
+    assert retry["reconciliation"]["appended_settlement_count"] == 0
+    assert retry["reconciliation"]["existing_settlement_count"] == 1
 
