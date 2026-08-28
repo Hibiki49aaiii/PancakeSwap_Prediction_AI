@@ -255,7 +255,12 @@ def test_shadow_infer_binds_target_costs_and_appends_ledger(
         "ClickHouseHttpClient",
         lambda *args, **kwargs: ReadyClient(),
     )
-    replay = object()
+    replay = ReplaySnapshot(
+        format_version=1,
+        market="BNBUSD",
+        input_digest="a" * 64,
+        rounds=(),
+    )
     events: tuple[object, ...] = ()
     rows: tuple[object, ...] = (object(),)
     bundle = FakeBundle(
