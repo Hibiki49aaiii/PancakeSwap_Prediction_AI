@@ -9,6 +9,7 @@ from pancake_prediction.replay import ChainEvent, ReplaySnapshot, RoundRecord
 from pancake_prediction.shadow_inference import (
     ShadowInferenceConfig,
     build_shadow_inference,
+    select_shadow_target,
 )
 
 
@@ -244,3 +245,59 @@ def test_shadow_inference_config_rejects_timing_without_inclusion_margin() -> No
             inclusion_latency_seconds=20,
             decision_lead_seconds=20,
         ).validate()
+
+def test_shadow_target_selection_opens_at_decision_and_closes_before_lock() -> None:
+    replay, events, _rows = _fixture()
+    config = _config()
+
+    assert (
+        select_shadow_target(
+            replay,
+            events,
+            now_timestamp=40_279,
+            config=config,
+        )
+        is None
+    )
+
+    opened = select_shadow_target(
+        replay,
+        events,
+        now_timestamp=40_280,
+        config=config,
+    )
+    assert opened is not None
+    assert opened.epoch == 40
+    assert opened.decision_timestamp == 40_280
+    assert opened.scheduled_lock_timestamp == 40_300
+    assert opened.latest_submission_timestamp == 40_298
+
+    still_open = select_shadow_target(
+        replay,
+        events,
+        now_timestamp=40_297,
+        config=config,
+    )
+    assert still_open == opened
+
+    assert (
+        select_shadow_target(
+            replay,
+            events,
+            now_timestamp=40_298,
+            config=config,
+        )
+        is None
+    )
+
+
+def test_shadow_target_selection_rejects_negative_clock() -> None:
+    replay, events, _rows = _fixture()
+    with pytest.raises(ValueError, match="now_timestamp must be non-negative"):
+        select_shadow_target(
+            replay,
+            events,
+            now_timestamp=-1,
+            config=_config(),
+        )
+
