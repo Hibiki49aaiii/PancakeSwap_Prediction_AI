@@ -11,6 +11,7 @@ from typing import cast
 
 from .binance_archive import ArchiveVenue, TimestampUnit
 from .binance_live import (
+    BinanceLiveError,
     BinancePublicHttpClient,
     LiveVenue,
     sync_binance_live_aggtrades,
@@ -445,7 +446,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 batch_size=int(args.batch_size),
                 max_pages=int(args.max_pages),
             )
-        except ValueError as exc:
+        except (BinanceLiveError, ValueError) as exc:
             parser.error(f"Binance live sync failed: {exc}")
         _print_json(live_report.as_dict())
         return 0
