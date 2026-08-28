@@ -553,6 +553,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target_epoch=target_epoch,
                     config=inference_config,
                 )
+                if target_selection is not None:
+                    final_now_timestamp = (
+                        int(time.time())
+                        if args.now_timestamp is None
+                        else int(args.now_timestamp)
+                    )
+                    if (
+                        final_now_timestamp
+                        >= target_selection.latest_submission_timestamp
+                    ):
+                        common_payload["shadow_reconciliation"] = (
+                            reconciliation.as_dict()
+                        )
+                        common_payload["shadow_cycle"] = {
+                            "status": "missed_submission_deadline",
+                            "now_timestamp": final_now_timestamp,
+                            "selection": target_selection.as_dict(),
+                            "signing_enabled": False,
+                            "live_broadcast": False,
+                        }
+                        _print_json(common_payload)
+                        return 0
                 ledger_event = shadow_store.append_prediction(
                     inference.prediction,
                     purge_rounds=int(args.purge_rounds),
