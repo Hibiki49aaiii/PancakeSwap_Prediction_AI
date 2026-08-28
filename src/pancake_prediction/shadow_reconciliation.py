@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 from .economics import ParimutuelQuote, gross_payout_if_win_wei
 from .replay import ReplaySnapshot, RoundRecord
@@ -181,7 +181,8 @@ def _settlement_for(
     record: RoundRecord,
 ) -> ShadowSettlementRecord:
     _validate_round_integrity(prediction, record)
-    assert record.end_timestamp is not None
+    if record.end_timestamp is None:
+        raise ValueError(f"round {record.epoch} is not settled")
     return ShadowSettlementRecord(
         market=market,
         epoch=record.epoch,
@@ -247,26 +248,28 @@ def reconcile_shadow_settlements(
         )
 
     rounds: dict[int, RoundRecord] = {}
-    for record in replay.rounds:
-        if record.epoch in rounds:
-            raise ValueError(f"duplicate replay epoch {record.epoch}")
-        rounds[record.epoch] = record
+    for replay_record in replay.rounds:
+        if replay_record.epoch in rounds:
+            raise ValueError(f"duplicate replay epoch {replay_record.epoch}")
+        rounds[replay_record.epoch] = replay_record
 
     pending: list[ShadowSettlementRecord] = []
     unresolved = 0
     for key, prediction in sorted(predictions.items()):
         if key in settlements:
             continue
-        record = rounds.get(prediction.epoch)
+        settlement_round = rounds.get(prediction.epoch)
         if (
-            record is None
-            or record.end_timestamp is None
-            or record.end_block is None
-            or record.label not in {"bull", "bear", "tie"}
+            settlement_round is None
+            or settlement_round.end_timestamp is None
+            or settlement_round.end_block is None
+            or settlement_round.label not in {"bull", "bear", "tie"}
         ):
             unresolved += 1
             continue
-        pending.append(_settlement_for(replay.market, prediction, record))
+        pending.append(
+            _settlement_for(replay.market, prediction, settlement_round)
+        )
 
     # Validate every derived settlement before mutating the append-only ledger.
     appended = tuple(store.append_settlement(record) for record in pending)
