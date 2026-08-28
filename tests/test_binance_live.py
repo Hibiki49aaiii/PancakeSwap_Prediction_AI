@@ -146,6 +146,7 @@ def test_live_sync_bootstraps_and_uses_actual_observation_time() -> None:
     assert clickhouse.inserted[1]["aggressive_side"] == "sell"
     assert clickhouse.inserted[0]["source_name"] == "binance-rest:spot"
     assert clickhouse.inserted[0]["timestamp_unit"] == "milliseconds"
+    assert report.timestamp_unit == "milliseconds"
     assert clickhouse.inserted[0]["ingest_version"] == 123
 
 
@@ -317,5 +318,6 @@ def test_latest_live_cursor_is_parameterized() -> None:
     assert parameters == {
         "venue": "spot",
         "symbol": "BNBUSDT",
+        "timestamp_unit": "milliseconds",
         "availability_lag_ms": 25,
     }
