@@ -168,6 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     live.add_argument("--market", choices=sorted(MARKETS), required=True)
     live.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    live.add_argument(
+        "--timestamp-unit",
+        choices=_TIMESTAMP_UNITS,
+        default="milliseconds",
+        help="ClickHouse lineage key; REST timestamps themselves are always parsed as milliseconds",
+    )
     live.add_argument("--availability-lag-ms", type=int, required=True)
     live.add_argument("--bootstrap-window-ms", type=int, default=120_000)
     live.add_argument("--batch-size", type=int, default=5_000)
@@ -437,6 +443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 market=str(args.market),
                 venue=cast(LiveVenue, str(args.venue)),
                 availability_lag_ms=int(args.availability_lag_ms),
+                timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
                 now_timestamp_ms=(
                     None
                     if args.now_timestamp_ms is None
