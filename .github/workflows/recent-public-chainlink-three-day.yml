@@ -371,3 +371,14 @@ jobs:
       source_sha: ${{ needs.bootstrap.outputs.source_sha }}
       source_event_sha: ${{ needs.bootstrap.outputs.source_event_sha }}
       source_current_run: true
+
+  economic-robustness-three-day:
+    needs:
+      - bootstrap
+      - economic-three-day
+    if: ${{ needs.bootstrap.result == 'success' && needs.economic-three-day.result == 'success' }}
+    uses: ./.github/workflows/recent-economic-robustness-three-day.yml
+    with:
+      source_run_id: ${{ needs.bootstrap.outputs.source_run_id }}
+      source_sha: ${{ needs.bootstrap.outputs.source_sha }}
+      source_event_sha: ${{ needs.bootstrap.outputs.source_event_sha }}
