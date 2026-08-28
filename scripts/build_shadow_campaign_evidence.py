@@ -83,7 +83,8 @@ def main() -> int:
         "live_broadcast": False,
         "interpretation": (
             "Stage 4 shadow operational-readiness evidence only. This proves append-only decision "
-            "capture, settlement reconciliation, minimum campaign coverage, and metric availability. "
+            "capture, settlement reconciliation, minimum campaign coverage, "
+            "and metric availability. "
             "PnL sign is intentionally not a pass condition and no funded execution is authorized."
         ),
     }
