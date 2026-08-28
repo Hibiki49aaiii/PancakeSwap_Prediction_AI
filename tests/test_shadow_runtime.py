@@ -3,12 +3,17 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from pancake_prediction import shadow_runtime
-from pancake_prediction.binance_live import BinanceLiveSyncReport, BinanceRestPage
+from pancake_prediction.binance_live import (
+    BinanceLiveCoverage,
+    BinanceLiveSyncReport,
+    BinanceRestPage,
+    LiveVenue,
+)
 from pancake_prediction.clickhouse import ClickHouseInsertReport, QueryParameter
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.replay import ReplaySnapshot
@@ -144,10 +149,10 @@ def _chain_report() -> ShadowChainSyncReport:
     )
 
 
-def _binance_report(venue: str) -> BinanceLiveSyncReport:
+def _binance_report(venue: LiveVenue) -> BinanceLiveSyncReport:
     return BinanceLiveSyncReport(
         market="BNBUSD",
-        venue=venue,  # type: ignore[arg-type]
+        venue=venue,
         symbol="BNBUSDT",
         availability_lag_ms=250,
         timestamp_unit="milliseconds",
@@ -165,6 +170,23 @@ def _binance_report(venue: str) -> BinanceLiveSyncReport:
         first_available_at_ms=900_250,
         last_available_at_ms=999_250,
         response_chain_sha256="b" * 64,
+    )
+
+
+def _coverage(
+    venue: LiveVenue,
+    *,
+    first_available_at_ms: int = 900_000,
+) -> BinanceLiveCoverage:
+    return BinanceLiveCoverage(
+        market="BNBUSD",
+        venue=venue,
+        symbol="BNBUSDT",
+        timestamp_unit="auto" if venue == "spot" else "milliseconds",
+        availability_lag_ms=250,
+        row_count=100,
+        first_available_at_ms=first_available_at_ms,
+        last_available_at_ms=999_000,
     )
 
 
@@ -206,13 +228,20 @@ def _patch_common(
     )
 
     def fake_binance(*args: object, **kwargs: object) -> BinanceLiveSyncReport:
-        venue = str(kwargs["venue"])
+        venue = cast(LiveVenue, str(kwargs["venue"]))
         return _binance_report(venue)
 
     monkeypatch.setattr(
         shadow_runtime,
         "sync_binance_live_aggtrades",
         fake_binance,
+    )
+    monkeypatch.setattr(
+        shadow_runtime,
+        "inspect_binance_live_coverage",
+        lambda source, **kwargs: _coverage(
+            cast(LiveVenue, str(kwargs["venue"]))
+        ),
     )
     monkeypatch.setattr(
         shadow_runtime,
@@ -410,3 +439,40 @@ def test_runtime_cycle_surfaces_target_warmup_as_not_ready(
     assert report.status == "target_not_ready"
     assert report.reason == "target feature row is not prospectively available"
     assert report.ledger_event is None
+
+def test_runtime_cycle_blocks_prediction_until_live_flow_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    replay = ReplaySnapshot(1, "BNBUSD", "a" * 64, ())
+    _patch_common(monkeypatch, replay)
+    monkeypatch.setattr(
+        shadow_runtime,
+        "inspect_binance_live_coverage",
+        lambda source, **kwargs: _coverage(
+            cast(LiveVenue, str(kwargs["venue"])),
+            first_available_at_ms=970_000,
+        ),
+    )
+
+    def should_not_select(*args: object, **kwargs: object) -> object:
+        raise AssertionError("target selection must wait for prospective warmup")
+
+    monkeypatch.setattr(shadow_runtime, "select_shadow_target", should_not_select)
+
+    report = shadow_runtime.run_shadow_runtime_cycle(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeRest(),
+        MARKETS["BNBUSD"],
+        tmp_path / "canonical.sqlite3",
+        tmp_path / "shadow.sqlite3",
+        now_timestamp_ms=1_000_000,
+        completion_timestamp_ms=1_000_100,
+    )
+
+    assert report.status == "source_warmup"
+    assert report.reason == "prospective live warmup incomplete: spot,perp"
+    assert report.spot_coverage.first_available_at_ms == 970_000
+    assert report.ledger_event is None
+
