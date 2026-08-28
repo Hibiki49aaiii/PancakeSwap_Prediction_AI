@@ -1,9 +1,9 @@
 # v0.7 Research Readiness and Historical-Source Gate
 
-Status: active / bounded recent path proven; full historical gate blocked
-Date: 2026-08-22
+Status: active / bounded one-day path proven; three-day source blocked on authenticated RPC; downstream three-day OOS/robustness pipeline prepared
+Date: 2026-08-29
 Related PR: #1 (`agent/v0.7-alpha-research` -> `main`)
-Latest verified normal CI: run `32504281549` (#1010), 320 tests passed, 87% coverage, all quality/integration/security jobs green.
+Latest verified normal CI: run `33183757586` (#1076), 330 tests passed and all CI jobs green.
 
 ## Problem
 
@@ -82,20 +82,26 @@ No funded/mainnet execution path is introduced.
 
 ## Current expansion
 
-A separate Aug 16–19 UTC recent source gate was added in commit `d1c8bf083f3338eef89ece956f58593e39d78945`.
+The earlier public-only Aug 16–19 attempt is no longer treated as a useful retry path. The three-day source workflow is now authenticated-only and remains fail-closed until one of the repository secrets `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL` is configured.
 
-Run `32503882364` is currently collecting the three-day Prediction + Chainlink window. Its identity is persisted in `evidence/recent-public-chainlink-2026-08-16-to-19-running.json`.
+Latest observed three-day source attempt:
 
-The three-day gate requires:
+- workflow run `33183751676`;
+- source SHA/event SHA `6b322ccecb4ad04091fc530f62cd1a063c1712ce`;
+- `source_requirement.classification="AUTHENTICATED_RPC_REQUIRED"`;
+- no authenticated candidate was selected;
+- no three-day `last-success` evidence was created;
+- signing and live broadcast remained disabled.
 
-- exact Aug 16–19 timestamps;
-- real Prediction and Chainlink events;
-- at least 800 replay/Start/Lock/End rounds;
-- exact persisted anchor identity and digest;
-- zero `NewOracle` / `AggregatorConfirmed` route changes;
-- artifact publication before success evidence.
+Development continued past that external blocker by preparing the downstream analysis path:
 
-No three-day economic result is claimed until that source gate succeeds.
+1. `.github/workflows/recent-economic-three-day.yml` binds to the exact successful three-day source run/artifact and ingests checksum-verified Binance Spot + USD-M aggTrades for Aug 16, 17, and 18.
+2. The three-day OOS campaign uses stricter structural sizes than the one-day smoke: min train 300, test 100, calibration 60, pool min train 150, pool window 400, purge 2, embargo 2.
+3. Its semantic gate requires at least 650 research rows, at least 3 folds, at least 250 scored/joint/direction samples, at least 400 pool projections, and all source-lag/provenance checks.
+4. `.github/workflows/recent-economic-robustness-three-day.yml` then runs the same eight economic sensitivity scenarios plus five feature-family ablation variants on the exact three-day source.
+5. `.github/workflows/recent-public-chainlink-three-day.yml` now chains `bootstrap -> economic-three-day -> economic-robustness-three-day`; each downstream job is skipped unless the prior fail-closed gate succeeds.
+
+The new workflow definitions are accepted by GitHub Actions, and normal CI #1076 passed with 330 tests. No profitability or funded-execution claim was introduced.
 
 ## Interpretation boundary
 
@@ -113,12 +119,13 @@ All current economic evidence keeps `profitability_gate_eligible=false` and `ful
 
 ## Next steps
 
-1. Complete and validate the Aug 16–19 source gate.
-2. Run a larger three-day source-bound OOS campaign.
-3. Repeat sensitivity/ablation and compare calibration and feature stability against the one-day evidence.
-4. Add pre-window warmup only if observed skip patterns justify it.
-5. Expand across additional recent regimes.
-6. Prove an authenticated complete historical source before deployment-era profitability interpretation.
+1. Configure one authenticated/log-capable BSC mainnet RPC secret: `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL`.
+2. Rerun `recent-authenticated-chainlink-three-day` and require exact source/route/event/artifact semantics to produce `recent-public-chainlink-2026-08-16-to-19-last-success.json`.
+3. Let the chained three-day OOS workflow execute and inspect probability skill, calibration, PnL/drawdown, source lineage, and the explicit minimum sample gates.
+4. Let the chained three-day robustness workflow run the eight sensitivity scenarios and five feature-family ablations; compare stability against the one-day evidence instead of choosing features from the one-day result alone.
+5. Expand across additional independent recent market regimes only after the three-day evidence is non-vacuous.
+6. Separately prove the complete deployment-era historical source with an archive-capable route before any full-history profitability interpretation.
+7. Keep research authority separate from signing/live broadcast and keep Stage 6B funded validation behind a separate explicit operational/legal gate.
 
 ## Related evidence
 
