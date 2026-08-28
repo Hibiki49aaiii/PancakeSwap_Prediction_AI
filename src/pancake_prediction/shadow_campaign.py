@@ -92,7 +92,8 @@ class ShadowCampaignGateReport:
             "live_broadcast": False,
             "interpretation": (
                 "Stage 4 shadow operational-readiness evidence only. Positive PnL, directional "
-                "accuracy, or a low Brier score is not itself a pass condition and does not establish "
+                "accuracy, or a low Brier score is not itself a pass condition and "
+                "does not establish "
                 "durable profitability."
             ),
         }
