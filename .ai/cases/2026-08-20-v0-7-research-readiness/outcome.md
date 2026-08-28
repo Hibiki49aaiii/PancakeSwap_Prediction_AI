@@ -14,11 +14,11 @@ Proven gates now include:
 - eight-scenario economic sensitivity plus five-variant feature-family ablation;
 - observed Stage 5B loopback/local-fork execution-readiness.
 
-A larger Aug 16–19 recent source gate is now running as the next OOS expansion.
+The Aug 16–19 recent source gate is authenticated-only and remains blocked until an authenticated BSC RPC secret is configured; the entire downstream OOS/robustness/cross-window comparison path is already implemented.
 
 ## Verification state
 
-Normal PR CI run `33183757586` (#1076) completed successfully on the current code lineage. The test job reported 330 passed, and the ClickHouse integration, secrets scan, legacy-round audit, and test jobs all completed successfully.
+Code CI run `33184259413` (#1082) completed successfully with 333 tests passed. Ruff, mypy strict, Bandit, pip-audit, ClickHouse integration, secrets scan, legacy-round audit, and the quality gate all passed.
 
 ### One-day Prediction + Chainlink source
 
@@ -91,7 +91,7 @@ This is local-fork execution-readiness evidence, not funded/mainnet execution ev
 
 ## Current expansion
 
-The Aug 16–19 three-day source path is now authenticated-only. Latest attempt `33183751676` remained correctly blocked with `AUTHENTICATED_RPC_REQUIRED`; no authenticated RPC candidate was available, so no three-day `last-success` source evidence exists yet.
+The Aug 16–19 three-day source path is now authenticated-only. Latest attempt `33184368365` at source/event SHA `5b211ced521091e4c89dd5da93d99491ab28aed9` remained correctly blocked with `AUTHENTICATED_RPC_REQUIRED`; no authenticated RPC candidate was available, so no three-day `last-success` source evidence exists yet.
 
 The downstream work has nevertheless been implemented so the next successful source run can proceed without another development pause:
 
@@ -100,9 +100,11 @@ The downstream work has nevertheless been implemented so the next successful sou
 - The OOS semantic gate requires >=650 research rows, >=3 folds, >=250 direction/joint/scored samples, >=400 pool projections, exact source provenance, and exact availability lags.
 - `config/recent-economic-sensitivity-aug16-18.json` freezes the eight-scenario sensitivity set for the same source window.
 - `.github/workflows/recent-economic-robustness-three-day.yml` runs those eight sensitivity scenarios and five feature-family ablation variants with non-vacuous sample thresholds.
-- `.github/workflows/recent-public-chainlink-three-day.yml` chains the sequence `bootstrap -> economic-three-day -> economic-robustness-three-day`. Downstream analysis is skipped unless the upstream fail-closed gate succeeds.
+- `src/pancake_prediction/window_comparison.py` and `scripts/compare_recent_economic_windows.py` compare fail-closed robustness Evidence across the one-day and three-day windows. They report full-v1 deltas for Brier/Brier-skill, log loss, ECE, accuracy, PnL, ROI and drawdown, plus feature-variant Brier/PnL rank changes.
+- `.github/workflows/recent-economic-window-comparison.yml` validates exact source lineage and fixed windows, requires five common feature variants, and persists comparison Evidence without changing the profitability/historical/signing boundaries.
+- `.github/workflows/recent-public-chainlink-three-day.yml` chains the sequence `bootstrap -> economic-three-day -> economic-robustness-three-day -> economic-window-comparison`. Downstream analysis is skipped unless the upstream fail-closed gate succeeds.
 
-GitHub Actions accepted both reusable workflow references, and CI #1076 passed with 330 tests. No signing, mainnet broadcast, profitability claim, or funded-validation path was added.
+GitHub Actions accepted all three reusable downstream workflow references. CI #1082 passed with 333 tests, including the new cross-window comparison tests. No signing, mainnet broadcast, profitability claim, or funded-validation path was added.
 
 ## Remaining risk
 
@@ -111,18 +113,19 @@ GitHub Actions accepted both reusable workflow references, and CI #1076 passed w
 - A source window containing `NewOracle` or `AggregatorConfirmed` cannot use the single-route anchor proof and requires historical route reconstruction.
 - The current probability skill is not strong enough for an alpha claim.
 - One-day stress-positive economics do not establish durable profitability or feature necessity.
-- The running three-day source must succeed before any three-day economic claim exists.
+- The authenticated three-day source must succeed before any three-day economic or cross-window comparison claim exists.
 
 ## Follow-up
 
 1. Configure `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL` with an authenticated/log-capable BSC mainnet endpoint.
 2. Rerun the authenticated Aug 16–19 source gate and require a real `last-success` artifact/evidence pair.
-3. Allow the chained three-day OOS campaign to execute; compare Brier skill, calibration, PnL/ROI, drawdown, and source lineage against the one-day evidence.
-4. Allow the chained sensitivity/ablation workflow to execute; compare feature-family stability across the one-day and three-day windows before changing the canonical feature set.
-5. Add pre-window warmup only if the larger observed skip pattern demonstrates a real need.
-6. Expand to additional independent recent regimes after the three-day gate is non-vacuous.
-7. Keep the complete historical gate fail-closed until an authenticated archive-capable source proves the deployment-era workload.
-8. Keep profitability interpretation and any funded/mainnet execution behind their separate evidence and authorization gates.
+3. Allow the chained three-day OOS campaign to execute and validate probability/economic sample thresholds.
+4. Allow the chained sensitivity/ablation workflow to execute.
+5. Allow the chained cross-window comparison to quantify full-v1 metric changes and feature-ranking stability; require this evidence before changing the canonical feature set.
+6. Add pre-window warmup only if the larger observed skip pattern demonstrates a real need.
+7. Expand to additional independent recent regimes after the three-day gate is non-vacuous.
+8. Keep the complete historical gate fail-closed until an authenticated archive-capable source proves the deployment-era workload.
+9. Keep profitability interpretation and any funded/mainnet execution behind their separate evidence and authorization gates.
 
 ## Reusable knowledge
 
