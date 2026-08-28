@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,7 +30,11 @@ from .clickhouse_manifest import (
 from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
 from .contracts import MARKETS
 from .research_inputs import CanonicalResearchInputs, load_canonical_research_inputs
-from .shadow_inference import ShadowInferenceConfig, build_shadow_inference
+from .shadow_inference import (
+    ShadowInferenceConfig,
+    build_shadow_inference,
+    select_shadow_target,
+)
 from .shadow_ledger import ShadowLedgerStore
 from .shadow_reconciliation import reconcile_shadow_settlements
 
@@ -188,7 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="build one leakage-safe target decision and append it to the Stage 4 shadow ledger",
     )
     _add_dataset_arguments(shadow)
-    shadow.add_argument("--target-epoch", type=int, required=True)
+    shadow.add_argument("--target-epoch", type=int)
+    shadow.add_argument(
+        "--now-timestamp",
+        type=int,
+        help="UNIX seconds override for deterministic automatic target selection",
+    )
     shadow.add_argument("--shadow-db", type=Path, required=True)
     shadow.add_argument("--stake-wei", type=int, required=True)
     shadow.add_argument("--bet-gas-wei", type=int, required=True)
@@ -453,18 +463,49 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "shadow-infer":
             try:
+                inference_config = _shadow_inference_config(args)
                 shadow_store = ShadowLedgerStore(Path(args.shadow_db))
                 shadow_store.initialize()
                 reconciliation = reconcile_shadow_settlements(
                     shadow_store,
                     bundle.inputs.replay,
                 )
+                explicit_target = args.target_epoch
+                target_selection = None
+                if explicit_target is None:
+                    now_timestamp = (
+                        int(time.time())
+                        if args.now_timestamp is None
+                        else int(args.now_timestamp)
+                    )
+                    target_selection = select_shadow_target(
+                        bundle.inputs.replay,
+                        bundle.inputs.events,
+                        now_timestamp=now_timestamp,
+                        config=inference_config,
+                    )
+                    if target_selection is None:
+                        common_payload["shadow_reconciliation"] = (
+                            reconciliation.as_dict()
+                        )
+                        common_payload["shadow_cycle"] = {
+                            "status": "no_eligible_target",
+                            "now_timestamp": now_timestamp,
+                            "signing_enabled": False,
+                            "live_broadcast": False,
+                        }
+                        _print_json(common_payload)
+                        return 0
+                    target_epoch = target_selection.epoch
+                else:
+                    target_epoch = int(explicit_target)
+
                 inference = build_shadow_inference(
                     bundle.inputs.replay,
                     bundle.inputs.events,
                     bundle.dataset.dataset.research_feature_rows,
-                    target_epoch=int(args.target_epoch),
-                    config=_shadow_inference_config(args),
+                    target_epoch=target_epoch,
+                    config=inference_config,
                 )
                 ledger_event = shadow_store.append_prediction(
                     inference.prediction,
@@ -473,6 +514,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             except ValueError as exc:
                 parser.error(f"shadow inference failed: {exc}")
             common_payload["shadow_reconciliation"] = reconciliation.as_dict()
+            common_payload["shadow_cycle"] = {
+                "status": "prediction_recorded",
+                "selection": (
+                    None
+                    if target_selection is None
+                    else target_selection.as_dict()
+                ),
+                "explicit_target": explicit_target is not None,
+                "signing_enabled": False,
+                "live_broadcast": False,
+            }
             common_payload["shadow_inference"] = inference.as_dict()
             common_payload["shadow_ledger_event"] = ledger_event.as_dict()
             _print_json(common_payload)
