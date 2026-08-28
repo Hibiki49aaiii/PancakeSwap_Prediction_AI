@@ -26,6 +26,7 @@ from .prediction_tx import BetSide, build_prediction_bet_intent
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
+from .shadow_campaign import ShadowCampaignPolicy, evaluate_shadow_campaign
 from .shadow_ledger import (
     ShadowLedgerStore,
     prediction_from_payload,
@@ -219,6 +220,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shadow_audit.add_argument("--db", type=Path, required=True)
     shadow_audit.add_argument("--purge-rounds", type=int, default=2)
+
+    shadow_gate = subparsers.add_parser(
+        "shadow-campaign-gate",
+        help="evaluate Stage 4 shadow operational-readiness without treating profit as a pass condition",
+    )
+    shadow_gate.add_argument("--db", type=Path, required=True)
+    shadow_gate.add_argument("--purge-rounds", type=int, default=2)
+    shadow_gate.add_argument("--min-predictions", type=int, default=1_000)
+    shadow_gate.add_argument("--min-settlements", type=int, default=900)
+    shadow_gate.add_argument("--min-probability-scored", type=int, default=900)
+    shadow_gate.add_argument("--min-actionable-predictions", type=int, default=200)
+    shadow_gate.add_argument(
+        "--min-decision-span-seconds",
+        type=int,
+        default=7 * 24 * 60 * 60,
+    )
+    shadow_gate.add_argument("--max-unresolved-ppm", type=int, default=100_000)
+    shadow_gate.add_argument("--max-model-ids", type=int, default=1)
+    shadow_gate.add_argument("--max-feature-set-ids", type=int, default=1)
+    shadow_gate.add_argument("--allow-single-direction", action="store_true")
+    shadow_gate.add_argument("--allow-missing-actionable-pnl", action="store_true")
     return parser
 
 
@@ -423,6 +445,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = _shadow_store(args.db).audit(purge_rounds=purge_rounds)
         _print_json(report.as_dict())
         return 0 if report.integrity_ready else 2
+    if args.command == "shadow-campaign-gate":
+        purge_rounds = int(args.purge_rounds)
+        if purge_rounds < 0:
+            parser.error("--purge-rounds must be non-negative")
+        min_span_seconds = int(args.min_decision_span_seconds)
+        if min_span_seconds < 0:
+            parser.error("--min-decision-span-seconds must be non-negative")
+        policy = ShadowCampaignPolicy(
+            min_predictions=int(args.min_predictions),
+            min_settlements=int(args.min_settlements),
+            min_probability_scored=int(args.min_probability_scored),
+            min_actionable_predictions=int(args.min_actionable_predictions),
+            min_decision_span_ms=min_span_seconds * 1_000,
+            max_unresolved_ppm=int(args.max_unresolved_ppm),
+            require_both_directions=not bool(args.allow_single_direction),
+            require_complete_actionable_pnl=not bool(args.allow_missing_actionable_pnl),
+            max_model_ids=int(args.max_model_ids),
+            max_feature_set_ids=int(args.max_feature_set_ids),
+        )
+        try:
+            campaign = evaluate_shadow_campaign(
+                _shadow_store(args.db).audit(purge_rounds=purge_rounds),
+                policy,
+            )
+        except ValueError as exc:
+            parser.error(f"invalid shadow campaign policy: {exc}")
+        _print_json(campaign.as_dict())
+        return 0 if campaign.gate_ready else 2
     if args.command is None:
         parser.print_help()
         return 0
