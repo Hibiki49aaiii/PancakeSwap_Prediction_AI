@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pancake_prediction import shadow_runtime_cli
+from pancake_prediction.contracts import Market
 from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 
 
@@ -77,7 +78,7 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
         received_rpc: object,
         received_clickhouse: object,
         received_binance: object,
-        market: object,
+        market: Market,
         canonical_database: Path,
         shadow_database: Path,
         *,
@@ -88,7 +89,7 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
         assert received_binance is binance
         captured.update(
             {
-                "market": market.symbol,  # type: ignore[attr-defined]
+                "market": market.symbol,
                 "canonical_database": canonical_database,
                 "shadow_database": shadow_database,
                 "config": config,
