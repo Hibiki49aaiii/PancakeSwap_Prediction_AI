@@ -18,6 +18,13 @@ from pancake_prediction.clickhouse import ClickHouseInsertReport, QueryParameter
 @dataclass
 class FakeClickHouse:
     cursor_rows: tuple[dict[str, object], ...] = ()
+    coverage_rows: tuple[dict[str, object], ...] = (
+        {
+            "row_count": 0,
+            "first_available_at_ms": 0,
+            "last_available_at_ms": 0,
+        },
+    )
     inserted: list[dict[str, object]] = field(default_factory=list)
     queries: list[tuple[str, Mapping[str, QueryParameter] | None]] = field(
         default_factory=list
@@ -30,7 +37,10 @@ class FakeClickHouse:
         parameters: Mapping[str, QueryParameter] | None = None,
     ) -> Iterator[dict[str, object]]:
         self.queries.append((query, parameters))
-        yield from self.cursor_rows
+        if "count() AS row_count" in query:
+            yield from self.coverage_rows
+        else:
+            yield from self.cursor_rows
 
     def insert_json_rows(
         self,
@@ -157,6 +167,7 @@ def test_live_sync_resumes_from_latest_clickhouse_trade_id() -> None:
             {
                 "aggregate_trade_id": 500,
                 "trade_timestamp_ms": 1_000_000,
+                "source_name": "binance-rest:um_futures",
             },
         )
     )
@@ -196,6 +207,7 @@ def test_stale_futures_cursor_falls_back_to_recent_bootstrap_window() -> None:
             {
                 "aggregate_trade_id": 500,
                 "trade_timestamp_ms": now_ms - 49 * 60 * 60 * 1_000,
+                "source_name": "binance-rest:um_futures",
             },
         )
     )
@@ -301,6 +313,7 @@ def test_latest_live_cursor_is_parameterized() -> None:
             {
                 "aggregate_trade_id": 42,
                 "trade_timestamp_ms": 1_234,
+                "source_name": "binance-rest:spot",
             },
         )
     )
@@ -314,6 +327,7 @@ def test_latest_live_cursor_is_parameterized() -> None:
     assert cursor is not None
     assert cursor.aggregate_trade_id == 42
     assert cursor.trade_timestamp_ms == 1_234
+    assert cursor.source_name == "binance-rest:spot"
     query, parameters = clickhouse.queries[0]
     assert "FINAL" in query
     assert parameters == {
@@ -325,7 +339,7 @@ def test_latest_live_cursor_is_parameterized() -> None:
 
 def test_live_coverage_is_source_bound_and_parameterized() -> None:
     clickhouse = FakeClickHouse(
-        cursor_rows=(
+        coverage_rows=(
             {
                 "row_count": 3,
                 "first_available_at_ms": 1_000,
@@ -357,7 +371,7 @@ def test_live_coverage_is_source_bound_and_parameterized() -> None:
 
 def test_live_coverage_empty_lineage_has_no_available_timestamp() -> None:
     clickhouse = FakeClickHouse(
-        cursor_rows=(
+        coverage_rows=(
             {
                 "row_count": 0,
                 "first_available_at_ms": 0,
@@ -375,4 +389,35 @@ def test_live_coverage_empty_lineage_has_no_available_timestamp() -> None:
     assert coverage.row_count == 0
     assert coverage.first_available_at_ms is None
     assert coverage.last_available_at_ms is None
+
+def test_live_sync_rejects_non_live_cursor_after_prospective_start() -> None:
+    clickhouse = FakeClickHouse(
+        cursor_rows=(
+            {
+                "aggregate_trade_id": 500,
+                "trade_timestamp_ms": 1_000_000,
+                "source_name": "binance-archive:spot",
+            },
+        ),
+        coverage_rows=(
+            {
+                "row_count": 10,
+                "first_available_at_ms": 900_000,
+                "last_available_at_ms": 999_000,
+            },
+        ),
+    )
+    rest = FakeRest([])
+
+    with pytest.raises(BinanceLiveError, match="source-bound campaign"):
+        sync_binance_live_aggtrades(
+            clickhouse,
+            clickhouse,
+            rest,
+            market="BNBUSD",
+            venue="spot",
+            availability_lag_ms=25,
+            now_timestamp_ms=1_000_200,
+            ingest_version=123,
+        )
 
