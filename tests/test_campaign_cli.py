@@ -10,6 +10,7 @@ import pytest
 
 from pancake_prediction import clickhouse_cli
 from pancake_prediction.campaign_evaluation import EconomicCampaignConfig
+from pancake_prediction.replay import ReplaySnapshot
 from pancake_prediction.research_ledger import ResearchPredictionRecord
 from pancake_prediction.shadow_inference import ShadowInferenceConfig
 
@@ -150,7 +151,12 @@ def test_campaign_evaluate_binds_manifest_and_explicit_economic_config(
         "ClickHouseHttpClient",
         lambda *args, **kwargs: ReadyClient(),
     )
-    replay = object()
+    replay = ReplaySnapshot(
+        format_version=1,
+        market="BNBUSD",
+        input_digest="a" * 64,
+        rounds=(),
+    )
     events: tuple[object, ...] = ()
     rows: tuple[object, ...] = (object(),)
     bundle = FakeBundle(
@@ -350,6 +356,8 @@ def test_shadow_infer_binds_target_costs_and_appends_ledger(
 
     output = capsys.readouterr().out
     payload = json.loads(output)
+    assert payload["shadow_reconciliation"]["prediction_count"] == 0
+    assert payload["shadow_reconciliation"]["appended_settlement_count"] == 0
     assert payload["shadow_inference"]["prediction"]["epoch"] == 123
     assert payload["shadow_ledger_event"]["kind"] == "prediction"
     assert payload["shadow_ledger_event"]["sequence"] == 1
@@ -359,6 +367,8 @@ def test_shadow_infer_binds_target_costs_and_appends_ledger(
     # The same deterministic prediction is idempotent across retries.
     assert clickhouse_cli.main(args) == 0
     repeated = json.loads(capsys.readouterr().out)
+    assert repeated["shadow_reconciliation"]["prediction_count"] == 1
+    assert repeated["shadow_reconciliation"]["unresolved_count"] == 1
     assert repeated["shadow_ledger_event"]["sequence"] == 1
     assert (
         repeated["shadow_ledger_event"]["event_digest"]
