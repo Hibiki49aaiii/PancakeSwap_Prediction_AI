@@ -72,16 +72,16 @@ Shadow -> Fork -> Tiny Live gate
 | 1 | Deterministic replay | Implemented and unit-tested foundation |
 | 2 | Leakage-safe, cost-aware backtest | Implemented and unit-tested foundation |
 | 3 | Purged walk-forward / OOS evaluation | Implemented and unit-tested foundation |
-| 4 | Paper / Shadow | Partial research-ledger foundation; operational long-running shadow campaign not yet completed |
+| 4 | Paper / Shadow | Append-only hash-chained ledger, single-target leakage-safe inference, campaign gate, CLI and Evidence builder implemented; real long-running campaign not yet completed |
 | 5A | Durable execution fault model | Fork-only durable intent/reconciliation state machine implemented and adversarially unit-tested |
-| 5B | BSC fork execution | Loopback-only transaction adapter, Pancake Bull/Bear intent encoding, and fixed-block bet preflight implemented; actual local BSC-fork campaign pending |
+| 5B | BSC fork execution | Loopback-only transaction adapter and recovery drills implemented; observed local BSC-fork campaign evidence is persisted in evidence/stage5b-fork-last-success.json |
 | 6A | Tiny-live readiness / safety preflight | Not implemented as an executable live gate |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
 
 Infrastructure assumptions and green unit tests are never treated as evidence of profitability. Real historical integrity, shadow economics, out-of-sample performance, local-fork recovery drills, and any separately authorized funded validation must be demonstrated independently.
 
-Stage 5's explicit safety contract and exit criteria are documented in [`docs/STAGE5_FORK_EXECUTION.md`](docs/STAGE5_FORK_EXECUTION.md).
+Stage 4's prospective no-signing contract is documented in docs/STAGE4_SHADOW.md. Stage 5's explicit safety contract and exit criteria are documented in docs/STAGE5_FORK_EXECUTION.md.
 
 ## CLI
 
@@ -99,6 +99,8 @@ pcs-prediction historical-bootstrap \
   --market BNBUSD \
   --db artifacts/bnbusd-history.sqlite
 ```
+
+Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, appended, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands, while pcs-clickhouse shadow-infer binds canonical research inputs to one prospective target decision. See docs/STAGE4_SHADOW.md.
 
 The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
 
