@@ -29,6 +29,8 @@ from .clickhouse_manifest import (
 from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
 from .contracts import MARKETS
 from .research_inputs import CanonicalResearchInputs, load_canonical_research_inputs
+from .shadow_inference import ShadowInferenceConfig, build_shadow_inference
+from .shadow_ledger import ShadowLedgerStore
 
 _TIMESTAMP_UNITS = ("auto", "milliseconds", "microseconds")
 
@@ -179,6 +181,29 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dataset_arguments(sensitivity)
     sensitivity.add_argument("--scenario-file", type=Path, required=True)
     _add_shared_evaluation_arguments(sensitivity)
+
+    shadow = subparsers.add_parser(
+        "shadow-infer",
+        help="build one leakage-safe target decision and append it to the Stage 4 shadow ledger",
+    )
+    _add_dataset_arguments(shadow)
+    shadow.add_argument("--target-epoch", type=int, required=True)
+    shadow.add_argument("--shadow-db", type=Path, required=True)
+    shadow.add_argument("--stake-wei", type=int, required=True)
+    shadow.add_argument("--bet-gas-wei", type=int, required=True)
+    shadow.add_argument("--claim-gas-wei", type=int, required=True)
+    shadow.add_argument("--inclusion-latency-seconds", type=int, required=True)
+    shadow.add_argument("--min-expected-value-wei", type=int, default=0)
+    shadow.add_argument("--initial-interval-seconds", type=int, default=300)
+    shadow.add_argument("--initial-treasury-fee-bps", type=int, default=300)
+    shadow.add_argument("--initial-buffer-seconds", type=int, default=30)
+    shadow.add_argument("--min-train-rounds", type=int, default=300)
+    shadow.add_argument("--purge-rounds", type=int, default=2)
+    shadow.add_argument("--calibration-rounds", type=int, default=60)
+    shadow.add_argument("--calibration-bins", type=int, default=10)
+    shadow.add_argument("--calibration-shrinkage", type=int, default=20)
+    shadow.add_argument("--pool-min-train-rounds", type=int, default=150)
+    shadow.add_argument("--pool-window-rounds", type=int, default=400)
     return parser
 
 
@@ -300,6 +325,27 @@ def _economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
     )
 
 
+def _shadow_inference_config(args: argparse.Namespace) -> ShadowInferenceConfig:
+    return ShadowInferenceConfig(
+        min_train_rounds=int(args.min_train_rounds),
+        calibration_rounds=int(args.calibration_rounds),
+        calibration_bins=int(args.calibration_bins),
+        calibration_shrinkage=int(args.calibration_shrinkage),
+        purge_rounds=int(args.purge_rounds),
+        pool_min_train_rounds=int(args.pool_min_train_rounds),
+        pool_window_rounds=int(args.pool_window_rounds),
+        stake_wei=int(args.stake_wei),
+        bet_gas_wei=int(args.bet_gas_wei),
+        claim_gas_wei=int(args.claim_gas_wei),
+        inclusion_latency_seconds=int(args.inclusion_latency_seconds),
+        min_expected_value_wei=int(args.min_expected_value_wei),
+        decision_lead_seconds=int(args.feature_lead_seconds),
+        initial_interval_seconds=int(args.initial_interval_seconds),
+        initial_treasury_fee_bps=int(args.initial_treasury_fee_bps),
+        initial_buffer_seconds=int(args.initial_buffer_seconds),
+    )
+
+
 def _load_sensitivity_scenarios(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -379,6 +425,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dataset-summary",
         "campaign-evaluate",
         "campaign-sensitivity",
+        "shadow-infer",
     }:
         _schema_or_error(parser, client)
         bundle = _build_dataset_bundle(args, client)
@@ -400,6 +447,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config=_economic_config(args),
             )
             common_payload["evaluation"] = evaluation.as_dict()
+            _print_json(common_payload)
+            return 0
+
+        if args.command == "shadow-infer":
+            try:
+                inference = build_shadow_inference(
+                    bundle.inputs.replay,
+                    bundle.inputs.events,
+                    bundle.dataset.dataset.research_feature_rows,
+                    target_epoch=int(args.target_epoch),
+                    config=_shadow_inference_config(args),
+                )
+                shadow_store = ShadowLedgerStore(Path(args.shadow_db))
+                shadow_store.initialize()
+                ledger_event = shadow_store.append_prediction(
+                    inference.prediction,
+                    purge_rounds=int(args.purge_rounds),
+                )
+            except ValueError as exc:
+                parser.error(f"shadow inference failed: {exc}")
+            common_payload["shadow_inference"] = inference.as_dict()
+            common_payload["shadow_ledger_event"] = ledger_event.as_dict()
             _print_json(common_payload)
             return 0
 
