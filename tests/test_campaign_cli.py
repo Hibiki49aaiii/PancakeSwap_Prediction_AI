@@ -10,6 +10,8 @@ import pytest
 
 from pancake_prediction import clickhouse_cli
 from pancake_prediction.campaign_evaluation import EconomicCampaignConfig
+from pancake_prediction.research_ledger import ResearchPredictionRecord
+from pancake_prediction.shadow_inference import ShadowInferenceConfig
 
 
 class ReadyClient:
@@ -81,6 +83,21 @@ class FakeBundle:
     assumptions: dict[str, object]
     dataset: FakeDatasetResult
     manifest: FakeManifest
+
+
+@dataclass(frozen=True, slots=True)
+class FakeShadowInference:
+    prediction: ResearchPredictionRecord
+    config: ShadowInferenceConfig
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "prediction": self.prediction.canonical_payload(),
+            "prediction_digest": self.prediction.digest(),
+            "training_row_count": self.config.min_train_rounds,
+            "signing_enabled": False,
+            "live_broadcast": False,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,3 +237,128 @@ def test_campaign_evaluate_binds_manifest_and_explicit_economic_config(
     assert payload["evaluation"]["evaluation_digest"] == "d" * 64
     assert payload["evaluation"]["config"]["decision_lead_seconds"] == 17
     assert "campaign-secret" not in output
+
+def test_shadow_infer_binds_target_costs_and_appends_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: ReadyClient(),
+    )
+    replay = object()
+    events: tuple[object, ...] = ()
+    rows: tuple[object, ...] = (object(),)
+    bundle = FakeBundle(
+        inputs=FakeInputs(replay=replay, events=events),
+        assumptions={"spot_availability_lag_ms": 25},
+        dataset=FakeDatasetResult(FakeResearchDataset(rows)),
+        manifest=FakeManifest(),
+    )
+    database = tmp_path / "history.sqlite3"
+    shadow_database = tmp_path / "shadow.sqlite3"
+
+    def fake_bundle(args: argparse.Namespace, client: object) -> FakeBundle:
+        assert isinstance(client, ReadyClient)
+        assert args.db == database
+        return bundle
+
+    captured: dict[str, object] = {}
+
+    def fake_shadow(
+        received_replay: object,
+        received_events: tuple[object, ...],
+        received_rows: tuple[object, ...],
+        *,
+        target_epoch: int,
+        config: ShadowInferenceConfig,
+    ) -> FakeShadowInference:
+        assert received_replay is replay
+        assert received_events == events
+        assert received_rows == rows
+        assert target_epoch == 123
+        captured["config"] = config
+        prediction = ResearchPredictionRecord(
+            market="BNBUSD",
+            epoch=123,
+            decision_timestamp_ms=123_280_000,
+            model_id="shadow-test-model",
+            feature_set_id="full-v1",
+            raw_probability_ppm=620_000,
+            calibrated_probability_ppm=600_000,
+            expected_value_wei=1234,
+            action="bull",
+            feature_digest="a" * 64,
+            train_max_epoch=120,
+            metadata={"source": "test"},
+        )
+        return FakeShadowInference(prediction=prediction, config=config)
+
+    monkeypatch.setattr(clickhouse_cli, "_build_dataset_bundle", fake_bundle)
+    monkeypatch.setattr(clickhouse_cli, "build_shadow_inference", fake_shadow)
+
+    args = [
+        "shadow-infer",
+        "--market",
+        "BNBUSD",
+        "--db",
+        str(database),
+        "--spot-availability-lag-ms",
+        "25",
+        "--feature-lead-seconds",
+        "17",
+        "--target-epoch",
+        "123",
+        "--shadow-db",
+        str(shadow_database),
+        "--stake-wei",
+        "1000000000000000",
+        "--bet-gas-wei",
+        "120000000000000",
+        "--claim-gas-wei",
+        "90000000000000",
+        "--inclusion-latency-seconds",
+        "3",
+        "--min-train-rounds",
+        "50",
+        "--calibration-rounds",
+        "10",
+        "--purge-rounds",
+        "2",
+        "--pool-min-train-rounds",
+        "20",
+        "--pool-window-rounds",
+        "40",
+    ]
+    assert clickhouse_cli.main(args) == 0
+
+    config = captured["config"]
+    assert isinstance(config, ShadowInferenceConfig)
+    assert config.stake_wei == 10**15
+    assert config.bet_gas_wei == 120_000_000_000_000
+    assert config.claim_gas_wei == 90_000_000_000_000
+    assert config.inclusion_latency_seconds == 3
+    assert config.decision_lead_seconds == 17
+    assert config.min_train_rounds == 50
+    assert config.calibration_rounds == 10
+    assert config.purge_rounds == 2
+    assert config.pool_min_train_rounds == 20
+    assert config.pool_window_rounds == 40
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["shadow_inference"]["prediction"]["epoch"] == 123
+    assert payload["shadow_ledger_event"]["kind"] == "prediction"
+    assert payload["shadow_ledger_event"]["sequence"] == 1
+    assert payload["shadow_inference"]["signing_enabled"] is False
+    assert payload["shadow_inference"]["live_broadcast"] is False
+
+    # The same deterministic prediction is idempotent across retries.
+    assert clickhouse_cli.main(args) == 0
+    repeated = json.loads(capsys.readouterr().out)
+    assert repeated["shadow_ledger_event"]["sequence"] == 1
+    assert repeated["shadow_ledger_event"]["event_digest"] == payload["shadow_ledger_event"]["event_digest"]
+
