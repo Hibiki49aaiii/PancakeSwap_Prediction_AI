@@ -31,6 +31,7 @@ from .contracts import MARKETS
 from .research_inputs import CanonicalResearchInputs, load_canonical_research_inputs
 from .shadow_inference import ShadowInferenceConfig, build_shadow_inference
 from .shadow_ledger import ShadowLedgerStore
+from .shadow_reconciliation import reconcile_shadow_settlements
 
 _TIMESTAMP_UNITS = ("auto", "milliseconds", "microseconds")
 
@@ -452,6 +453,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "shadow-infer":
             try:
+                shadow_store = ShadowLedgerStore(Path(args.shadow_db))
+                shadow_store.initialize()
+                reconciliation = reconcile_shadow_settlements(
+                    shadow_store,
+                    bundle.inputs.replay,
+                )
                 inference = build_shadow_inference(
                     bundle.inputs.replay,
                     bundle.inputs.events,
@@ -459,14 +466,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target_epoch=int(args.target_epoch),
                     config=_shadow_inference_config(args),
                 )
-                shadow_store = ShadowLedgerStore(Path(args.shadow_db))
-                shadow_store.initialize()
                 ledger_event = shadow_store.append_prediction(
                     inference.prediction,
                     purge_rounds=int(args.purge_rounds),
                 )
             except ValueError as exc:
                 parser.error(f"shadow inference failed: {exc}")
+            common_payload["shadow_reconciliation"] = reconciliation.as_dict()
             common_payload["shadow_inference"] = inference.as_dict()
             common_payload["shadow_ledger_event"] = ledger_event.as_dict()
             _print_json(common_payload)
