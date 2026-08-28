@@ -228,3 +228,108 @@ def test_cli_historical_bootstrap_requires_rpc_url(monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["historical-bootstrap", "--market", "BNBUSD", "--db", "x.sqlite3"])
     assert exc_info.value.code == 2
+
+def test_cli_shadow_ledger_prediction_settlement_and_audit(
+    tmp_path: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = str(tmp_path)
+    database = root + "/shadow.sqlite3"
+    prediction_path = root + "/prediction.json"
+    settlement_path = root + "/settlement.json"
+
+    prediction = {
+        "market": "BNBUSD",
+        "epoch": 100,
+        "decision_timestamp_ms": 31_000_000,
+        "model_id": "shadow-wf-v1",
+        "feature_set_id": "full-v1",
+        "raw_probability_ppm": 620_000,
+        "calibrated_probability_ppm": 600_000,
+        "expected_value_wei": 1234,
+        "action": "bull",
+        "feature_digest": "a" * 64,
+        "train_max_epoch": 97,
+        "metadata": {"source": "cli-test"},
+    }
+    settlement = {
+        "market": "BNBUSD",
+        "epoch": 100,
+        "settled_timestamp_ms": 31_300_000,
+        "outcome": "bull",
+        "result_source_digest": "b" * 64,
+        "realized_pnl_wei": 100,
+        "metadata": {"source": "canonical-test"},
+    }
+    from pathlib import Path
+
+    Path(prediction_path).write_text(json.dumps(prediction), encoding="utf-8")
+    Path(settlement_path).write_text(json.dumps(settlement), encoding="utf-8")
+
+    assert cli.main(["shadow-ledger-init", "--db", database]) == 0
+    initialized = json.loads(capsys.readouterr().out)
+    assert initialized["event_count"] == 0
+    assert initialized["integrity_ready"] is True
+
+    assert (
+        cli.main(
+            [
+                "shadow-append-prediction",
+                "--db",
+                database,
+                "--record",
+                prediction_path,
+            ]
+        )
+        == 0
+    )
+    prediction_event = json.loads(capsys.readouterr().out)
+    assert prediction_event["kind"] == "prediction"
+    assert prediction_event["sequence"] == 1
+
+    assert (
+        cli.main(
+            [
+                "shadow-append-settlement",
+                "--db",
+                database,
+                "--record",
+                settlement_path,
+            ]
+        )
+        == 0
+    )
+    settlement_event = json.loads(capsys.readouterr().out)
+    assert settlement_event["kind"] == "settlement"
+    assert settlement_event["sequence"] == 2
+    assert settlement_event["previous_digest"] == prediction_event["event_digest"]
+
+    assert cli.main(["shadow-ledger-audit", "--db", database]) == 0
+    audit = json.loads(capsys.readouterr().out)
+    assert audit["integrity_ready"] is True
+    assert audit["prediction_count"] == 1
+    assert audit["settlement_count"] == 1
+    assert audit["brier_score"] == pytest.approx(0.16)
+    assert audit["directional_accuracy"] == 1.0
+    assert audit["observed_pnl_wei"] == 100
+    assert audit["profitability_gate_eligible"] is False
+    assert audit["signing_enabled"] is False
+    assert audit["live_broadcast"] is False
+
+
+def test_cli_shadow_ledger_rejects_negative_purge_rounds(
+    tmp_path: object,
+) -> None:
+    database = str(tmp_path) + "/shadow.sqlite3"
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "shadow-ledger-audit",
+                "--db",
+                database,
+                "--purge-rounds",
+                "-1",
+            ]
+        )
+    assert exc_info.value.code == 2
+
