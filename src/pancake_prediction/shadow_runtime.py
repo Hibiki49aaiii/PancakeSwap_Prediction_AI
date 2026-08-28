@@ -163,9 +163,13 @@ def _finish_report(
     ledger_event: ShadowLedgerEvent | None,
     shadow_store: ShadowLedgerStore,
     policy: ShadowCampaignPolicy,
+    purge_rounds: int,
     reason: str | None = None,
 ) -> ShadowRuntimeCycleReport:
-    campaign = evaluate_shadow_campaign(shadow_store.audit(), policy)
+    campaign = evaluate_shadow_campaign(
+        shadow_store.audit(purge_rounds=purge_rounds),
+        policy,
+    )
     return ShadowRuntimeCycleReport(
         market=market.symbol,
         cycle_started_timestamp_ms=started_ms,
@@ -280,6 +284,8 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
+        purge_rounds=selected.inference.purge_rounds,
+            purge_rounds=selected.inference.purge_rounds,
         )
 
     dataset = build_chunked_clickhouse_research_dataset(
@@ -333,6 +339,8 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
+        purge_rounds=selected.inference.purge_rounds,
+            purge_rounds=selected.inference.purge_rounds,
             reason=str(exc),
         )
 
@@ -360,6 +368,8 @@ def run_shadow_runtime_cycle(
             ledger_event=None,
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
+        purge_rounds=selected.inference.purge_rounds,
+            purge_rounds=selected.inference.purge_rounds,
         )
 
     ledger_event = shadow_store.append_prediction(
@@ -382,4 +392,5 @@ def run_shadow_runtime_cycle(
         ledger_event=ledger_event,
         shadow_store=shadow_store,
         policy=selected.campaign_policy,
+        purge_rounds=selected.inference.purge_rounds,
     )
