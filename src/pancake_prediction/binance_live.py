@@ -137,6 +137,7 @@ class BinancePublicHttpClient:
 class BinanceLiveCursor:
     aggregate_trade_id: int
     trade_timestamp_ms: int
+    source_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,7 +319,8 @@ def latest_binance_live_cursor(
     if timestamp_unit not in {"auto", "milliseconds", "microseconds"}:
         raise ValueError("unsupported timestamp_unit")
     query = (
-        "SELECT aggregate_trade_id,trade_timestamp_ms FROM binance_agg_trades FINAL "
+        "SELECT aggregate_trade_id,trade_timestamp_ms,source_name "
+        "FROM binance_agg_trades FINAL "
         "WHERE venue={venue:String} AND symbol={symbol:String} AND "
         "timestamp_unit={timestamp_unit:String} AND "
         "availability_lag_ms={availability_lag_ms:UInt32} "
@@ -346,9 +348,13 @@ def latest_binance_live_cursor(
     )
     if trade_id < 0 or timestamp_ms < 0:
         raise ValueError("latest Binance cursor values must be non-negative")
+    source_name = row.get("source_name")
+    if not isinstance(source_name, str) or not source_name:
+        raise ValueError("latest Binance cursor source_name must be non-empty")
     return BinanceLiveCursor(
         aggregate_trade_id=trade_id,
         trade_timestamp_ms=timestamp_ms,
+        source_name=source_name,
     )
 
 
@@ -419,6 +425,13 @@ def sync_binance_live_aggtrades(
         raise ValueError("ingest_version must fit UInt64")
 
     symbol = BINANCE_SYMBOL_BY_MARKET[market]
+    prior_live_coverage = inspect_binance_live_coverage(
+        cursor_source,
+        market=market,
+        venue=venue,
+        availability_lag_ms=availability_lag_ms,
+        timestamp_unit=timestamp_unit,
+    )
     cursor = latest_binance_live_cursor(
         cursor_source,
         market=market,
@@ -426,6 +439,16 @@ def sync_binance_live_aggtrades(
         availability_lag_ms=availability_lag_ms,
         timestamp_unit=timestamp_unit,
     )
+    expected_live_source = f"binance-rest:{venue}"
+    if (
+        prior_live_coverage.row_count > 0
+        and cursor is not None
+        and cursor.source_name != expected_live_source
+    ):
+        raise BinanceLiveError(
+            "Binance lineage advanced by a non-live source after prospective "
+            "observation began; start a new source-bound campaign"
+        )
     cursor_is_recent = (
         cursor is not None
         and (
