@@ -328,7 +328,6 @@ def build_shadow_inference(
         ),
         train_max_epoch=train_max_epoch,
         metadata={
-            "replay_digest": replay.output_digest,
             "raw_model_id": model.model_id,
             "calibrator_model_id": calibrator.model_id,
             "projection_model_id": projection.model_id,
