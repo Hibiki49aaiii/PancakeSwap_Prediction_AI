@@ -35,10 +35,10 @@ class FakeRpc:
 
     def get_logs(
         self,
-        *,
         address: str,
         from_block: int,
         to_block: int,
+        *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         return []
