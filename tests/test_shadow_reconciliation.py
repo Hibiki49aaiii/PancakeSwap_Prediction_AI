@@ -219,7 +219,7 @@ def test_reconcile_rejects_missing_economic_metadata_for_actionable_prediction(
     store = _store(tmp_path)
     store.append_prediction(replace(_prediction(), metadata={}))
 
-    with pytest.raises(ValueError, match="missing economic metadata|treasury_fee_bps"):
+    with pytest.raises(ValueError, match=r"missing economic metadata|treasury_fee_bps"):
         reconcile_shadow_settlements(store, _replay(_round()))
     assert store.audit().settlement_count == 0
 
