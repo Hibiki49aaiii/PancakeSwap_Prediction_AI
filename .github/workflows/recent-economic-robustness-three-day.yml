@@ -1,0 +1,433 @@
+name: recent-economic-robustness-three-day-three-day
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Exact three-day Chainlink source run ID
+        required: true
+        type: string
+      source_sha:
+        description: Exact checkout SHA used by the three-day collector
+        required: true
+        type: string
+      source_event_sha:
+        description: Event head SHA for the three-day collector
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Optional run ID; must match persisted three-day last-success evidence
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: recent-economic-robustness-three-day-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  robustness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+
+      - name: Resolve persisted three-day source
+        id: source
+        env:
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_SOURCE_EVENT_SHA: ${{ inputs.source_event_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/source evidence
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path('evidence/recent-public-chainlink-2026-08-16-to-19-last-success.json')
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          if payload.get('success') is not True or payload.get('workflow_outcome') != 'success':
+              raise SystemExit('three-day Chainlink last-success evidence is not successful')
+          if payload.get('chainlink_collected') is not True:
+              raise SystemExit('three-day source has no Chainlink collection')
+          if payload.get('requested_start_timestamp') != 1786838400:
+              raise SystemExit('unexpected three-day source start')
+          if payload.get('requested_end_timestamp') != 1787097600:
+              raise SystemExit('unexpected three-day source end')
+          selected = payload.get('selected') or {}
+          report = selected.get('report') or {}
+          collection = report.get('collection') or {}
+          proof = report.get('oracle_stability_proof') or {}
+          if int(collection.get('chainlink_events_inserted', 0)) <= 0:
+              raise SystemExit('three-day source contains no Chainlink AnswerUpdated events')
+          if int(report.get('replay_rounds', 0)) < 800:
+              raise SystemExit('three-day source replay has fewer than 800 rounds')
+          if proof.get('method') != 'persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range':
+              raise SystemExit('three-day source route proof method mismatch')
+          if int(proof.get('new_oracle_events', -1)) != 0:
+              raise SystemExit('three-day source contains a Prediction oracle route change')
+          if int(proof.get('aggregator_confirmed_events', -1)) != 0:
+              raise SystemExit('three-day source contains a Chainlink aggregator route change')
+
+          run_id = int(payload['source_run_id'])
+          source_sha = str(payload['source_sha'])
+          source_event_sha = str(payload['source_event_sha'])
+          supplied_run = os.environ.get('INPUT_SOURCE_RUN_ID', '').strip()
+          supplied_sha = os.environ.get('INPUT_SOURCE_SHA', '').strip()
+          supplied_event_sha = os.environ.get('INPUT_SOURCE_EVENT_SHA', '').strip()
+          if supplied_run and int(supplied_run) != run_id:
+              raise SystemExit('supplied source_run_id does not match persisted three-day last-success')
+          if supplied_sha and supplied_sha != source_sha:
+              raise SystemExit('supplied source_sha does not match persisted three-day last-success')
+          if supplied_event_sha and supplied_event_sha != source_event_sha:
+              raise SystemExit('supplied source_event_sha does not match persisted three-day last-success')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as handle:
+              handle.write(f'source_run_id={run_id}\n')
+              handle.write(f'source_sha={source_sha}\n')
+              handle.write(f'source_event_sha={source_event_sha}\n')
+          PY
+
+      - name: Download exact three-day source artifact
+        id: source_artifact
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "recent-authenticated-chainlink-three-day-${SOURCE_RUN_ID}" \
+            --dir artifacts/source
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path('artifacts/source/recent-public-chainlink-2026-08-16-to-19.json')
+          database_path = Path('artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite')
+          if not report_path.is_file() or not database_path.is_file():
+              raise SystemExit('exact three-day source artifact is incomplete')
+          payload = json.loads(report_path.read_text(encoding='utf-8'))
+          if payload.get('success') is not True or payload.get('chainlink_collected') is not True:
+              raise SystemExit('downloaded source artifact is not successful')
+          if payload.get('requested_start_timestamp') != 1786838400 or payload.get('requested_end_timestamp') != 1787097600:
+              raise SystemExit('downloaded source artifact window mismatch')
+          PY
+
+      - name: Apply ClickHouse schema
+        id: schema
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from pancake_prediction.clickhouse import ClickHouseHttpClient
+
+          client = ClickHouseHttpClient('http://127.0.0.1:8123')
+          text = Path('sql/clickhouse/v0_7_core.sql').read_text(encoding='utf-8')
+          sql = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('--'))
+          for statement in sql.split(';'):
+              if statement.strip():
+                  client.execute(statement)
+          PY
+          pcs-clickhouse schema-check > artifacts/recent-economic-robustness-three-day-schema.json
+
+      - name: Download official Aug 16-18 Spot and USD-M archives
+        id: binance_download
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/binance/spot /tmp/binance/perp
+          for day in 16 17 18; do
+            name="BNBUSDT-aggTrades-2026-08-${day}.zip"
+            spot_base="https://data.binance.vision/data/spot/daily/aggTrades/BNBUSDT/$name"
+            perp_base="https://data.binance.vision/data/futures/um/daily/aggTrades/BNBUSDT/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$spot_base" -o "/tmp/binance/spot/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$spot_base.CHECKSUM" -o "/tmp/binance/spot/$name.CHECKSUM"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$perp_base" -o "/tmp/binance/perp/$name"
+            curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL "$perp_base.CHECKSUM" -o "/tmp/binance/perp/$name.CHECKSUM"
+          done
+      - name: Verify and ingest official three-day Binance archives
+        id: binance_ingest
+        run: |
+          set -euo pipefail
+          for day in 16 17 18; do
+            name="BNBUSDT-aggTrades-2026-08-${day}.zip"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/spot/$name" \
+              --checksum "/tmp/binance/spot/$name.CHECKSUM" \
+              --venue spot \
+              --timestamp-unit auto \
+              --availability-lag-ms 250 \
+              > "artifacts/recent-economic-robustness-three-day-spot-${day}-ingest.json"
+            pcs-clickhouse binance-ingest \
+              --market BNBUSD \
+              --archive "/tmp/binance/perp/$name" \
+              --checksum "/tmp/binance/perp/$name.CHECKSUM" \
+              --venue um_futures \
+              --timestamp-unit milliseconds \
+              --availability-lag-ms 250 \
+              > "artifacts/recent-economic-robustness-three-day-perp-${day}-ingest.json"
+          done
+      - name: Run eight-scenario economic sensitivity
+        id: sensitivity
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pcs-clickhouse campaign-sensitivity \
+            --market BNBUSD \
+            --db artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite \
+            --spot-timestamp-unit auto \
+            --spot-availability-lag-ms 250 \
+            --perp-timestamp-unit milliseconds \
+            --perp-availability-lag-ms 250 \
+            --chainlink-availability-lag-ms 1000 \
+            --max-chainlink-age-ms 300000 \
+            --feature-lead-seconds 20 \
+            --scenario-file config/recent-economic-sensitivity-aug16-18.json \
+            --min-train-rounds 300 \
+            --test-rounds 100 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 60 \
+            --pool-min-train-rounds 150 \
+            --pool-window-rounds 400 \
+            2> >(tee artifacts/recent-economic-robustness-three-day-sensitivity.err >&2) \
+            | tee artifacts/recent-economic-robustness-three-day-sensitivity.json
+
+      - name: Run economic feature ablation
+        id: ablation
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pcs-clickhouse campaign-evaluate \
+            --market BNBUSD \
+            --db artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite \
+            --spot-timestamp-unit auto \
+            --spot-availability-lag-ms 250 \
+            --perp-timestamp-unit milliseconds \
+            --perp-availability-lag-ms 250 \
+            --chainlink-availability-lag-ms 1000 \
+            --max-chainlink-age-ms 300000 \
+            --feature-lead-seconds 20 \
+            --stake-wei 10000000000000000 \
+            --bet-gas-wei 50000000000000 \
+            --claim-gas-wei 30000000000000 \
+            --inclusion-latency-seconds 2 \
+            --min-expected-value-wei 0 \
+            --min-train-rounds 300 \
+            --test-rounds 100 \
+            --purge-rounds 2 \
+            --embargo-rounds 2 \
+            --calibration-rounds 60 \
+            --pool-min-train-rounds 150 \
+            --pool-window-rounds 400 \
+            --run-ablation \
+            2> >(tee artifacts/recent-economic-robustness-three-day-ablation.err >&2) \
+            | tee artifacts/recent-economic-robustness-three-day-ablation.json
+
+      - name: Validate non-vacuous robustness semantics
+        id: semantics
+        if: steps.sensitivity.outcome == 'success' && steps.ablation.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          sensitivity_payload = json.loads(Path('artifacts/recent-economic-robustness-three-day-sensitivity.json').read_text(encoding='utf-8'))
+          ablation_payload = json.loads(Path('artifacts/recent-economic-robustness-three-day-ablation.json').read_text(encoding='utf-8'))
+          sensitivity = sensitivity_payload.get('sensitivity') or {}
+          evaluation = ablation_payload.get('evaluation') or {}
+          dataset = sensitivity_payload.get('dataset') or {}
+          scenarios = sensitivity.get('scenarios') or []
+          ablations = evaluation.get('ablation') or []
+
+          expected_names = {
+              'baseline',
+              'optimistic-low-cost',
+              'low-stake',
+              'high-stake',
+              'high-gas',
+              'slow-inclusion',
+              'strict-ev',
+              'combined-stress',
+          }
+          names = {item.get('name') for item in scenarios if isinstance(item, dict)}
+          checks = {
+              'research_feature_rows_ge_650': int(dataset.get('research_feature_rows', 0)) >= 650,
+              'scenario_count_exact': int(sensitivity.get('scenario_count', 0)) == 8 and len(scenarios) == 8,
+              'scenario_names_exact': names == expected_names,
+              'scenario_scoring_non_vacuous': bool(scenarios) and all(
+                  int((item.get('probability_metrics') or {}).get('n_scored', 0)) >= 250
+                  and int(item.get('direction_signal_count', 0)) >= 250
+                  and int(item.get('pool_projection_count', 0)) >= 400
+                  and int(item.get('joint_epoch_count', 0)) >= 250
+                  for item in scenarios
+              ),
+              'ablation_count_exact': len(ablations) == 5,
+              'ablation_full_present': any(item.get('feature_set_id') == 'full-v1' and item.get('removed_family') is None for item in ablations),
+              'ablation_non_vacuous': bool(ablations) and all(
+                  int(item.get('common_epoch_count', 0)) >= 250 and int(item.get('n_scored', 0)) >= 250
+                  for item in ablations
+              ),
+              'campaign_digest_matches': sensitivity.get('campaign_digest') == evaluation.get('campaign_digest'),
+          }
+          summary = {
+              'ready': all(checks.values()),
+              'checks': checks,
+              'research_feature_rows': int(dataset.get('research_feature_rows', 0)),
+              'skipped_no_aligned_market_data': int(dataset.get('skipped_no_aligned_market_data', 0)),
+              'scenario_count': int(sensitivity.get('scenario_count', 0)),
+              'positive_pnl_scenarios': int(sensitivity.get('positive_pnl_scenarios', 0)),
+              'all_scenarios_positive_pnl': bool(sensitivity.get('all_scenarios_positive_pnl', False)),
+              'min_pnl_wei': sensitivity.get('min_pnl_wei'),
+              'max_pnl_wei': sensitivity.get('max_pnl_wei'),
+              'min_roi_ppm': sensitivity.get('min_roi_ppm'),
+              'max_drawdown_wei': sensitivity.get('max_drawdown_wei'),
+              'ablation_count': len(ablations),
+              'ablation': ablations,
+          }
+          Path('artifacts/recent-economic-robustness-three-day-semantics.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          if not summary['ready']:
+              failed = [name for name, value in checks.items() if not value]
+              raise SystemExit('robustness semantic gate failed: ' + ', '.join(failed))
+          PY
+
+      - name: Build robustness evidence
+        if: always() && !cancelled()
+        env:
+          SENSITIVITY_OUTCOME: ${{ steps.sensitivity.outcome }}
+          ABLATION_OUTCOME: ${{ steps.ablation.outcome }}
+          SEMANTICS_OUTCOME: ${{ steps.semantics.outcome }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.source.outputs.source_event_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def load(path: str):
+              source = Path(path)
+              if not source.is_file() or not source.read_text(encoding='utf-8').strip():
+                  return None
+              return json.loads(source.read_text(encoding='utf-8'))
+
+          def sha256(path: str):
+              source = Path(path)
+              return hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
+
+          outcomes = {
+              'sensitivity': os.environ.get('SENSITIVITY_OUTCOME', 'skipped'),
+              'ablation': os.environ.get('ABLATION_OUTCOME', 'skipped'),
+              'semantics': os.environ.get('SEMANTICS_OUTCOME', 'skipped'),
+          }
+          success = all(value == 'success' for value in outcomes.values())
+          payload = {
+              'evidence_version': 1,
+              'evidence_role': 'latest_attempt',
+              'purpose': 'recent_one_day_economic_sensitivity_and_feature_ablation',
+              'success': success,
+              'profitability_gate_eligible': False,
+              'full_historical_gate_satisfied': False,
+              'signing_enabled': False,
+              'live_broadcast': False,
+              'source_run_id': int(os.environ['SOURCE_RUN_ID']) if os.environ.get('SOURCE_RUN_ID', '').isdigit() else None,
+              'source_sha': os.environ.get('SOURCE_SHA') or None,
+              'source_event_sha': os.environ.get('SOURCE_EVENT_SHA') or None,
+              'robustness_source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'source_window': {'market': 'BNBUSD', 'start_timestamp': 1786838400, 'end_timestamp': 1787097600},
+              'step_outcomes': outcomes,
+              'scenario_file_sha256': sha256('config/recent-economic-sensitivity-aug16-18.json'),
+              'source_report_sha256': sha256('artifacts/source/recent-public-chainlink-2026-08-16-to-19.json'),
+              'source_database_sha256': sha256('artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite'),
+              'spot_ingests': [load(f'artifacts/recent-economic-robustness-three-day-spot-{day}-ingest.json') for day in ('16', '17', '18')],
+              'perp_ingests': [load(f'artifacts/recent-economic-robustness-three-day-perp-{day}-ingest.json') for day in ('16', '17', '18')],
+              'sensitivity': load('artifacts/recent-economic-robustness-three-day-sensitivity.json'),
+              'ablation_campaign': load('artifacts/recent-economic-robustness-three-day-ablation.json'),
+              'semantic_gate': load('artifacts/recent-economic-robustness-three-day-semantics.json'),
+              'interpretation': (
+                  'One-day robustness plumbing only. Sensitivity and ablation results are preserved regardless of PnL sign; '
+                  'this evidence is not profitability-eligible and does not satisfy the historical-source gate.'
+              ),
+          }
+          Path('evidence/recent-economic-robustness-three-day-2026-08-16-to-19-latest.json').write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Persist robustness evidence
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/recent-economic-robustness-three-day-2026-08-16-to-19-latest.json
+          if python -c 'import json, pathlib; p=json.loads(pathlib.Path("evidence/recent-economic-robustness-three-day-2026-08-16-to-19-latest.json").read_text()); raise SystemExit(0 if p.get("success") is True else 1)'; then
+            cp evidence/recent-economic-robustness-three-day-2026-08-16-to-19-latest.json evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json
+            python -c 'import json, pathlib; p=pathlib.Path("evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json"); v=json.loads(p.read_text()); v["evidence_role"]="last_success"; p.write_text(json.dumps(v, indent=2, sort_keys=True)+"\n")'
+            git add evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record recent economic robustness evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+      - name: Upload robustness artifacts
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-economic-robustness-three-day-${{ github.run_id }}
+          path: |
+            artifacts/recent-economic-robustness-three-day-*.json
+            artifacts/recent-economic-robustness-three-day-*.err
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce robustness gate
+        if: always() && !cancelled()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('evidence/recent-economic-robustness-three-day-2026-08-16-to-19-latest.json').read_text(encoding='utf-8'))
+          if payload.get('success') is not True:
+              raise SystemExit('recent economic robustness gate failed')
+          PY
