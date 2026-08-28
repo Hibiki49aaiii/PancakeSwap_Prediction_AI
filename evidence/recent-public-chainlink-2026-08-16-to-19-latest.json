@@ -31,7 +31,7 @@
   "selected": null,
   "semantic_success": false,
   "signing_enabled": false,
-  "source_event_sha": "6b322ccecb4ad04091fc530f62cd1a063c1712ce",
+  "source_event_sha": "5b211ced521091e4c89dd5da93d99491ab28aed9",
   "source_requirement": {
     "accepted_env": [
       "BSC_LOG_RPC_URL",
@@ -39,8 +39,8 @@
     ],
     "classification": "AUTHENTICATED_RPC_REQUIRED"
   },
-  "source_run_id": 33183751676,
-  "source_sha": "6b322ccecb4ad04091fc530f62cd1a063c1712ce",
+  "source_run_id": 33184368365,
+  "source_sha": "5b211ced521091e4c89dd5da93d99491ab28aed9",
   "step_outcomes": {
     "artifact": "success",
     "bootstrap": "failure",
