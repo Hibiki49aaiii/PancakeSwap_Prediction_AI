@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import cast
 
 from .binance_archive import ArchiveVenue, TimestampUnit
+from .binance_live import (
+    BinancePublicHttpClient,
+    LiveVenue,
+    sync_binance_live_aggtrades,
+)
 from .campaign_evaluation import (
     EconomicCampaignConfig,
     run_source_bound_economic_campaign,
@@ -155,6 +160,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument("--availability-lag-ms", type=int, required=True)
     ingest.add_argument("--batch-size", type=int, default=50_000)
+
+    live = subparsers.add_parser(
+        "binance-live-sync",
+        help="poll public Binance aggTrades and append prospectively observed rows",
+    )
+    live.add_argument("--market", choices=sorted(MARKETS), required=True)
+    live.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    live.add_argument("--availability-lag-ms", type=int, required=True)
+    live.add_argument("--bootstrap-window-ms", type=int, default=120_000)
+    live.add_argument("--batch-size", type=int, default=5_000)
+    live.add_argument("--max-pages", type=int, default=100)
+    live.add_argument(
+        "--now-timestamp-ms",
+        type=int,
+        help="UNIX milliseconds override for deterministic bootstrap decisions",
+    )
 
     window = subparsers.add_parser(
         "binance-window",
@@ -403,6 +424,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=int(args.batch_size),
         )
         _print_json(ingest_report.as_dict())
+        return 0
+
+    if args.command == "binance-live-sync":
+        _schema_or_error(parser, client)
+        try:
+            live_report = sync_binance_live_aggtrades(
+                client,
+                client,
+                BinancePublicHttpClient(),
+                market=str(args.market),
+                venue=cast(LiveVenue, str(args.venue)),
+                availability_lag_ms=int(args.availability_lag_ms),
+                now_timestamp_ms=(
+                    None
+                    if args.now_timestamp_ms is None
+                    else int(args.now_timestamp_ms)
+                ),
+                bootstrap_window_ms=int(args.bootstrap_window_ms),
+                batch_size=int(args.batch_size),
+                max_pages=int(args.max_pages),
+            )
+        except ValueError as exc:
+            parser.error(f"Binance live sync failed: {exc}")
+        _print_json(live_report.as_dict())
         return 0
 
     if args.command == "binance-window":
