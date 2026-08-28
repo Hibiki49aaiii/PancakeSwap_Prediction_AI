@@ -18,17 +18,7 @@ A larger Aug 16–19 recent source gate is now running as the next OOS expansion
 
 ## Verification state
 
-Normal PR CI run `32504281549` (#1010) completed successfully on the current code + External Intelligence lineage:
-
-- Ruff: success;
-- mypy strict: success;
-- pytest: 320 passed;
-- coverage: 87% on the current implementation lineage;
-- Bandit: success;
-- pip-audit: success;
-- ClickHouse integration: success;
-- Gitleaks: success;
-- pinned legacy 144k-round audit: success.
+Normal PR CI run `33183757586` (#1076) completed successfully on the current code lineage. The test job reported 330 passed, and the ClickHouse integration, secrets scan, legacy-round audit, and test jobs all completed successfully.
 
 ### One-day Prediction + Chainlink source
 
@@ -101,18 +91,18 @@ This is local-fork execution-readiness evidence, not funded/mainnet execution ev
 
 ## Current expansion
 
-Commit `d1c8bf083f3338eef89ece956f58593e39d78945` adds an independent Aug 16–19 UTC Prediction + Chainlink source gate.
+The Aug 16–19 three-day source path is now authenticated-only. Latest attempt `33183751676` remained correctly blocked with `AUTHENTICATED_RPC_REQUIRED`; no authenticated RPC candidate was available, so no three-day `last-success` source evidence exists yet.
 
-`evidence/recent-public-chainlink-2026-08-16-to-19-running.json` binds the in-flight run:
+The downstream work has nevertheless been implemented so the next successful source run can proceed without another development pause:
 
-- source run ID `32503882364`;
-- start `1786838400` (2026-08-16 00:00 UTC);
-- end `1787097600` (2026-08-19 00:00 UTC);
-- fixed anchor block `116844485`;
-- persisted-anchor backward route-change proof;
-- no signing or live broadcast.
+- `.github/workflows/recent-economic-three-day.yml` consumes the exact successful three-day source artifact, ingests Binance Spot and USD-M aggTrades for Aug 16–18 with official CHECKSUM files, and runs a larger purged/embargoed OOS campaign.
+- The three-day OOS structural configuration is min-train 300, test 100, calibration 60, pool-min-train 150, pool-window 400, purge 2, embargo 2.
+- The OOS semantic gate requires >=650 research rows, >=3 folds, >=250 direction/joint/scored samples, >=400 pool projections, exact source provenance, and exact availability lags.
+- `config/recent-economic-sensitivity-aug16-18.json` freezes the eight-scenario sensitivity set for the same source window.
+- `.github/workflows/recent-economic-robustness-three-day.yml` runs those eight sensitivity scenarios and five feature-family ablation variants with non-vacuous sample thresholds.
+- `.github/workflows/recent-public-chainlink-three-day.yml` chains the sequence `bootstrap -> economic-three-day -> economic-robustness-three-day`. Downstream analysis is skipped unless the upstream fail-closed gate succeeds.
 
-The three-day gate requires real Prediction + Chainlink data, at least 800 replay/Start/Lock/End rounds, exact route identity, zero route-change events, and successful artifact publication before `last-success` is written.
+GitHub Actions accepted both reusable workflow references, and CI #1076 passed with 330 tests. No signing, mainnet broadcast, profitability claim, or funded-validation path was added.
 
 ## Remaining risk
 
@@ -125,13 +115,14 @@ The three-day gate requires real Prediction + Chainlink data, at least 800 repla
 
 ## Follow-up
 
-1. Complete the Aug 16–19 source gate and persist exact `last-success` evidence.
-2. Run a larger three-day source-bound economic OOS campaign with stricter train/test/calibration sizes where the available rows support it.
-3. Repeat sensitivity and feature ablation on the larger window and compare probability calibration, PnL sensitivity, and feature-family stability against the one-day evidence.
-4. Add pre-window warmup only if the larger observed skip pattern justifies it.
-5. Expand across additional recent regimes.
-6. Keep the complete historical gate fail-closed until an authenticated archive-capable route or equivalent full source is proven.
-7. Keep profitability interpretation blocked until larger independent OOS and historical evidence support it.
+1. Configure `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL` with an authenticated/log-capable BSC mainnet endpoint.
+2. Rerun the authenticated Aug 16–19 source gate and require a real `last-success` artifact/evidence pair.
+3. Allow the chained three-day OOS campaign to execute; compare Brier skill, calibration, PnL/ROI, drawdown, and source lineage against the one-day evidence.
+4. Allow the chained sensitivity/ablation workflow to execute; compare feature-family stability across the one-day and three-day windows before changing the canonical feature set.
+5. Add pre-window warmup only if the larger observed skip pattern demonstrates a real need.
+6. Expand to additional independent recent regimes after the three-day gate is non-vacuous.
+7. Keep the complete historical gate fail-closed until an authenticated archive-capable source proves the deployment-era workload.
+8. Keep profitability interpretation and any funded/mainnet execution behind their separate evidence and authorization gates.
 
 ## Reusable knowledge
 
