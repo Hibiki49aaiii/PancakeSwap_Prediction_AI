@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -31,10 +31,10 @@ class FakeRpc:
 
     def get_logs(
         self,
-        *,
         address: str,
         from_block: int,
         to_block: int,
+        *,
         topic0s: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         return []
@@ -47,7 +47,7 @@ class FakeRpc:
 
 
 class FakeCollector:
-    instances: list[FakeCollector] = []
+    instances: ClassVar[list[FakeCollector]] = []
     proof_proxy = "0x" + "11" * 20
     proof_aggregator = "0x" + "22" * 20
 
