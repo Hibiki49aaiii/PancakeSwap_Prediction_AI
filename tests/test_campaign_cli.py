@@ -360,5 +360,8 @@ def test_shadow_infer_binds_target_costs_and_appends_ledger(
     assert clickhouse_cli.main(args) == 0
     repeated = json.loads(capsys.readouterr().out)
     assert repeated["shadow_ledger_event"]["sequence"] == 1
-    assert repeated["shadow_ledger_event"]["event_digest"] == payload["shadow_ledger_event"]["event_digest"]
+    assert (
+        repeated["shadow_ledger_event"]["event_digest"]
+        == payload["shadow_ledger_event"]["event_digest"]
+    )
 
