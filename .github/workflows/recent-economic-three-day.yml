@@ -333,7 +333,7 @@ jobs:
             2> >(tee artifacts/recent-economic-three-day-campaign.err >&2) \
             | tee artifacts/recent-economic-three-day-campaign.json
 
-      - name: Validate non-vacuous OOS campaign semantics
+      - name: Validate non-vacuous three-day OOS semantics
         id: campaign_semantics
         if: steps.campaign.outcome == 'success'
         continue-on-error: true
@@ -355,18 +355,18 @@ jobs:
           perp_sources = manifest.get("perp_sources") or []
 
           checks = {
-              "research_feature_rows_positive": int(dataset.get("research_feature_rows", 0)) > 0,
-              "fold_count_positive": int(evaluation.get("fold_count", 0)) >= 1,
-              "direction_signal_count_positive": int(
+              "research_feature_rows_ge_650": int(dataset.get("research_feature_rows", 0)) >= 650,
+              "fold_count_ge_3": int(evaluation.get("fold_count", 0)) >= 3,
+              "direction_signal_count_ge_250": int(
                   evaluation.get("direction_signal_count", 0)
-              ) > 0,
-              "pool_projection_count_positive": int(
+              ) >= 250,
+              "pool_projection_count_ge_400": int(
                   evaluation.get("pool_projection_count", 0)
-              ) > 0,
-              "joint_epoch_count_positive": int(evaluation.get("joint_epoch_count", 0)) > 0,
-              "n_scored_positive": int(probability.get("n_scored", 0)) > 0,
-              "spot_provenance_present": len(spot_sources) > 0,
-              "perp_provenance_present": len(perp_sources) > 0,
+              ) >= 400,
+              "joint_epoch_count_ge_250": int(evaluation.get("joint_epoch_count", 0)) >= 250,
+              "n_scored_ge_250": int(probability.get("n_scored", 0)) >= 250,
+              "spot_three_days_present": len(spot_sources) >= 3,
+              "perp_three_days_present": len(perp_sources) >= 3,
               "spot_lag_exact": assumptions.get("spot_availability_lag_ms") == 250,
               "perp_lag_exact": assumptions.get("perp_availability_lag_ms") == 250,
               "chainlink_lag_exact": assumptions.get("chainlink_availability_lag_ms") == 1000,
@@ -387,6 +387,10 @@ jobs:
               "pool_projection_count": int(evaluation.get("pool_projection_count", 0)),
               "joint_epoch_count": int(evaluation.get("joint_epoch_count", 0)),
               "n_scored": int(probability.get("n_scored", 0)),
+              "brier_score": probability.get("brier_score"),
+              "brier_skill_score": probability.get("brier_skill_score"),
+              "log_loss": probability.get("log_loss"),
+              "ece10": probability.get("ece10"),
               "spot_source_count": len(spot_sources),
               "perp_source_count": len(perp_sources),
               "spot_query_start_ms": dataset.get("spot_query_start_ms"),
@@ -400,11 +404,11 @@ jobs:
           if not summary["ready"]:
               failed = [name for name, passed in checks.items() if not passed]
               raise SystemExit(
-                  "economic smoke is vacuous or provenance-incomplete: " + ", ".join(failed)
+                  "three-day OOS is vacuous, undersized, or provenance-incomplete: " + ", ".join(failed)
               )
           PY
 
-      - name: Build bounded smoke evidence
+      - name: Build three-day OOS evidence
         if: always() && !cancelled()
         env:
           SOURCE_OUTCOME: ${{ steps.source.outcome }}
@@ -506,7 +510,7 @@ jobs:
                   "claim_gas_wei": 30000000000000,
                   "inclusion_latency_seconds": 2,
               },
-              "oos_smoke_config": {
+              "oos_config": {
                   "min_train_rounds": 300,
                   "test_rounds": 100,
                   "purge_rounds": 2,
@@ -521,12 +525,18 @@ jobs:
               "chainlink_database_sha256": optional_sha256(
                   "artifacts/source/bnbusd-public-chainlink-2026-08-16-to-19.sqlite"
               ),
-              "binance_spot_ingest": load_optional_json(
-                  "artifacts/recent-economic-three-day-spot-ingest.json"
-              ),
-              "binance_perp_ingest": load_optional_json(
-                  "artifacts/recent-economic-three-day-perp-ingest.json"
-              ),
+              "binance_spot_ingests": [
+                  load_optional_json(
+                      f"artifacts/recent-economic-three-day-spot-{day}-ingest.json"
+                  )
+                  for day in ("16", "17", "18")
+              ],
+              "binance_perp_ingests": [
+                  load_optional_json(
+                      f"artifacts/recent-economic-three-day-perp-{day}-ingest.json"
+                  )
+                  for day in ("16", "17", "18")
+              ],
               "campaign": load_optional_json(
                   "artifacts/recent-economic-three-day-campaign.json"
               ),
