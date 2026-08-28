@@ -68,6 +68,10 @@ class ShadowLedgerAuditReport:
     observed_pnl_wei: int
     first_decision_timestamp_ms: int | None
     last_decision_timestamp_ms: int | None
+    markets: tuple[str, ...]
+    model_ids: tuple[str, ...]
+    feature_set_ids: tuple[str, ...]
+    action_counts: dict[str, int]
     integrity_errors: tuple[str, ...]
 
     @property
@@ -100,6 +104,10 @@ class ShadowLedgerAuditReport:
             "first_decision_timestamp_ms": self.first_decision_timestamp_ms,
             "last_decision_timestamp_ms": self.last_decision_timestamp_ms,
             "decision_span_ms": self.decision_span_ms,
+            "markets": list(self.markets),
+            "model_ids": list(self.model_ids),
+            "feature_set_ids": list(self.feature_set_ids),
+            "action_counts": dict(self.action_counts),
             "integrity_errors": list(self.integrity_errors),
             "integrity_ready": self.integrity_ready,
             "profitability_gate_eligible": False,
@@ -486,7 +494,10 @@ class ShadowLedgerStore:
                 direction_total += 1
                 if prediction.action == settlement.outcome:
                     direction_correct += 1
-            if settlement.realized_pnl_wei is not None:
+            if (
+                prediction.action in {"bull", "bear"}
+                and settlement.realized_pnl_wei is not None
+            ):
                 observed_pnl_count += 1
                 observed_pnl_wei += settlement.realized_pnl_wei
 
@@ -516,6 +527,15 @@ class ShadowLedgerStore:
             last_decision_timestamp_ms=(
                 None if not decision_timestamps else decision_timestamps[-1]
             ),
+            markets=tuple(sorted({item.market for item in predictions.values()})),
+            model_ids=tuple(sorted({item.model_id for item in predictions.values()})),
+            feature_set_ids=tuple(
+                sorted({item.feature_set_id for item in predictions.values()})
+            ),
+            action_counts={
+                action: sum(1 for item in predictions.values() if item.action == action)
+                for action in ("bull", "bear", "skip")
+            },
             integrity_errors=tuple(errors),
         )
 
