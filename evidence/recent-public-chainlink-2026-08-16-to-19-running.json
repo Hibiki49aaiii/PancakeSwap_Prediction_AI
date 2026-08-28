@@ -15,9 +15,9 @@
   "requested_start_timestamp": 1786838400,
   "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
   "signing_enabled": false,
-  "source_event_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+  "source_event_sha": "3e4b81f18b813f0377ffe54dfb6cabecefb1b8df",
   "source_mode": "authenticated_only",
-  "source_run_id": 32583778624,
-  "source_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+  "source_run_id": 33183480143,
+  "source_sha": "3e4b81f18b813f0377ffe54dfb6cabecefb1b8df",
   "state": "running"
 }
