@@ -25,9 +25,10 @@ from .prediction_preflight import inspect_prediction_bet_intent
 from .prediction_tx import BetSide, build_prediction_bet_intent
 from .replay import build_replay_snapshot
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
-from .rpc import JsonRpcClient, LocalForkRpcClient
+from .rpc import JsonRpcClient, LocalForkRpcClient, RpcError
 from .rpc_probe import probe_archive_state
 from .shadow_campaign import ShadowCampaignPolicy, evaluate_shadow_campaign
+from .shadow_chain_sync import sync_shadow_chain
 from .shadow_ledger import (
     ShadowLedgerStore,
     prediction_from_payload,
@@ -120,6 +121,17 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--no-chainlink", action="store_true")
     bootstrap.add_argument("--all-prediction-events", action="store_true")
     _add_rpc_url_argument(bootstrap)
+
+    chain_sync = subparsers.add_parser(
+        "shadow-chain-sync",
+        help="incrementally collect anchored BSC Prediction and Chainlink events for Stage 4",
+    )
+    chain_sync.add_argument("--market", choices=sorted(MARKETS), required=True)
+    chain_sync.add_argument("--db", type=Path, required=True)
+    chain_sync.add_argument("--confirmations", type=int, default=3)
+    chain_sync.add_argument("--chunk-size", type=int, default=2_000)
+    chain_sync.add_argument("--reorg-lookback", type=int, default=64)
+    _add_rpc_url_argument(chain_sync)
 
     oracle_report = subparsers.add_parser(
         "oracle-history-report",
@@ -328,6 +340,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             MARKETS[str(args.market)],
         )
         _print_json(preflight_result.as_dict())
+        return 0
+    if args.command == "shadow-chain-sync":
+        try:
+            chain_report = sync_shadow_chain(
+                JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
+                MARKETS[str(args.market)],
+                Path(args.db),
+                confirmations=int(args.confirmations),
+                chunk_size=int(args.chunk_size),
+                reorg_lookback=int(args.reorg_lookback),
+            )
+        except (RpcError, ValueError) as exc:
+            parser.error(f"shadow chain sync failed: {exc}")
+        _print_json(chain_report.as_dict())
         return 0
     if args.command == "historical-bootstrap":
         bootstrap_result = run_historical_bootstrap(
