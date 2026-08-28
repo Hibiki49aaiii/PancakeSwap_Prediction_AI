@@ -3,7 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 
-from .backtest import BacktestConfig, DecisionSnapshot, PoolProjection, build_decision_snapshot
+from .backtest import (
+    BacktestConfig,
+    DecisionSnapshot,
+    PoolProjection,
+    build_decision_snapshot,
+    build_event_index,
+)
 from .baseline import (
     ALL_FEATURE_NAMES,
     ResearchFeatureRow,
@@ -86,6 +92,17 @@ class ShadowInferenceConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ShadowTargetSelection:
+    epoch: int
+    decision_timestamp: int
+    scheduled_lock_timestamp: int
+    latest_submission_timestamp: int
+
+    def as_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class ShadowInferenceResult:
     prediction: ResearchPredictionRecord
     snapshot: DecisionSnapshot
@@ -114,6 +131,52 @@ class ShadowInferenceResult:
             "signing_enabled": False,
             "live_broadcast": False,
         }
+
+
+def select_shadow_target(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    *,
+    now_timestamp: int,
+    config: ShadowInferenceConfig | None = None,
+) -> ShadowTargetSelection | None:
+    selected = config or ShadowInferenceConfig()
+    selected.validate()
+    if now_timestamp < 0:
+        raise ValueError("now_timestamp must be non-negative")
+
+    backtest_config = selected.backtest_config()
+    event_index = build_event_index(events)
+    candidates: list[ShadowTargetSelection] = []
+    for record in replay.rounds:
+        snapshot = build_decision_snapshot(
+            replay,
+            record,
+            events,
+            backtest_config,
+            event_index=event_index,
+        )
+        if snapshot is None:
+            continue
+        latest_submission = (
+            snapshot.scheduled_lock_timestamp - selected.inclusion_latency_seconds
+        )
+        if (
+            snapshot.decision_timestamp <= now_timestamp < latest_submission
+            and record.start_timestamp is not None
+            and now_timestamp >= record.start_timestamp
+        ):
+            candidates.append(
+                ShadowTargetSelection(
+                    epoch=record.epoch,
+                    decision_timestamp=snapshot.decision_timestamp,
+                    scheduled_lock_timestamp=snapshot.scheduled_lock_timestamp,
+                    latest_submission_timestamp=latest_submission,
+                )
+            )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item.decision_timestamp, item.epoch))
 
 
 def _target_round(replay: ReplaySnapshot, target_epoch: int) -> RoundRecord:
