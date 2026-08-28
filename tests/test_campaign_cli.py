@@ -685,3 +685,110 @@ def test_binance_live_sync_cli_binds_prospective_collection_options(
     }
     assert "do-not-print-live-secret" not in json.dumps(payload)
 
+def test_shadow_infer_auto_cycle_refuses_prediction_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: ReadyClient(),
+    )
+    replay = ReplaySnapshot(
+        format_version=1,
+        market="BNBUSD",
+        input_digest="a" * 64,
+        rounds=(),
+    )
+    rows: tuple[object, ...] = (object(),)
+    bundle = FakeBundle(
+        inputs=FakeInputs(replay=replay, events=()),
+        assumptions={"spot_availability_lag_ms": 25},
+        dataset=FakeDatasetResult(FakeResearchDataset(rows)),
+        manifest=FakeManifest(),
+    )
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "_build_dataset_bundle",
+        lambda args, client: bundle,
+    )
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "select_shadow_target",
+        lambda *args, **kwargs: ShadowTargetSelection(
+            epoch=123,
+            decision_timestamp=1_000,
+            scheduled_lock_timestamp=1_020,
+            latest_submission_timestamp=1_018,
+        ),
+    )
+
+    def fake_shadow(
+        received_replay: object,
+        received_events: tuple[object, ...],
+        received_rows: tuple[object, ...],
+        *,
+        target_epoch: int,
+        config: ShadowInferenceConfig,
+    ) -> FakeShadowInference:
+        return FakeShadowInference(
+            prediction=ResearchPredictionRecord(
+                market="BNBUSD",
+                epoch=target_epoch,
+                decision_timestamp_ms=1_000_000,
+                model_id="shadow-deadline-test",
+                feature_set_id="full-v1",
+                raw_probability_ppm=600_000,
+                calibrated_probability_ppm=590_000,
+                expected_value_wei=10,
+                action="bull",
+                feature_digest="a" * 64,
+                train_max_epoch=120,
+                metadata={"source": "test"},
+            ),
+            config=config,
+        )
+
+    monkeypatch.setattr(clickhouse_cli, "build_shadow_inference", fake_shadow)
+    timestamps = iter((1_000.0, 1_018.0))
+    monkeypatch.setattr(clickhouse_cli.time, "time", lambda: next(timestamps))
+
+    shadow_db = tmp_path / "shadow.sqlite3"
+    args = [
+        "shadow-infer",
+        "--market",
+        "BNBUSD",
+        "--db",
+        str(tmp_path / "history.sqlite3"),
+        "--spot-availability-lag-ms",
+        "25",
+        "--feature-lead-seconds",
+        "20",
+        "--shadow-db",
+        str(shadow_db),
+        "--stake-wei",
+        "100",
+        "--bet-gas-wei",
+        "2",
+        "--claim-gas-wei",
+        "1",
+        "--inclusion-latency-seconds",
+        "2",
+        "--min-train-rounds",
+        "50",
+        "--calibration-rounds",
+        "10",
+        "--pool-min-train-rounds",
+        "20",
+        "--pool-window-rounds",
+        "40",
+    ]
+    assert clickhouse_cli.main(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["shadow_cycle"]["status"] == "missed_submission_deadline"
+    assert payload["shadow_cycle"]["now_timestamp"] == 1_018
+    assert "shadow_ledger_event" not in payload
+
