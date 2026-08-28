@@ -105,6 +105,21 @@ class FakeShadowInference:
 
 
 @dataclass(frozen=True, slots=True)
+class FakeLiveSyncReport:
+    market: str
+    venue: str
+    rows: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": self.market,
+            "venue": self.venue,
+            "rows": self.rows,
+            "response_chain_sha256": "e" * 64,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class FakeEvaluation:
     config: EconomicCampaignConfig
 
@@ -577,4 +592,96 @@ def test_shadow_infer_auto_cycle_is_noop_outside_decision_window(
     assert payload["shadow_cycle"]["status"] == "no_eligible_target"
     assert payload["shadow_cycle"]["now_timestamp"] == 1_700_000_000
     assert payload["shadow_reconciliation"]["prediction_count"] == 0
+
+def test_binance_live_sync_cli_binds_prospective_collection_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "do-not-print-live-secret")
+    client = ReadyClient()
+    rest_source = object()
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: client,
+    )
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "BinancePublicHttpClient",
+        lambda: rest_source,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_live_sync(
+        sink: object,
+        cursor_source: object,
+        source: object,
+        *,
+        market: str,
+        venue: str,
+        availability_lag_ms: int,
+        now_timestamp_ms: int | None,
+        bootstrap_window_ms: int,
+        batch_size: int,
+        max_pages: int,
+    ) -> FakeLiveSyncReport:
+        assert sink is client
+        assert cursor_source is client
+        assert source is rest_source
+        captured.update(
+            {
+                "market": market,
+                "venue": venue,
+                "availability_lag_ms": availability_lag_ms,
+                "now_timestamp_ms": now_timestamp_ms,
+                "bootstrap_window_ms": bootstrap_window_ms,
+                "batch_size": batch_size,
+                "max_pages": max_pages,
+            }
+        )
+        return FakeLiveSyncReport(market=market, venue=venue, rows=17)
+
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "sync_binance_live_aggtrades",
+        fake_live_sync,
+    )
+
+    assert (
+        clickhouse_cli.main(
+            [
+                "binance-live-sync",
+                "--market",
+                "BNBUSD",
+                "--venue",
+                "um_futures",
+                "--availability-lag-ms",
+                "250",
+                "--bootstrap-window-ms",
+                "90000",
+                "--batch-size",
+                "2000",
+                "--max-pages",
+                "12",
+                "--now-timestamp-ms",
+                "1700000000123",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["market"] == "BNBUSD"
+    assert payload["venue"] == "um_futures"
+    assert payload["rows"] == 17
+    assert captured == {
+        "market": "BNBUSD",
+        "venue": "um_futures",
+        "availability_lag_ms": 250,
+        "now_timestamp_ms": 1_700_000_000_123,
+        "bootstrap_window_ms": 90_000,
+        "batch_size": 2_000,
+        "max_pages": 12,
+    }
+    assert "do-not-print-live-secret" not in json.dumps(payload)
 
