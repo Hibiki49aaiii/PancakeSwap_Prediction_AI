@@ -758,7 +758,10 @@ def test_shadow_infer_auto_cycle_refuses_prediction_after_deadline(
 
     monkeypatch.setattr(clickhouse_cli, "build_shadow_inference", fake_shadow)
     timestamps = iter((1_000.0, 1_018.0))
-    monkeypatch.setattr(clickhouse_cli.time, "time", lambda: next(timestamps))
+    monkeypatch.setattr(
+        "pancake_prediction.clickhouse_cli.time.time",
+        lambda: next(timestamps),
+    )
 
     shadow_db = tmp_path / "shadow.sqlite3"
     args = [
