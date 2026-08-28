@@ -481,3 +481,77 @@ def test_cli_shadow_reconcile_uses_canonical_replay(
     assert retry["reconciliation"]["appended_settlement_count"] == 0
     assert retry["reconciliation"]["existing_settlement_count"] == 1
 
+def test_cli_shadow_chain_sync_binds_incremental_collection_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BSC_RPC_URL", "https://secret-rpc.example.invalid/key")
+    rpc = object()
+    monkeypatch.setattr(cli, "JsonRpcClient", lambda url: rpc)
+    captured: dict[str, object] = {}
+
+    class FakeChainReport:
+        def as_dict(self) -> dict[str, object]:
+            return {
+                "market": "BNBUSD",
+                "safe_head_block": 123,
+                "prediction_events_inserted": 4,
+                "chainlink_events_inserted": 2,
+            }
+
+    def fake_sync(
+        received_rpc: object,
+        market: object,
+        database: Path,
+        *,
+        confirmations: int,
+        chunk_size: int,
+        reorg_lookback: int,
+    ) -> FakeChainReport:
+        assert received_rpc is rpc
+        captured.update(
+            {
+                "market": getattr(market, "symbol"),
+                "database": database,
+                "confirmations": confirmations,
+                "chunk_size": chunk_size,
+                "reorg_lookback": reorg_lookback,
+            }
+        )
+        return FakeChainReport()
+
+    monkeypatch.setattr(cli, "sync_shadow_chain", fake_sync)
+    database = tmp_path / "canonical.sqlite3"
+
+    assert (
+        cli.main(
+            [
+                "shadow-chain-sync",
+                "--market",
+                "BNBUSD",
+                "--db",
+                str(database),
+                "--confirmations",
+                "5",
+                "--chunk-size",
+                "750",
+                "--reorg-lookback",
+                "80",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["prediction_events_inserted"] == 4
+    assert payload["chainlink_events_inserted"] == 2
+    assert captured == {
+        "market": "BNBUSD",
+        "database": database,
+        "confirmations": 5,
+        "chunk_size": 750,
+        "reorg_lookback": 80,
+    }
+    assert "secret-rpc" not in output
+
