@@ -8,7 +8,9 @@ from typing import Protocol
 from .binance_archive import TimestampUnit
 from .binance_live import (
     BinanceAggTradeSource,
+    BinanceLiveCoverage,
     BinanceLiveSyncReport,
+    inspect_binance_live_coverage,
     sync_binance_live_aggtrades,
 )
 from .clickhouse import ClickHouseJsonSink, ClickHouseParameterizedJsonSource
@@ -107,7 +109,9 @@ class ShadowRuntimeCycleReport:
     status: str
     chain_sync: ShadowChainSyncReport
     spot_sync: BinanceLiveSyncReport
+    spot_coverage: BinanceLiveCoverage
     perp_sync: BinanceLiveSyncReport | None
+    perp_coverage: BinanceLiveCoverage | None
     reconciliation: ShadowReconciliationReport
     target: ShadowTargetSelection | None
     dataset: ChunkedResearchDatasetBuildResult | None
@@ -126,7 +130,11 @@ class ShadowRuntimeCycleReport:
             "reason": self.reason,
             "chain_sync": self.chain_sync.as_dict(),
             "spot_sync": self.spot_sync.as_dict(),
+            "spot_coverage": self.spot_coverage.as_dict(),
             "perp_sync": None if self.perp_sync is None else self.perp_sync.as_dict(),
+            "perp_coverage": (
+                None if self.perp_coverage is None else self.perp_coverage.as_dict()
+            ),
             "reconciliation": self.reconciliation.as_dict(),
             "target": None if self.target is None else self.target.as_dict(),
             "dataset": None if self.dataset is None else self.dataset.as_dict(),
@@ -146,6 +154,20 @@ def _clock_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
+def _live_warmup_ready(
+    coverage: BinanceLiveCoverage,
+    *,
+    now_timestamp_ms: int,
+    flow_lookback_ms: int,
+) -> bool:
+    first = coverage.first_available_at_ms
+    return (
+        first is not None
+        and coverage.row_count > 0
+        and now_timestamp_ms >= first + flow_lookback_ms
+    )
+
+
 def _finish_report(
     *,
     market: Market,
@@ -155,7 +177,9 @@ def _finish_report(
     status: str,
     chain_sync: ShadowChainSyncReport,
     spot_sync: BinanceLiveSyncReport,
+    spot_coverage: BinanceLiveCoverage,
     perp_sync: BinanceLiveSyncReport | None,
+    perp_coverage: BinanceLiveCoverage | None,
     reconciliation: ShadowReconciliationReport,
     target: ShadowTargetSelection | None,
     dataset: ChunkedResearchDatasetBuildResult | None,
@@ -178,7 +202,9 @@ def _finish_report(
         status=status,
         chain_sync=chain_sync,
         spot_sync=spot_sync,
+        spot_coverage=spot_coverage,
         perp_sync=perp_sync,
+        perp_coverage=perp_coverage,
         reconciliation=reconciliation,
         target=target,
         dataset=dataset,
@@ -250,12 +276,76 @@ def run_shadow_runtime_cycle(
             max_pages=selected.binance_max_pages,
         )
 
+    spot_coverage = inspect_binance_live_coverage(
+        clickhouse,
+        market=market.symbol,
+        venue="spot",
+        availability_lag_ms=selected.spot_availability_lag_ms,
+        timestamp_unit=selected.spot_timestamp_unit,
+    )
+    perp_coverage: BinanceLiveCoverage | None = None
+    if selected.include_perp:
+        perp_coverage = inspect_binance_live_coverage(
+            clickhouse,
+            market=market.symbol,
+            venue="um_futures",
+            availability_lag_ms=selected.perp_availability_lag_ms,
+            timestamp_unit=selected.perp_timestamp_unit,
+        )
+
     inputs = load_canonical_research_inputs(canonical_database, market.symbol)
     shadow_store = ShadowLedgerStore(shadow_database)
     shadow_store.initialize()
     reconciliation = reconcile_shadow_settlements(shadow_store, inputs.replay)
 
     selection_ms = _clock_ms() if now_timestamp_ms is None else now_timestamp_ms
+    spot_ready = _live_warmup_ready(
+        spot_coverage,
+        now_timestamp_ms=selection_ms,
+        flow_lookback_ms=selected.flow_lookback_ms,
+    )
+    perp_ready = (
+        True
+        if perp_coverage is None
+        else _live_warmup_ready(
+            perp_coverage,
+            now_timestamp_ms=selection_ms,
+            flow_lookback_ms=selected.flow_lookback_ms,
+        )
+    )
+    if not spot_ready or not perp_ready:
+        pending_sources = [
+            source
+            for source, ready in (("spot", spot_ready), ("perp", perp_ready))
+            if not ready
+        ]
+        completion_ms = (
+            _clock_ms()
+            if completion_timestamp_ms is None
+            else completion_timestamp_ms
+        )
+        return _finish_report(
+            market=market,
+            started_ms=started_ms,
+            selection_ms=selection_ms,
+            completion_ms=completion_ms,
+            status="source_warmup",
+            chain_sync=chain_report,
+            spot_sync=spot_report,
+            spot_coverage=spot_coverage,
+            perp_sync=perp_report,
+            perp_coverage=perp_coverage,
+            reconciliation=reconciliation,
+            target=None,
+            dataset=None,
+            inference=None,
+            ledger_event=None,
+            shadow_store=shadow_store,
+            policy=selected.campaign_policy,
+            purge_rounds=selected.inference.purge_rounds,
+            reason="prospective live warmup incomplete: " + ",".join(pending_sources),
+        )
+
     target = select_shadow_target(
         inputs.replay,
         inputs.events,
@@ -276,7 +366,9 @@ def run_shadow_runtime_cycle(
             status="no_eligible_target",
             chain_sync=chain_report,
             spot_sync=spot_report,
+            spot_coverage=spot_coverage,
             perp_sync=perp_report,
+            perp_coverage=perp_coverage,
             reconciliation=reconciliation,
             target=None,
             dataset=None,
@@ -330,7 +422,9 @@ def run_shadow_runtime_cycle(
             status="target_not_ready",
             chain_sync=chain_report,
             spot_sync=spot_report,
+            spot_coverage=spot_coverage,
             perp_sync=perp_report,
+            perp_coverage=perp_coverage,
             reconciliation=reconciliation,
             target=target,
             dataset=dataset,
@@ -358,7 +452,9 @@ def run_shadow_runtime_cycle(
             status="missed_submission_deadline",
             chain_sync=chain_report,
             spot_sync=spot_report,
+            spot_coverage=spot_coverage,
             perp_sync=perp_report,
+            perp_coverage=perp_coverage,
             reconciliation=reconciliation,
             target=target,
             dataset=dataset,
@@ -381,7 +477,9 @@ def run_shadow_runtime_cycle(
         status="prediction_recorded",
         chain_sync=chain_report,
         spot_sync=spot_report,
+        spot_coverage=spot_coverage,
         perp_sync=perp_report,
+        perp_coverage=perp_coverage,
         reconciliation=reconciliation,
         target=target,
         dataset=dataset,
