@@ -23,6 +23,7 @@ from .historical_preflight import run_historical_preflight
 from .oracle_history import build_active_oracle_history
 from .prediction_preflight import inspect_prediction_bet_intent
 from .prediction_tx import BetSide, build_prediction_bet_intent
+from .replay import build_replay_snapshot
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
@@ -32,6 +33,7 @@ from .shadow_ledger import (
     prediction_from_payload,
     settlement_from_payload,
 )
+from .shadow_reconciliation import reconcile_shadow_settlements
 
 PACKAGE_NAME = "pancakeswap-prediction-ai"
 
@@ -220,6 +222,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shadow_audit.add_argument("--db", type=Path, required=True)
     shadow_audit.add_argument("--purge-rounds", type=int, default=2)
+
+    shadow_reconcile = subparsers.add_parser(
+        "shadow-reconcile",
+        help="append canonical settled outcomes for unresolved Stage 4 predictions",
+    )
+    shadow_reconcile.add_argument("--shadow-db", type=Path, required=True)
+    shadow_reconcile.add_argument("--canonical-db", type=Path, required=True)
+    shadow_reconcile.add_argument(
+        "--market",
+        choices=sorted(BINANCE_SYMBOL_BY_MARKET),
+        required=True,
+    )
+    shadow_reconcile.add_argument("--purge-rounds", type=int, default=2)
 
     shadow_gate = subparsers.add_parser(
         "shadow-campaign-gate",
@@ -450,6 +465,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = _shadow_store(args.db).audit(purge_rounds=purge_rounds)
         _print_json(report.as_dict())
         return 0 if report.integrity_ready else 2
+    if args.command == "shadow-reconcile":
+        purge_rounds = int(args.purge_rounds)
+        if purge_rounds < 0:
+            parser.error("--purge-rounds must be non-negative")
+        try:
+            shadow_store = _shadow_store(args.shadow_db)
+            replay = build_replay_snapshot(Path(args.canonical_db), str(args.market))
+            reconciliation = reconcile_shadow_settlements(shadow_store, replay)
+            audit = shadow_store.audit(purge_rounds=purge_rounds)
+        except ValueError as exc:
+            parser.error(f"shadow reconciliation failed: {exc}")
+        _print_json(
+            {
+                "reconciliation": reconciliation.as_dict(),
+                "audit": audit.as_dict(),
+            }
+        )
+        return 0 if audit.integrity_ready else 2
     if args.command == "shadow-campaign-gate":
         purge_rounds = int(args.purge_rounds)
         if purge_rounds < 0:
