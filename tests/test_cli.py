@@ -316,6 +316,36 @@ def test_cli_shadow_ledger_prediction_settlement_and_audit(
     assert audit["signing_enabled"] is False
     assert audit["live_broadcast"] is False
 
+    assert (
+        cli.main(
+            [
+                "shadow-campaign-gate",
+                "--db",
+                database,
+                "--min-predictions",
+                "1",
+                "--min-settlements",
+                "1",
+                "--min-probability-scored",
+                "1",
+                "--min-actionable-predictions",
+                "1",
+                "--min-decision-span-seconds",
+                "0",
+                "--max-unresolved-ppm",
+                "0",
+                "--allow-single-direction",
+            ]
+        )
+        == 0
+    )
+    gate = json.loads(capsys.readouterr().out)
+    assert gate["gate_ready"] is True
+    assert gate["campaign_digest"]
+    assert gate["profitability_gate_eligible"] is False
+    assert gate["signing_enabled"] is False
+    assert gate["live_broadcast"] is False
+
 
 def test_cli_shadow_ledger_rejects_negative_purge_rounds(
     tmp_path: object,
