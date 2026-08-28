@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlencode
 
 from .binance import PRICE_SCALE, QTY_SCALE, AggTrade, decimal_to_fixed
+from .binance_archive import TimestampUnit
 from .clickhouse import (
     ClickHouseInsertReport,
     ClickHouseJsonSink,
@@ -144,6 +145,7 @@ class BinanceLiveSyncReport:
     venue: LiveVenue
     symbol: str
     availability_lag_ms: int
+    timestamp_unit: TimestampUnit
     ingest_version: int
     pages: int
     batches: int
@@ -215,6 +217,7 @@ def latest_binance_live_cursor(
     market: str,
     venue: LiveVenue,
     availability_lag_ms: int,
+    timestamp_unit: TimestampUnit = "milliseconds",
 ) -> BinanceLiveCursor | None:
     if market not in BINANCE_SYMBOL_BY_MARKET:
         raise ValueError(f"unsupported research market: {market}")
@@ -222,16 +225,19 @@ def latest_binance_live_cursor(
         raise ValueError(f"unsupported live venue: {venue}")
     if availability_lag_ms < 0:
         raise ValueError("availability_lag_ms must be non-negative")
+    if timestamp_unit not in {"auto", "milliseconds", "microseconds"}:
+        raise ValueError("unsupported timestamp_unit")
     query = (
         "SELECT aggregate_trade_id,trade_timestamp_ms FROM binance_agg_trades FINAL "
         "WHERE venue={venue:String} AND symbol={symbol:String} AND "
-        "timestamp_unit='milliseconds' AND "
+        "timestamp_unit={timestamp_unit:String} AND "
         "availability_lag_ms={availability_lag_ms:UInt32} "
         "ORDER BY aggregate_trade_id DESC LIMIT 1"
     )
     parameters: dict[str, QueryParameter] = {
         "venue": venue,
         "symbol": BINANCE_SYMBOL_BY_MARKET[market],
+        "timestamp_unit": timestamp_unit,
         "availability_lag_ms": availability_lag_ms,
     }
     rows = tuple(source.query_json_rows(query, parameters=parameters))
@@ -261,13 +267,14 @@ def _row_for_clickhouse(
     *,
     venue: LiveVenue,
     availability_lag_ms: int,
+    timestamp_unit: TimestampUnit,
     source_sha256: str,
     ingest_version: int,
 ) -> dict[str, object]:
     return {
         "venue": venue,
         "symbol": trade.symbol,
-        "timestamp_unit": "milliseconds",
+        "timestamp_unit": timestamp_unit,
         "event_timestamp_ms": trade.event_timestamp_ms,
         "trade_timestamp_ms": trade.trade_timestamp_ms,
         "aggregate_trade_id": trade.aggregate_trade_id,
@@ -289,6 +296,7 @@ def sync_binance_live_aggtrades(
     market: str,
     venue: LiveVenue,
     availability_lag_ms: int,
+    timestamp_unit: TimestampUnit = "milliseconds",
     now_timestamp_ms: int | None = None,
     bootstrap_window_ms: int = 120_000,
     batch_size: int = 5_000,
@@ -301,6 +309,8 @@ def sync_binance_live_aggtrades(
         raise ValueError(f"unsupported live venue: {venue}")
     if availability_lag_ms < 0:
         raise ValueError("availability_lag_ms must be non-negative")
+    if timestamp_unit not in {"auto", "milliseconds", "microseconds"}:
+        raise ValueError("unsupported timestamp_unit")
     if bootstrap_window_ms <= 0 or bootstrap_window_ms >= _MAX_TIME_WINDOW_MS:
         raise ValueError("bootstrap_window_ms must be positive and less than one hour")
     if batch_size < 1:
@@ -324,6 +334,7 @@ def sync_binance_live_aggtrades(
         market=market,
         venue=venue,
         availability_lag_ms=availability_lag_ms,
+        timestamp_unit=timestamp_unit,
     )
     cursor_is_recent = (
         cursor is not None
@@ -418,6 +429,7 @@ def sync_binance_live_aggtrades(
                         trade,
                         venue=venue,
                         availability_lag_ms=availability_lag_ms,
+                        timestamp_unit=timestamp_unit,
                         source_sha256=page.source_sha256,
                         ingest_version=version,
                     )
@@ -455,6 +467,7 @@ def sync_binance_live_aggtrades(
         venue=venue,
         symbol=symbol,
         availability_lag_ms=availability_lag_ms,
+        timestamp_unit=timestamp_unit,
         ingest_version=version,
         pages=pages,
         batches=total_batches,
