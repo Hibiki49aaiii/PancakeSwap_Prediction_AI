@@ -502,7 +502,7 @@ def test_cli_shadow_chain_sync_binds_incremental_collection_options(
 
     def fake_sync(
         received_rpc: object,
-        market: object,
+        market: Market,
         database: Path,
         *,
         confirmations: int,
@@ -512,7 +512,7 @@ def test_cli_shadow_chain_sync_binds_incremental_collection_options(
         assert received_rpc is rpc
         captured.update(
             {
-                "market": getattr(market, "symbol"),
+                "market": market.symbol,
                 "database": database,
                 "confirmations": confirmations,
                 "chunk_size": chunk_size,
