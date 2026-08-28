@@ -223,7 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     shadow_gate = subparsers.add_parser(
         "shadow-campaign-gate",
-        help="evaluate Stage 4 shadow operational-readiness without treating profit as a pass condition",
+        help=(
+            "evaluate Stage 4 shadow operational-readiness without treating "
+            "profit as a pass condition"
+        ),
     )
     shadow_gate.add_argument("--db", type=Path, required=True)
     shadow_gate.add_argument("--purge-rounds", type=int, default=2)
@@ -401,42 +404,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(execution_report.as_dict())
         return 0 if execution_report.gate_ready else 2
     if args.command == "shadow-ledger-init":
-        store = _shadow_store(args.db)
-        _print_json(store.audit().as_dict())
+        shadow_store = _shadow_store(args.db)
+        _print_json(shadow_store.audit().as_dict())
         return 0
     if args.command == "shadow-append-prediction":
         purge_rounds = int(args.purge_rounds)
         if purge_rounds < 0:
             parser.error("--purge-rounds must be non-negative")
         try:
-            record = prediction_from_payload(
+            prediction_record = prediction_from_payload(
                 _load_json_object_or_error(
                     parser,
                     Path(args.record),
                     label="shadow prediction",
                 )
             )
-            event = _shadow_store(args.db).append_prediction(
-                record,
+            prediction_event = _shadow_store(args.db).append_prediction(
+                prediction_record,
                 purge_rounds=purge_rounds,
             )
         except ValueError as exc:
             parser.error(f"invalid shadow prediction: {exc}")
-        _print_json(event.as_dict())
+        _print_json(prediction_event.as_dict())
         return 0
     if args.command == "shadow-append-settlement":
         try:
-            record = settlement_from_payload(
+            settlement_record = settlement_from_payload(
                 _load_json_object_or_error(
                     parser,
                     Path(args.record),
                     label="shadow settlement",
                 )
             )
-            event = _shadow_store(args.db).append_settlement(record)
+            settlement_event = _shadow_store(args.db).append_settlement(
+                settlement_record
+            )
         except ValueError as exc:
             parser.error(f"invalid shadow settlement: {exc}")
-        _print_json(event.as_dict())
+        _print_json(settlement_event.as_dict())
         return 0
     if args.command == "shadow-ledger-audit":
         purge_rounds = int(args.purge_rounds)
