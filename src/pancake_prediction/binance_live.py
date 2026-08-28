@@ -140,6 +140,21 @@ class BinanceLiveCursor:
 
 
 @dataclass(frozen=True, slots=True)
+class BinanceLiveCoverage:
+    market: str
+    venue: LiveVenue
+    symbol: str
+    timestamp_unit: TimestampUnit
+    availability_lag_ms: int
+    row_count: int
+    first_available_at_ms: int | None
+    last_available_at_ms: int | None
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class BinanceLiveSyncReport:
     market: str
     venue: LiveVenue
@@ -208,6 +223,81 @@ def _parse_rest_trade(
         quantity_e8=decimal_to_fixed(row["q"], scale=QTY_SCALE),
         aggressive_side="sell" if buyer_is_maker else "buy",
         aggregate_trade_id=aggregate_trade_id,
+    )
+
+
+def inspect_binance_live_coverage(
+    source: ClickHouseParameterizedJsonSource,
+    *,
+    market: str,
+    venue: LiveVenue,
+    availability_lag_ms: int,
+    timestamp_unit: TimestampUnit = "milliseconds",
+) -> BinanceLiveCoverage:
+    if market not in BINANCE_SYMBOL_BY_MARKET:
+        raise ValueError(f"unsupported research market: {market}")
+    if venue not in _LIVE_VENUES:
+        raise ValueError(f"unsupported live venue: {venue}")
+    if availability_lag_ms < 0:
+        raise ValueError("availability_lag_ms must be non-negative")
+    if timestamp_unit not in {"auto", "milliseconds", "microseconds"}:
+        raise ValueError("unsupported timestamp_unit")
+
+    symbol = BINANCE_SYMBOL_BY_MARKET[market]
+    query = (
+        "SELECT count() AS row_count, "
+        "min(event_timestamp_ms) AS first_available_at_ms, "
+        "max(event_timestamp_ms) AS last_available_at_ms "
+        "FROM binance_agg_trades FINAL "
+        "WHERE venue={venue:String} AND symbol={symbol:String} AND "
+        "timestamp_unit={timestamp_unit:String} AND "
+        "availability_lag_ms={availability_lag_ms:UInt32} AND "
+        "source_name={source_name:String}"
+    )
+    parameters: dict[str, QueryParameter] = {
+        "venue": venue,
+        "symbol": symbol,
+        "timestamp_unit": timestamp_unit,
+        "availability_lag_ms": availability_lag_ms,
+        "source_name": f"binance-rest:{venue}",
+    }
+    rows = tuple(source.query_json_rows(query, parameters=parameters))
+    if len(rows) != 1:
+        raise ValueError("Binance live coverage query must return exactly one row")
+    row = rows[0]
+    count = _strict_int(row.get("row_count"), field="row_count")
+    if count < 0:
+        raise ValueError("Binance live coverage row_count must be non-negative")
+    if count == 0:
+        return BinanceLiveCoverage(
+            market=market,
+            venue=venue,
+            symbol=symbol,
+            timestamp_unit=timestamp_unit,
+            availability_lag_ms=availability_lag_ms,
+            row_count=0,
+            first_available_at_ms=None,
+            last_available_at_ms=None,
+        )
+    first = _strict_int(
+        row.get("first_available_at_ms"),
+        field="first_available_at_ms",
+    )
+    last = _strict_int(
+        row.get("last_available_at_ms"),
+        field="last_available_at_ms",
+    )
+    if first < 0 or last < first:
+        raise ValueError("Binance live coverage timestamps are inconsistent")
+    return BinanceLiveCoverage(
+        market=market,
+        venue=venue,
+        symbol=symbol,
+        timestamp_unit=timestamp_unit,
+        availability_lag_ms=availability_lag_ms,
+        row_count=count,
+        first_available_at_ms=first,
+        last_available_at_ms=last,
     )
 
 
