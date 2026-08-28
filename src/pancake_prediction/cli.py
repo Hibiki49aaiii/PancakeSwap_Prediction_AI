@@ -26,6 +26,11 @@ from .prediction_tx import BetSide, build_prediction_bet_intent
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .rpc import JsonRpcClient, LocalForkRpcClient
 from .rpc_probe import probe_archive_state
+from .shadow_ledger import (
+    ShadowLedgerStore,
+    prediction_from_payload,
+    settlement_from_payload,
+)
 
 PACKAGE_NAME = "pancakeswap-prediction-ai"
 
@@ -186,6 +191,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="report Stage 5 resolved/unresolved durable intents without using RPC",
     )
     fork_report.add_argument("--db", type=Path, required=True)
+
+    shadow_init = subparsers.add_parser(
+        "shadow-ledger-init",
+        help="initialize the append-only Stage 4 shadow ledger",
+    )
+    shadow_init.add_argument("--db", type=Path, required=True)
+
+    shadow_prediction = subparsers.add_parser(
+        "shadow-append-prediction",
+        help="append one pre-decision research prediction JSON record to the Stage 4 ledger",
+    )
+    shadow_prediction.add_argument("--db", type=Path, required=True)
+    shadow_prediction.add_argument("--record", type=Path, required=True)
+    shadow_prediction.add_argument("--purge-rounds", type=int, default=2)
+
+    shadow_settlement = subparsers.add_parser(
+        "shadow-append-settlement",
+        help="append one post-settlement result JSON record to the Stage 4 ledger",
+    )
+    shadow_settlement.add_argument("--db", type=Path, required=True)
+    shadow_settlement.add_argument("--record", type=Path, required=True)
+
+    shadow_audit = subparsers.add_parser(
+        "shadow-ledger-audit",
+        help="verify the Stage 4 hash chain and report shadow probability/economic metrics",
+    )
+    shadow_audit.add_argument("--db", type=Path, required=True)
+    shadow_audit.add_argument("--purge-rounds", type=int, default=2)
     return parser
 
 
@@ -198,6 +231,27 @@ def _rpc_url_or_error(parser: argparse.ArgumentParser, value: object) -> str:
 
 def _execution_store(path: str | Path) -> ExecutionIntentStore:
     store = ExecutionIntentStore(Path(path))
+    store.initialize()
+    return store
+
+
+def _load_json_object_or_error(
+    parser: argparse.ArgumentParser,
+    path: Path,
+    *,
+    label: str,
+) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        parser.error(f"could not load {label} JSON: {exc}")
+    if not isinstance(payload, dict):
+        parser.error(f"{label} JSON root must be an object")
+    return cast(dict[str, object], payload)
+
+
+def _shadow_store(path: str | Path) -> ShadowLedgerStore:
+    store = ShadowLedgerStore(Path(path))
     store.initialize()
     return store
 
@@ -324,6 +378,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         execution_report = build_execution_intent_report(Path(args.db))
         _print_json(execution_report.as_dict())
         return 0 if execution_report.gate_ready else 2
+    if args.command == "shadow-ledger-init":
+        store = _shadow_store(args.db)
+        _print_json(store.audit().as_dict())
+        return 0
+    if args.command == "shadow-append-prediction":
+        purge_rounds = int(args.purge_rounds)
+        if purge_rounds < 0:
+            parser.error("--purge-rounds must be non-negative")
+        try:
+            record = prediction_from_payload(
+                _load_json_object_or_error(
+                    parser,
+                    Path(args.record),
+                    label="shadow prediction",
+                )
+            )
+            event = _shadow_store(args.db).append_prediction(
+                record,
+                purge_rounds=purge_rounds,
+            )
+        except ValueError as exc:
+            parser.error(f"invalid shadow prediction: {exc}")
+        _print_json(event.as_dict())
+        return 0
+    if args.command == "shadow-append-settlement":
+        try:
+            record = settlement_from_payload(
+                _load_json_object_or_error(
+                    parser,
+                    Path(args.record),
+                    label="shadow settlement",
+                )
+            )
+            event = _shadow_store(args.db).append_settlement(record)
+        except ValueError as exc:
+            parser.error(f"invalid shadow settlement: {exc}")
+        _print_json(event.as_dict())
+        return 0
+    if args.command == "shadow-ledger-audit":
+        purge_rounds = int(args.purge_rounds)
+        if purge_rounds < 0:
+            parser.error("--purge-rounds must be non-negative")
+        report = _shadow_store(args.db).audit(purge_rounds=purge_rounds)
+        _print_json(report.as_dict())
+        return 0 if report.integrity_ready else 2
     if args.command is None:
         parser.print_help()
         return 0
