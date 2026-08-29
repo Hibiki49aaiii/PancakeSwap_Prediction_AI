@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts import build_shadow_campaign_evidence as campaign_evidence_script
 from pancake_prediction.shadow_campaign import (
     ShadowCampaignPolicy,
     build_shadow_campaign_evidence,
     evaluate_shadow_campaign,
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport, ShadowLedgerStore
+from scripts import build_shadow_campaign_evidence as campaign_evidence_script
 
 
 def _audit(**overrides: object) -> ShadowLedgerAuditReport:
