@@ -137,6 +137,7 @@ def build_shadow_runtime_campaign_manifest(
         semantic_config={
             "chain": {
                 "confirmations": selected.chain_confirmations,
+                "reorg_lookback": selected.chain_reorg_lookback,
             },
             "binance": {
                 "spot": {
