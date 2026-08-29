@@ -2,11 +2,11 @@
   "bandit": "success",
   "coverage_percent": 87,
   "evidence_version": 1,
-  "mypy": "success",
+  "mypy": "failure",
   "pip_audit": "success",
   "pytest": "success",
-  "pytest_passed": 449,
-  "ready": true,
-  "ruff": "success",
-  "source_sha": "cfcc6e622baa01a0bbdf7ec6dc1b0d428d62b385"
+  "pytest_passed": 455,
+  "ready": false,
+  "ruff": "failure",
+  "source_sha": "d6efe77f55e14751c3c50d902ec96bf4375c3338"
 }
