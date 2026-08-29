@@ -9,6 +9,10 @@ import pytest
 from pancake_prediction import shadow_runtime_cli
 from pancake_prediction.contracts import Market
 from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
+from pancake_prediction.shadow_runtime_lock import (
+    ShadowRuntimeLockError,
+    ShadowRuntimeProcessLock,
+)
 
 
 @dataclass(frozen=True)
@@ -144,9 +148,9 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
                 "config": config,
             }
         )
-        competing_lock = shadow_runtime_cli.ShadowRuntimeProcessLock(shadow_database)
+        competing_lock = ShadowRuntimeProcessLock(shadow_database)
         with pytest.raises(
-            shadow_runtime_cli.ShadowRuntimeLockError,
+            ShadowRuntimeLockError,
             match="already holds",
         ):
             competing_lock.acquire()
@@ -354,7 +358,7 @@ def test_shadow_runtime_cli_lock_contention_prevents_runtime_cycle(
     )
 
     shadow = tmp_path / "shadow.sqlite3"
-    with shadow_runtime_cli.ShadowRuntimeProcessLock(shadow):
+    with ShadowRuntimeProcessLock(shadow):
         with pytest.raises(SystemExit) as exc_info:
             shadow_runtime_cli.main([*_base_args(tmp_path), "--once"])
         assert exc_info.value.code == 2
