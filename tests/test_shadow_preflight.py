@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from pancake_prediction.clickhouse_schema import ClickHouseBinanceSchemaReport
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.shadow_inference import ShadowInferenceConfig
+from pancake_prediction.shadow_ledger import ShadowLedgerStore
 from pancake_prediction.shadow_runtime import (
     ShadowRuntimeConfig,
     build_shadow_runtime_campaign_manifest,
@@ -240,6 +242,7 @@ def test_preflight_ready_when_structural_inputs_and_sources_are_available(
         FakeBinance(),
         MARKETS["BNBUSD"],
         canonical,
+        tmp_path / "shadow.sqlite3",
         config=_config(),
     )
 
@@ -289,6 +292,7 @@ def test_preflight_missing_canonical_database_does_not_create_it(
         FakeBinance(),
         MARKETS["BNBUSD"],
         canonical,
+        tmp_path / "shadow.sqlite3",
         config=_config(),
     )
 
@@ -325,6 +329,7 @@ def test_preflight_fails_wrong_chain_stale_head_invalid_anchor_and_lineage(
         FakeBinance(),
         MARKETS["BNBUSD"],
         canonical,
+        tmp_path / "shadow.sqlite3",
         config=_config(),
     )
 
@@ -363,6 +368,7 @@ def test_preflight_does_not_require_perp_when_disabled(
         FakeBinance(fail_venues=("um_futures",)),
         MARKETS["BNBUSD"],
         canonical,
+        tmp_path / "shadow.sqlite3",
         config=_config(include_perp=False),
     )
 
@@ -371,6 +377,228 @@ def test_preflight_does_not_require_perp_when_disabled(
     assert report.binance_perp_probe_rows is None
     assert report.checks["perp_lineage_present"] is True
     assert report.checks["binance_perp_reachable"] is True
+
+
+def test_preflight_accepts_exact_bound_shadow_manifest_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    shadow = tmp_path / "shadow.sqlite3"
+    config = _config()
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    store = ShadowLedgerStore(shadow)
+    store.initialize()
+    manifest = build_shadow_runtime_campaign_manifest(
+        MARKETS["BNBUSD"],
+        oracle_proxy_anchor="0x" + "1" * 40,
+        chainlink_aggregator_anchor="0x" + "2" * 40,
+        config=config,
+    )
+    store.bind_campaign_manifest(manifest)
+    before_bytes = shadow.read_bytes()
+    before_audit = store.audit(purge_rounds=config.inference.purge_rounds)
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        shadow,
+        config=config,
+    )
+
+    after_audit = store.audit(purge_rounds=config.inference.purge_rounds)
+    assert report.ready is True
+    assert report.checks["shadow_campaign_compatible"] is True
+    assert report.shadow_ledger.binding_state == "bound"
+    assert report.shadow_ledger.manifest_digest == manifest.digest
+    assert report.expected_campaign_manifest_digest == manifest.digest
+    assert shadow.read_bytes() == before_bytes
+    assert after_audit.event_count == before_audit.event_count
+    assert after_audit.campaign_manifest_digest == before_audit.campaign_manifest_digest
+
+
+def test_preflight_rejects_conflicting_shadow_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    shadow = tmp_path / "shadow.sqlite3"
+    config = _config()
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    changed = replace(
+        config,
+        inference=replace(
+            config.inference,
+            stake_wei=config.inference.stake_wei + 1,
+        ),
+    )
+    store = ShadowLedgerStore(shadow)
+    store.initialize()
+    store.bind_campaign_manifest(
+        build_shadow_runtime_campaign_manifest(
+            MARKETS["BNBUSD"],
+            oracle_proxy_anchor="0x" + "1" * 40,
+            chainlink_aggregator_anchor="0x" + "2" * 40,
+            config=changed,
+        )
+    )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        shadow,
+        config=config,
+    )
+
+    assert report.ready is False
+    assert report.checks["shadow_campaign_compatible"] is False
+    assert "shadow_campaign_compatible" in report.failures
+    assert report.shadow_ledger.binding_state == "bound"
+    assert (
+        report.shadow_ledger.manifest_digest
+        != report.expected_campaign_manifest_digest
+    )
+
+
+def test_preflight_accepts_empty_unbound_shadow_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    shadow = tmp_path / "shadow.sqlite3"
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+    ShadowLedgerStore(shadow).initialize()
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        shadow,
+        config=_config(),
+    )
+
+    assert report.ready is True
+    assert report.checks["shadow_campaign_compatible"] is True
+    assert report.shadow_ledger.binding_state == "empty_unbound"
+    assert report.shadow_ledger.event_count == 0
+
+
+def test_preflight_rejects_event_bearing_unbound_shadow_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    shadow = tmp_path / "shadow.sqlite3"
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+    ShadowLedgerStore(shadow).initialize()
+    with sqlite3.connect(shadow) as connection:
+        connection.execute(
+            """
+            INSERT INTO shadow_ledger_events(
+                kind, market, epoch, payload_json, previous_digest, event_digest
+            ) VALUES ('prediction', 'BNBUSD', 1, '{}', ?, ?)
+            """,
+            ("0" * 64, "a" * 64),
+        )
+        connection.execute(
+            """
+            UPDATE shadow_ledger_state
+            SET event_count = 1, head_digest = ?
+            WHERE singleton = 1
+            """,
+            ("a" * 64,),
+        )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        shadow,
+        config=_config(),
+    )
+
+    assert report.ready is False
+    assert report.checks["shadow_campaign_compatible"] is False
+    assert report.shadow_ledger.binding_state == "event_bearing_unbound"
+    assert report.shadow_ledger.event_count == 1
+
+
+def test_preflight_rejects_malformed_shadow_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    shadow = tmp_path / "shadow.sqlite3"
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+    ShadowLedgerStore(shadow).initialize()
+    with sqlite3.connect(shadow) as connection:
+        connection.execute(
+            """
+            INSERT INTO shadow_campaign_manifest(
+                singleton, manifest_json, manifest_digest
+            ) VALUES (1, '{}', ?)
+            """,
+            ("b" * 64,),
+        )
+
+    before = shadow.read_bytes()
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        shadow,
+        config=_config(),
+    )
+
+    assert report.ready is False
+    assert report.checks["shadow_campaign_compatible"] is False
+    assert report.shadow_ledger.binding_state == "invalid"
+    assert report.shadow_ledger.errors == ("shadow_campaign_manifest_invalid",)
+    assert shadow.read_bytes() == before
 
 
 def test_preflight_external_failures_do_not_serialize_secrets(
@@ -397,6 +625,7 @@ def test_preflight_external_failures_do_not_serialize_secrets(
         FakeBinance(fail_venues=("spot", "um_futures")),
         MARKETS["BNBUSD"],
         canonical,
+        tmp_path / "shadow.sqlite3",
         config=_config(),
     )
     rendered = json.dumps(report.as_dict(), sort_keys=True)
