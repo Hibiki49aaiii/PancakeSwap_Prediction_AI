@@ -39,6 +39,21 @@ Do not include credentials.
 
 Hash the canonical lineage identity and use only the digest in local lock filenames. Do not expose raw endpoints, usernames, passwords, tokens or credentials in coordination paths.
 
+## Historical backfill boundary
+
+Single-writer coordination is not sufficient if a historical archive writer is allowed to mutate the same prospective lineage later.
+
+When historical archive rows and live-observed rows share one replacement key, a later archive ingest can replace the live row with an earlier reconstructed availability timestamp.
+
+Under that table model:
+
+- prepare archive history before prospective observation begins;
+- once any prospective live provenance exists for a lineage, freeze that lineage against archive ingestion;
+- make the archive check fail closed on malformed count/query state;
+- use the same lineage lock for archive and live official entrypoints so the presence check cannot race a concurrent live insert.
+
+A future data model may relax this only if historical and prospective observations are separated or combine with deterministic information-availability semantics.
+
 ## Semantic boundary
 
 The lock is operational coordination, not prediction semantics.
@@ -67,3 +82,4 @@ Multi-host writers require either:
 - `src/pancake_prediction/shadow_runtime_cli.py`
 - `src/pancake_prediction/clickhouse_cli.py`
 - Issue #16 tests
+- Issue #17 tests
