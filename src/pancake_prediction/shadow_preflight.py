@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping
 
 from .binance_archive import TimestampUnit
 from .binance_live import BinanceAggTradeSource, BinanceLiveError, LiveVenue
