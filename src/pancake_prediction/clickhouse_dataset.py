@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from .alignment import build_aligned_alpha_feature_row, build_aligned_alpha_inputs
@@ -29,6 +29,9 @@ class ChunkedResearchDatasetBuildResult:
     spot_query_start_ms: int | None
     perp_query_start_ms: int | None
     query_end_ms: int | None
+    requested_epoch_count: int | None = None
+    requested_epoch_min: int | None = None
+    requested_epoch_max: int | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload = self.dataset.as_dict()
@@ -41,6 +44,9 @@ class ChunkedResearchDatasetBuildResult:
                 "spot_query_start_ms": self.spot_query_start_ms,
                 "perp_query_start_ms": self.perp_query_start_ms,
                 "query_end_ms": self.query_end_ms,
+                "requested_epoch_count": self.requested_epoch_count,
+                "requested_epoch_min": self.requested_epoch_min,
+                "requested_epoch_max": self.requested_epoch_max,
             }
         )
         return payload
@@ -90,6 +96,7 @@ def build_chunked_clickhouse_research_dataset(
     oracle_history_updates: int = 512,
     oracle_hazard_horizon_ms: int = 5_000,
     oracle_hazard_min_intervals: int = 8,
+    required_epochs: Collection[int] | None = None,
 ) -> ChunkedResearchDatasetBuildResult:
     if replay.market not in BINANCE_SYMBOL_BY_MARKET:
         raise ValueError(f"unsupported research market: {replay.market}")
@@ -108,12 +115,25 @@ def build_chunked_clickhouse_research_dataset(
     if oracle_history_updates < oracle_hazard_min_intervals + 1:
         raise ValueError("oracle_history_updates must cover hazard minimum intervals")
 
+    requested_epochs = (
+        None
+        if required_epochs is None
+        else frozenset(int(epoch) for epoch in required_epochs)
+    )
+    if requested_epochs is not None and any(epoch < 0 for epoch in requested_epochs):
+        raise ValueError("required_epochs must be non-negative")
+
     config = BacktestConfig() if backtest_config is None else backtest_config
-    pool_rows = build_pool_feature_rows(
+    all_pool_rows = build_pool_feature_rows(
         replay,
         events,
         config,
         feature_lead_seconds=feature_lead_seconds,
+    )
+    pool_rows = (
+        all_pool_rows
+        if requested_epochs is None
+        else tuple(row for row in all_pool_rows if row.epoch in requested_epochs)
     )
     groups = _group_pool_rows(
         pool_rows,
@@ -227,12 +247,17 @@ def build_chunked_clickhouse_research_dataset(
             )
             research_rows.append(build_research_feature_row(alpha=alpha, pool=pool))
 
+    candidate_rounds = (
+        len(replay.rounds)
+        if requested_epochs is None
+        else len(requested_epochs)
+    )
     dataset = ResearchDatasetBuildResult(
         market=replay.market,
-        candidate_rounds=len(replay.rounds),
+        candidate_rounds=candidate_rounds,
         pool_feature_rows=len(pool_rows),
         research_feature_rows=tuple(research_rows),
-        skipped_no_pool_features=len(replay.rounds) - len(pool_rows),
+        skipped_no_pool_features=max(0, candidate_rounds - len(pool_rows)),
         skipped_no_aligned_market_data=skipped_market_data,
     )
     return ChunkedResearchDatasetBuildResult(
@@ -244,4 +269,13 @@ def build_chunked_clickhouse_research_dataset(
         spot_query_start_ms=campaign_spot_start,
         perp_query_start_ms=campaign_perp_start,
         query_end_ms=campaign_end,
+        requested_epoch_count=(
+            None if requested_epochs is None else len(requested_epochs)
+        ),
+        requested_epoch_min=(
+            None if not requested_epochs else min(requested_epochs)
+        ),
+        requested_epoch_max=(
+            None if not requested_epochs else max(requested_epochs)
+        ),
     )
