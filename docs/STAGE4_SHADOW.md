@@ -225,6 +225,26 @@ A shared `BacktestEventIndex` is reused across the target and prior-round snapsh
 
 Regression tests require the single-target result to equal `build_oos_pool_projections(...)[target_epoch]` exactly and require target final-pool changes to remain irrelevant.
 
+### Runtime latency Evidence
+
+Each Stage 4 runtime cycle records phase latency using `time.perf_counter_ns()`, which is monotonic and used only for performance duration.
+
+Decision eligibility and deadline checks continue to use the existing UNIX wall clock. The two clocks are intentionally not interchangeable.
+
+The runtime report includes a `timing` object with:
+
+- `clock="monotonic_perf_counter"`;
+- `phase_durations_ms` for only the phases that actually executed;
+- `total_duration_ms`;
+- `decision_to_completion_ms` when a target exists;
+- `submission_margin_ms` when a target exists.
+
+Instrumented phases include schema validation, BSC sync, Binance Spot/Perp sync, live coverage, canonical input load, settlement reconciliation, target selection, required-epoch planning, bounded dataset build, inference, deadline check, ledger append, and campaign audit.
+
+Early exits remain semantically visible. For example, `source_warmup` has no target/dataset/inference timings, while `no_eligible_target` has target-selection timing but no dataset/inference timings.
+
+`submission_margin_ms <= 0` means the submission-equivalent deadline has been reached or missed. Stage 4 still does not sign or broadcast any transaction.
+
 The installed runtime command is:
 
     pcs-shadow-runtime
