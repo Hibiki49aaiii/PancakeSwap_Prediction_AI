@@ -15,6 +15,7 @@ from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 class FakeAudit:
     event_count: int = 12
     head_digest: str = "a" * 64
+    campaign_manifest_digest: str = "c" * 64
 
 
 @dataclass(frozen=True)
