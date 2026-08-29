@@ -67,6 +67,23 @@ class ClickHouseJsonSink(Protocol):
     ) -> ClickHouseInsertReport: ...
 
 
+class ClickHouseArchiveTarget(Protocol):
+    def insert_json_rows(
+        self,
+        table: str,
+        rows: Iterable[Mapping[str, object]],
+        *,
+        batch_size: int,
+    ) -> ClickHouseInsertReport: ...
+
+    def query_json_rows(
+        self,
+        query: str,
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> Iterator[dict[str, object]]: ...
+
+
 class ClickHouseJsonSource(Protocol):
     def query_json_rows(self, query: str) -> Iterator[dict[str, object]]: ...
 
@@ -270,8 +287,50 @@ def _archive_rows(
         }
 
 
+def _binance_live_row_count(
+    source: ClickHouseParameterizedJsonSource,
+    *,
+    symbol: str,
+    venue: ArchiveVenue,
+    timestamp_unit: TimestampUnit,
+    availability_lag_ms: int,
+) -> int:
+    query = (
+        "SELECT count() AS live_row_count "
+        "FROM binance_agg_trades FINAL WHERE "
+        "venue={venue:String} AND symbol={symbol:String} AND "
+        "timestamp_unit={timestamp_unit:String} AND "
+        "availability_lag_ms={availability_lag_ms:UInt32} AND "
+        "source_name={source_name:String}"
+    )
+    parameters: dict[str, QueryParameter] = {
+        "venue": venue,
+        "symbol": symbol,
+        "timestamp_unit": timestamp_unit,
+        "availability_lag_ms": availability_lag_ms,
+        "source_name": f"binance-rest:{venue}",
+    }
+    rows = tuple(source.query_json_rows(query, parameters=parameters))
+    if len(rows) != 1:
+        raise ValueError(
+            "Binance archive live-lineage guard must return exactly one row"
+        )
+    raw_count = rows[0].get("live_row_count")
+    if isinstance(raw_count, bool):
+        raise ValueError("Binance archive live_row_count must be an integer")
+    try:
+        count = int(str(raw_count))
+    except ValueError as exc:
+        raise ValueError(
+            "Binance archive live_row_count must be an integer"
+        ) from exc
+    if count < 0:
+        raise ValueError("Binance archive live_row_count must be non-negative")
+    return count
+
+
 def ingest_binance_archive(
-    sink: ClickHouseJsonSink,
+    sink: ClickHouseArchiveTarget,
     archive_path: Path,
     checksum_path: Path,
     *,
@@ -294,6 +353,19 @@ def ingest_binance_archive(
 
     source_sha256 = verify_archive_checksum(archive_path, checksum_path)
     symbol = BINANCE_SYMBOL_BY_MARKET[market]
+    live_row_count = _binance_live_row_count(
+        sink,
+        symbol=symbol,
+        venue=venue,
+        timestamp_unit=timestamp_unit,
+        availability_lag_ms=availability_lag_ms,
+    )
+    if live_row_count > 0:
+        raise ValueError(
+            "Binance archive ingest is forbidden after prospective live "
+            "observation begins for this lineage"
+        )
+
     stats: dict[str, int | None] = {
         "first_id": None,
         "last_id": None,
