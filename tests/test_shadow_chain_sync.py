@@ -212,7 +212,10 @@ def test_shadow_chain_sync_rejects_route_change(
         FakeCollector,
     )
     try:
-        with pytest.raises(RpcError, match="source-bound campaign"):
+        with pytest.raises(
+            shadow_chain_sync.ShadowChainSourceIntegrityError,
+            match="source-bound campaign",
+        ):
             shadow_chain_sync.sync_shadow_chain(
                 FakeRpc(),
                 MARKETS["BNBUSD"],
