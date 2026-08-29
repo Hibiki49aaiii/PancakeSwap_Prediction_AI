@@ -269,9 +269,19 @@ The preflight reuses the exact `ShadowRuntimeConfig` selected for the real runti
 - it does not build a target prediction;
 - it does not update runtime or campaign Evidence.
 
-It checks the existing canonical database and source-anchor metadata, configured historical sample capacity, active Chainlink history, BSC chain/head connectivity, retry-safe ClickHouse schema, configured Spot/Perp lineage presence, and read-only one-row Binance Spot/Perp endpoint probes.
+It checks the existing canonical database and source-anchor metadata, configured historical sample capacity, active Chainlink history, BSC chain/head connectivity, retry-safe ClickHouse schema, configured Spot/Perp lineage presence, read-only one-row Binance Spot/Perp endpoint probes, and the selected `--shadow-db` campaign-manifest compatibility.
 
-A ready preflight means only **structural campaign-start readiness**. It does not prove that the live oracle route still matches the stored anchor, because the first normal runtime chain sync remains the authoritative fail-closed route-stability check. It also does not satisfy prospective live flow warmup, prove that a current target is inferable, prove complete historical feature coverage, establish profitability, or authorize funded execution.
+Shadow Ledger inspection uses a SQLite URI `mode=ro` path rather than the normal runtime connection, so preflight does not enable WAL mode, initialize schema, bind a manifest, or repair state. The compatibility states are:
+
+- missing Shadow DB: compatible new-campaign state; no file is created;
+- existing empty unbound ledger: compatible because the first normal runtime cycle can bind the expected manifest;
+- event-bearing unbound ledger: incompatible because historical campaign semantics are ambiguous;
+- bound ledger with the exact expected canonical manifest/digest: compatible;
+- conflicting or malformed manifest / invalid Shadow Ledger schema: incompatible.
+
+The preflight report exposes the expected manifest digest, stored manifest digest, ledger binding state and event count, and `shadow_campaign_compatible` participates in the overall `ready` result.
+
+A ready preflight means only **structural campaign-start readiness**. It proves that the selected existing Shadow Ledger is compatible with the expected campaign identity, but it does not prove that the live oracle route still matches the stored anchor, because the first normal runtime chain sync remains the authoritative fail-closed route-stability check. It also does not satisfy prospective live flow warmup, prove that a current target is inferable, prove complete historical feature coverage, establish profitability, or authorize funded execution.
 
 The command exits 0 when all mandatory structural checks pass and 2 when any check is incomplete. `--preflight-output` is written atomically and cannot be combined with cycle/campaign Evidence outputs.
 
