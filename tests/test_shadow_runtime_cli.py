@@ -614,7 +614,7 @@ def test_shadow_runtime_cli_continuous_recovers_after_cycle_error_with_locks_hel
             raise KeyboardInterrupt
 
     monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
-    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", fake_sleep)
+    monkeypatch.setattr("pancake_prediction.shadow_runtime_cli.time.sleep", fake_sleep)
 
     assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
     assert calls == 2
@@ -663,7 +663,7 @@ def test_shadow_runtime_cli_success_resets_consecutive_error_counter(
             raise KeyboardInterrupt
 
     monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
-    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", fake_sleep)
+    monkeypatch.setattr("pancake_prediction.shadow_runtime_cli.time.sleep", fake_sleep)
 
     assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
     assert calls == 3
@@ -695,7 +695,7 @@ def test_shadow_runtime_cli_exits_at_max_consecutive_cycle_errors(
         "run_shadow_runtime_cycle",
         fail_cycle,
     )
-    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr("pancake_prediction.shadow_runtime_cli.time.sleep", lambda seconds: None)
 
     with pytest.raises(SystemExit) as exc_info:
         shadow_runtime_cli.main(
@@ -735,7 +735,7 @@ def test_shadow_runtime_cli_keyboard_interrupt_during_retry_sleep_exits_cleanly(
         assert seconds == 1.0
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", interrupted_sleep)
+    monkeypatch.setattr("pancake_prediction.shadow_runtime_cli.time.sleep", interrupted_sleep)
 
     assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
     output = capsys.readouterr().out
