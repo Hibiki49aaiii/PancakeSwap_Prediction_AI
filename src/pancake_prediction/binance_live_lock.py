@@ -5,17 +5,22 @@ import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from .binance_archive import TimestampUnit
 from .binance_live import LiveVenue
-from .clickhouse import ClickHouseHttpClient
 from .process_lock import SqliteExclusiveProcessLock, SqliteProcessLockError
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 
 
 class BinanceLiveLineageLockError(RuntimeError):
     pass
+
+
+class ClickHouseLineageTarget(Protocol):
+    endpoint: str
+    database: str
 
 
 def _normalized_clickhouse_endpoint(endpoint: str) -> str:
@@ -42,7 +47,7 @@ def _normalized_clickhouse_endpoint(endpoint: str) -> str:
 
 
 def binance_live_lineage_identity(
-    client: ClickHouseHttpClient,
+    client: ClickHouseLineageTarget,
     *,
     market: str,
     venue: LiveVenue,
@@ -69,7 +74,7 @@ def binance_live_lineage_identity(
 
 
 def binance_live_lineage_digest(
-    client: ClickHouseHttpClient,
+    client: ClickHouseLineageTarget,
     *,
     market: str,
     venue: LiveVenue,
@@ -93,7 +98,7 @@ def binance_live_lineage_digest(
 
 
 def binance_live_lineage_lock_path(
-    client: ClickHouseHttpClient,
+    client: ClickHouseLineageTarget,
     *,
     market: str,
     venue: LiveVenue,
@@ -118,7 +123,7 @@ def binance_live_lineage_lock_path(
 
 @dataclass(slots=True)
 class BinanceLiveLineageProcessLock:
-    client: ClickHouseHttpClient
+    client: ClickHouseLineageTarget
     market: str
     venue: LiveVenue
     timestamp_unit: TimestampUnit
