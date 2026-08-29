@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import cast
 
 from .research_ledger import ResearchPredictionRecord, validate_research_prediction
-from .shadow_manifest import ShadowCampaignManifest
+from .shadow_manifest import (
+    ShadowCampaignManifest,
+    canonical_manifest_fragment_digest,
+)
 
 ZERO_DIGEST = "0" * 64
 _OUTCOMES = {"bull", "bear", "tie"}
@@ -88,6 +91,9 @@ class ShadowLedgerAuditReport:
     action_counts: dict[str, int]
     integrity_errors: tuple[str, ...]
     campaign_manifest_digest: str | None = None
+    audit_purge_rounds: int = 2
+    campaign_manifest_market: str | None = None
+    campaign_manifest_policy_digest: str | None = None
 
     @property
     def integrity_ready(self) -> bool:
@@ -124,6 +130,9 @@ class ShadowLedgerAuditReport:
             "feature_set_ids": list(self.feature_set_ids),
             "action_counts": dict(self.action_counts),
             "campaign_manifest_digest": self.campaign_manifest_digest,
+            "audit_purge_rounds": self.audit_purge_rounds,
+            "campaign_manifest_market": self.campaign_manifest_market,
+            "campaign_manifest_policy_digest": self.campaign_manifest_policy_digest,
             "integrity_errors": list(self.integrity_errors),
             "integrity_ready": self.integrity_ready,
             "profitability_gate_eligible": False,
@@ -541,6 +550,8 @@ class ShadowLedgerStore:
         return tuple(self._event_from_row(row) for row in rows)
 
     def audit(self, *, purge_rounds: int = 2) -> ShadowLedgerAuditReport:
+        if purge_rounds < 0:
+            raise ValueError("purge_rounds must be non-negative")
         errors: list[str] = []
         predictions: dict[tuple[str, int], ResearchPredictionRecord] = {}
         settlements: dict[tuple[str, int], ShadowSettlementRecord] = {}
@@ -614,6 +625,8 @@ class ShadowLedgerStore:
             expected_previous = event.event_digest
 
         campaign_manifest_digest: str | None = None
+        campaign_manifest_market: str | None = None
+        campaign_manifest_policy_digest: str | None = None
         with self._connect() as connection:
             state_count, state_head = self._state(connection)
             manifest_row = connection.execute(
@@ -625,9 +638,34 @@ class ShadowLedgerStore:
             ).fetchone()
         if manifest_row is not None:
             try:
-                campaign_manifest_digest = self._manifest_from_row(
-                    manifest_row
-                ).manifest_digest
+                manifest_binding = self._manifest_from_row(manifest_row)
+                campaign_manifest_digest = manifest_binding.manifest_digest
+                raw_market = manifest_binding.payload.get("market")
+                if not isinstance(raw_market, str) or not raw_market:
+                    raise ValueError("market is missing or invalid")
+                campaign_manifest_market = raw_market
+
+                semantic_config = manifest_binding.payload.get("semantic_config")
+                if not isinstance(semantic_config, dict):
+                    raise ValueError("semantic_config is missing or invalid")
+                raw_inference = semantic_config.get("inference")
+                if not isinstance(raw_inference, dict):
+                    raise ValueError("inference config is missing or invalid")
+                bound_purge_rounds = _strict_int(
+                    raw_inference.get("purge_rounds"),
+                    field="campaign manifest purge_rounds",
+                )
+                if bound_purge_rounds != purge_rounds:
+                    errors.append(
+                        "campaign audit purge_rounds differs from bound manifest"
+                    )
+
+                raw_policy = semantic_config.get("campaign_policy")
+                if not isinstance(raw_policy, dict):
+                    raise ValueError("campaign_policy is missing or invalid")
+                campaign_manifest_policy_digest = (
+                    canonical_manifest_fragment_digest(raw_policy)
+                )
             except ValueError as exc:
                 errors.append(f"campaign manifest: {exc}")
         if state_count != len(events):
@@ -635,6 +673,12 @@ class ShadowLedgerStore:
         expected_head = events[-1].event_digest if events else ZERO_DIGEST
         if state_head != expected_head:
             errors.append("ledger state head_digest does not match event chain")
+
+        if campaign_manifest_market is not None and any(
+            prediction.market != campaign_manifest_market
+            for prediction in predictions.values()
+        ):
+            errors.append("prediction market differs from bound campaign manifest")
 
         settled_keys = set(settlements)
         actionable = [item for item in predictions.values() if item.action != "skip"]
@@ -705,6 +749,9 @@ class ShadowLedgerStore:
             },
             integrity_errors=tuple(errors),
             campaign_manifest_digest=campaign_manifest_digest,
+            audit_purge_rounds=purge_rounds,
+            campaign_manifest_market=campaign_manifest_market,
+            campaign_manifest_policy_digest=campaign_manifest_policy_digest,
         )
 
 
