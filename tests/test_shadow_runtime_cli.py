@@ -165,26 +165,31 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
         ):
             competing_lock.acquire()
         assert isinstance(received_clickhouse, FakeClickHouseClient)
-        for venue, timestamp_unit, availability_lag_ms in (
-            ("spot", config.spot_timestamp_unit, config.spot_availability_lag_ms),
-            (
-                "um_futures",
-                config.perp_timestamp_unit,
-                config.perp_availability_lag_ms,
-            ),
+        competing_spot = BinanceLiveLineageProcessLock(
+            received_clickhouse,
+            market=market.symbol,
+            venue="spot",
+            timestamp_unit=config.spot_timestamp_unit,
+            availability_lag_ms=config.spot_availability_lag_ms,
+        )
+        with pytest.raises(
+            BinanceLiveLineageLockError,
+            match="already writes",
         ):
-            competing_lineage = BinanceLiveLineageProcessLock(
-                received_clickhouse,
-                market=market.symbol,
-                venue=venue,
-                timestamp_unit=timestamp_unit,
-                availability_lag_ms=availability_lag_ms,
-            )
-            with pytest.raises(
-                BinanceLiveLineageLockError,
-                match="already writes",
-            ):
-                competing_lineage.acquire()
+            competing_spot.acquire()
+
+        competing_perp = BinanceLiveLineageProcessLock(
+            received_clickhouse,
+            market=market.symbol,
+            venue="um_futures",
+            timestamp_unit=config.perp_timestamp_unit,
+            availability_lag_ms=config.perp_availability_lag_ms,
+        )
+        with pytest.raises(
+            BinanceLiveLineageLockError,
+            match="already writes",
+        ):
+            competing_perp.acquire()
         shadow_database.write_bytes(b"shadow-ledger-snapshot")
         return FakeCycleReport()
 
