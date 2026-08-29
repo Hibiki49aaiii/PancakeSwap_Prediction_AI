@@ -11,6 +11,7 @@ from pancake_prediction.shadow_campaign import (
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerStore
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Build fail-closed Stage 4 shadow campaign evidence from an append-only ledger."
