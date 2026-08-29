@@ -30,6 +30,10 @@ class BinanceLiveError(RuntimeError):
     pass
 
 
+class BinanceLiveSourceIntegrityError(BinanceLiveError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class BinanceRestPage:
     rows: tuple[dict[str, object], ...]
@@ -445,7 +449,7 @@ def sync_binance_live_aggtrades(
         and cursor is not None
         and cursor.source_name != expected_live_source
     ):
-        raise BinanceLiveError(
+        raise BinanceLiveSourceIntegrityError(
             "Binance lineage advanced by a non-live source after prospective "
             "observation began; start a new source-bound campaign"
         )
