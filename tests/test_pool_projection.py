@@ -1,8 +1,11 @@
 from dataclasses import replace
 
+import pytest
+
 from pancake_prediction.backtest import BacktestConfig
 from pancake_prediction.pool_projection import (
     PoolProjectionBaselineConfig,
+    build_oos_pool_projection_for_target,
     build_oos_pool_projections,
 )
 from pancake_prediction.replay import ChainEvent, ReplaySnapshot, RoundRecord
@@ -145,3 +148,101 @@ def test_projection_provenance_respects_purge_boundary() -> None:
     assert projection.generated_at == 8_280
     assert projection.projected_bull_wei >= 100
     assert projection.projected_bear_wei >= 100
+
+def test_single_target_projection_matches_full_oos_builder_exactly() -> None:
+    replay, events = _fixture(1_000, 100)
+    config = PoolProjectionBaselineConfig(
+        min_train_rounds=3,
+        window_rounds=10,
+        purge_rounds=2,
+    )
+    backtest = BacktestConfig()
+
+    full = build_oos_pool_projections(
+        replay,
+        events,
+        backtest,
+        config=config,
+    )[8]
+    single = build_oos_pool_projection_for_target(
+        replay,
+        events,
+        backtest,
+        target_epoch=8,
+        config=config,
+    )
+
+    assert single == full
+    assert single is not None
+    assert single.model_id == full.model_id
+    assert single.train_max_epoch == full.train_max_epoch
+
+
+def test_single_target_projection_ignores_target_final_pool() -> None:
+    first_replay, events = _fixture(1_000, 100)
+    changed_replay = replace(
+        first_replay,
+        rounds=(
+            *first_replay.rounds[:-1],
+            replace(
+                first_replay.rounds[-1],
+                bull_amount_wei=10,
+                bear_amount_wei=9_000,
+                total_amount_wei=9_010,
+            ),
+        ),
+    )
+    config = PoolProjectionBaselineConfig(
+        min_train_rounds=3,
+        window_rounds=10,
+        purge_rounds=2,
+    )
+    backtest = BacktestConfig()
+
+    first = build_oos_pool_projection_for_target(
+        first_replay,
+        events,
+        backtest,
+        target_epoch=8,
+        config=config,
+    )
+    second = build_oos_pool_projection_for_target(
+        changed_replay,
+        events,
+        backtest,
+        target_epoch=8,
+        config=config,
+    )
+
+    assert first == second
+
+
+def test_single_target_projection_requires_exactly_one_target_epoch() -> None:
+    replay, events = _fixture(1_000, 100)
+    config = PoolProjectionBaselineConfig(
+        min_train_rounds=3,
+        window_rounds=10,
+        purge_rounds=2,
+    )
+    with pytest.raises(ValueError, match="must appear exactly once"):
+        build_oos_pool_projection_for_target(
+            replay,
+            events,
+            BacktestConfig(),
+            target_epoch=999,
+            config=config,
+        )
+
+    duplicate = replace(
+        replay,
+        rounds=(*replay.rounds, replay.rounds[-1]),
+    )
+    with pytest.raises(ValueError, match="must appear exactly once"):
+        build_oos_pool_projection_for_target(
+            duplicate,
+            events,
+            BacktestConfig(),
+            target_epoch=8,
+            config=config,
+        )
+
