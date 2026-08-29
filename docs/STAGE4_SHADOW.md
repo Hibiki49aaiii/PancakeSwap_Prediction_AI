@@ -118,6 +118,24 @@ BSC_RPC_URL is read from the environment unless --rpc-url is supplied. The endpo
 
 src/pancake_prediction/binance_live.py writes live aggregate trades into the same retry-safe ClickHouse binance_agg_trades table used by the research pipeline.
 
+Official prospective writers for one identical Binance ClickHouse lineage are local single-writer.
+
+The coordination identity includes:
+
+- normalized ClickHouse endpoint and database;
+- market/symbol;
+- venue;
+- timestamp unit;
+- availability lag.
+
+The canonical identity is SHA-256 hashed and only the digest appears in the lock filename under the OS temporary directory. Credentials are excluded.
+
+Both `pcs-shadow-runtime` and `pcs-clickhouse binance-live-sync` use this same lineage lock. Contention fails before the Binance HTTP fetch begins. Spot and Perp use separate lock identities.
+
+This is necessary because retry-safe `ReplacingMergeTree(ingest_version)` deduplication alone is not enough for prospective observation: two concurrent fetches of the same trade ID can have different actual HTTP observation times, so replacement order could otherwise change the surviving availability timestamp.
+
+The lineage lock is local process coordination only and is deliberately excluded from campaign manifest identity and campaign Evidence. A multi-host deployment would require a distributed coordination design or a different commutative observation model.
+
 Example Spot sync:
 
     pcs-clickhouse binance-live-sync \
