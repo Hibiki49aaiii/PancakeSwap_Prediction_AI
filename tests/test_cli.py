@@ -316,6 +316,8 @@ def test_cli_shadow_ledger_prediction_settlement_and_audit(
     assert audit["signing_enabled"] is False
     assert audit["live_broadcast"] is False
 
+    assert audit["campaign_manifest_digest"] is None
+
     assert (
         cli.main(
             [
@@ -337,10 +339,11 @@ def test_cli_shadow_ledger_prediction_settlement_and_audit(
                 "--allow-single-direction",
             ]
         )
-        == 0
+        == 2
     )
     gate = json.loads(capsys.readouterr().out)
-    assert gate["gate_ready"] is True
+    assert gate["gate_ready"] is False
+    assert gate["checks"]["campaign_manifest_bound"] is False
     assert gate["campaign_digest"]
     assert gate["profitability_gate_eligible"] is False
     assert gate["signing_enabled"] is False
