@@ -231,6 +231,40 @@ Example continuous run:
 
 The evidence-output file is replaced atomically after each successful cycle. RPC and ClickHouse credentials are not included.
 
+Long-running campaigns can also checkpoint campaign-level Evidence directly from the same
+already-evaluated campaign report:
+
+    pcs-shadow-runtime \
+      --market BNBUSD \
+      --canonical-db artifacts/bnbusd-history.sqlite \
+      --shadow-db artifacts/shadow.sqlite3 \
+      --poll-seconds 1 \
+      --stake-wei 10000000000000000 \
+      --bet-gas-wei 50000000000000 \
+      --claim-gas-wei 30000000000000 \
+      --inclusion-latency-seconds 2 \
+      --campaign-evidence-output evidence/stage4-shadow-latest.json \
+      --campaign-last-success-output evidence/stage4-shadow-last-success.json
+
+`--campaign-evidence-output` is replaced atomically after every successful runtime cycle,
+including cycles where the campaign gate is still incomplete. This makes progress observable
+without treating insufficient sample coverage as a runtime failure.
+
+`--campaign-last-success-output` is updated only when the Stage 4 campaign gate is actually
+ready. A later incomplete cycle never overwrites or deletes the previously established
+last-success artifact.
+
+The runtime does not re-audit the campaign under a second configuration for checkpointing.
+It serializes the `ShadowCampaignGateReport` already produced by the cycle, so the audit uses
+the same inference `purge_rounds` and campaign policy that the runtime used. The two campaign
+paths must be distinct from each other and from `--evidence-output`.
+
+Campaign Evidence binds the append-only ledger through the logical hash-chain
+`event_count` / `head_digest` and `campaign_digest`. The retained `ledger_sha256` is a
+SHA-256 of the SQLite main database file and is explicitly labeled as a physical-file snapshot
+identifier. Because the ledger uses SQLite WAL mode, the logical hash-chain binding is the
+authoritative campaign-state identity rather than the physical-file hash alone.
+
 Possible non-fatal cycle statuses include:
 
 - no_eligible_target;
