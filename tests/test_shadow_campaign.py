@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from pancake_prediction.shadow_campaign import (
     ShadowCampaignPolicy,
+    build_shadow_campaign_evidence,
     evaluate_shadow_campaign,
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport
@@ -160,3 +163,63 @@ def test_shadow_campaign_custom_policy_can_define_small_smoke_gate() -> None:
         small,
     )
     assert report.gate_ready is True
+
+
+
+def test_shadow_campaign_evidence_binds_logical_ledger_state(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"sqlite-main-file-snapshot")
+    report = evaluate_shadow_campaign(_audit())
+
+    payload = build_shadow_campaign_evidence(ledger, report)
+    binding = payload["ledger_binding"]
+    assert isinstance(binding, dict)
+
+    assert payload["evidence_role"] == "latest_attempt"
+    assert payload["success"] is True
+    assert payload["workflow_outcome"] == "success"
+    assert payload["ledger_sha256"] == hashlib.sha256(ledger.read_bytes()).hexdigest()
+    assert binding["event_count"] == report.audit.event_count
+    assert binding["head_digest"] == report.audit.head_digest
+    assert binding["campaign_digest"] == report.campaign_digest
+    assert binding["physical_sha256_scope"] == "sqlite_main_database_file"
+    assert payload["profitability_gate_eligible"] is False
+    assert payload["full_historical_gate_satisfied"] is False
+    assert payload["signing_enabled"] is False
+    assert payload["live_broadcast"] is False
+    assert payload["funded_execution"] is False
+
+
+def test_shadow_campaign_evidence_last_success_requires_ready_gate(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+    incomplete = evaluate_shadow_campaign(_audit(prediction_count=999))
+
+    with pytest.raises(ValueError, match="last_success evidence requires"):
+        build_shadow_campaign_evidence(
+            ledger,
+            incomplete,
+            evidence_role="last_success",
+        )
+
+    successful = build_shadow_campaign_evidence(
+        ledger,
+        evaluate_shadow_campaign(_audit()),
+        evidence_role="last_success",
+    )
+    assert successful["evidence_role"] == "last_success"
+    assert successful["success"] is True
+
+
+def test_shadow_campaign_evidence_rejects_unknown_role(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+
+    with pytest.raises(ValueError, match="evidence_role"):
+        build_shadow_campaign_evidence(
+            ledger,
+            evaluate_shadow_campaign(_audit()),
+            evidence_role="historical_success",
+        )
