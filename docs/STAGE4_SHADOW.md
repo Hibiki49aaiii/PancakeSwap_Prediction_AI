@@ -216,6 +216,18 @@ When a continuous cycle fails below that limit, the runtime:
 - never serializes the raw exception message;
 - sleeps the existing `--poll-seconds` interval and retries.
 
+Retry classification is fail-closed rather than purely exception-family-wide.
+
+The following fail immediately in continuous mode without retry telemetry or retry sleep:
+
+- `ValueError`, covering invalid runtime/source/schema assumptions after startup validation;
+- `ShadowChainSourceIntegrityError`, used when the currently proven Prediction oracle proxy / Chainlink aggregator differs from the canonical campaign anchor;
+- `BinanceLiveSourceIntegrityError`, used when prospective live provenance exists but the latest lineage cursor is no longer the expected `binance-rest:<venue>` source.
+
+Generic `RpcError`, `ClickHouseError`, and `BinanceLiveError` remain bounded-retry candidates. This preserves retry for provider/service failures and incomplete Binance catch-up while preventing source-integrity contradictions from consuming the retry budget.
+
+Neither fatal nor retry terminal output includes the raw exception message.
+
 A successful cycle resets the counter to zero. Reaching the configured consecutive-error limit fails closed with exit status 2. `KeyboardInterrupt` during retry sleep exits cleanly.
 
 Retry status is operational telemetry only. It does not update `--evidence-output`, campaign latest Evidence, or campaign last-success Evidence. `--max-consecutive-cycle-errors` is likewise excluded from `ShadowRuntimeConfig`, campaign manifest identity, and campaign Evidence semantics.
