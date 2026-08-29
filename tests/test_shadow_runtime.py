@@ -212,6 +212,19 @@ def _prediction() -> ResearchPredictionRecord:
     )
 
 
+def _assert_timing_consistent(
+    report: shadow_runtime.ShadowRuntimeCycleReport,
+) -> None:
+    assert report.total_duration_ms >= 0
+    assert all(value >= 0 for value in report.phase_durations_ms.values())
+    assert report.total_duration_ms >= sum(report.phase_durations_ms.values())
+    payload = report.as_dict()
+    timing = payload["timing"]
+    assert isinstance(timing, dict)
+    assert timing["clock"] == "monotonic_perf_counter"
+    assert timing["total_duration_ms"] == report.total_duration_ms
+
+
 def _patch_common(
     monkeypatch: pytest.MonkeyPatch,
     replay: ReplaySnapshot,
@@ -293,6 +306,14 @@ def test_runtime_cycle_skips_heavy_dataset_outside_decision_window(
     assert report.ledger_event is None
     assert report.as_dict()["signing_enabled"] is False
     assert report.as_dict()["funded_execution"] is False
+    _assert_timing_consistent(report)
+    assert "target_selection" in report.phase_durations_ms
+    assert "dataset_build" not in report.phase_durations_ms
+    assert "inference" not in report.phase_durations_ms
+    assert "ledger_append" not in report.phase_durations_ms
+    assert "campaign_audit" in report.phase_durations_ms
+    assert report.decision_to_completion_ms is None
+    assert report.submission_margin_ms is None
 
 
 def test_runtime_cycle_records_prediction_before_deadline(
@@ -360,6 +381,18 @@ def test_runtime_cycle_records_prediction_before_deadline(
     assert report.ledger_event.kind == "prediction"
     assert captured["required_epochs"] == (1, 2, 10)
     assert ShadowLedgerStore(shadow_db).audit().prediction_count == 1
+    _assert_timing_consistent(report)
+    for phase in (
+        "required_epoch_plan",
+        "dataset_build",
+        "inference",
+        "deadline_check",
+        "ledger_append",
+        "campaign_audit",
+    ):
+        assert phase in report.phase_durations_ms
+    assert report.decision_to_completion_ms == 17_000
+    assert report.submission_margin_ms == 1_000
 
 
 def test_runtime_cycle_refuses_prediction_at_submission_deadline(
@@ -407,6 +440,13 @@ def test_runtime_cycle_refuses_prediction_at_submission_deadline(
     assert report.status == "missed_submission_deadline"
     assert report.ledger_event is None
     assert ShadowLedgerStore(shadow_db).audit().prediction_count == 0
+    _assert_timing_consistent(report)
+    assert "dataset_build" in report.phase_durations_ms
+    assert "inference" in report.phase_durations_ms
+    assert "deadline_check" in report.phase_durations_ms
+    assert "ledger_append" not in report.phase_durations_ms
+    assert report.decision_to_completion_ms == 18_000
+    assert report.submission_margin_ms == 0
 
 
 def test_runtime_cycle_surfaces_target_warmup_as_not_ready(
@@ -451,6 +491,13 @@ def test_runtime_cycle_surfaces_target_warmup_as_not_ready(
     assert report.status == "target_not_ready"
     assert report.reason == "target feature row is not prospectively available"
     assert report.ledger_event is None
+    _assert_timing_consistent(report)
+    assert "dataset_build" in report.phase_durations_ms
+    assert "inference" in report.phase_durations_ms
+    assert "deadline_check" not in report.phase_durations_ms
+    assert "ledger_append" not in report.phase_durations_ms
+    assert report.decision_to_completion_ms == 5_000
+    assert report.submission_margin_ms == 13_000
 
 def test_runtime_cycle_blocks_prediction_until_live_flow_warmup(
     monkeypatch: pytest.MonkeyPatch,
@@ -487,4 +534,12 @@ def test_runtime_cycle_blocks_prediction_until_live_flow_warmup(
     assert report.reason == "prospective live warmup incomplete: spot,perp"
     assert report.spot_coverage.first_available_at_ms == 970_000
     assert report.ledger_event is None
+    _assert_timing_consistent(report)
+    assert "source_warmup_check" in report.phase_durations_ms
+    assert "target_selection" not in report.phase_durations_ms
+    assert "required_epoch_plan" not in report.phase_durations_ms
+    assert "dataset_build" not in report.phase_durations_ms
+    assert "inference" not in report.phase_durations_ms
+    assert report.decision_to_completion_ms is None
+    assert report.submission_margin_ms is None
 
