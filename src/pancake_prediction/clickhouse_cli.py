@@ -424,16 +424,30 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "binance-ingest":
         _schema_or_error(parser, client)
-        ingest_report = ingest_binance_archive(
-            client,
-            Path(args.archive),
-            Path(args.checksum),
-            market=str(args.market),
-            venue=cast(ArchiveVenue, str(args.venue)),
-            timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
-            availability_lag_ms=int(args.availability_lag_ms),
-            batch_size=int(args.batch_size),
-        )
+        archive_venue = cast(ArchiveVenue, str(args.venue))
+        lock_venue = cast(LiveVenue, str(args.venue))
+        timestamp_unit = cast(TimestampUnit, str(args.timestamp_unit))
+        availability_lag_ms = int(args.availability_lag_ms)
+        try:
+            with BinanceLiveLineageProcessLock(
+                client,
+                market=str(args.market),
+                venue=lock_venue,
+                timestamp_unit=timestamp_unit,
+                availability_lag_ms=availability_lag_ms,
+            ):
+                ingest_report = ingest_binance_archive(
+                    client,
+                    Path(args.archive),
+                    Path(args.checksum),
+                    market=str(args.market),
+                    venue=archive_venue,
+                    timestamp_unit=timestamp_unit,
+                    availability_lag_ms=availability_lag_ms,
+                    batch_size=int(args.batch_size),
+                )
+        except (BinanceLiveLineageLockError, ValueError) as exc:
+            parser.error(f"Binance archive ingest failed: {exc}")
         _print_json(ingest_report.as_dict())
         return 0
 
