@@ -258,3 +258,35 @@ Triage: **Out of scope.**
 ## Review Conclusion
 
 The design satisfies Issue #4 without changing trading semantics, source acquisition, model logic, database schema, or execution authority. Implementation may proceed.
+
+# Integration Refresh — 2026-08-29
+
+Issue #4 の初回実装検証後、親 `agent/v0.7-alpha-research` には以下の Stage 4 runtime 改善が追加された。
+
+- Issue #7: target-bounded ClickHouse research dataset
+- Issue #8: single-target pool projection
+- Issue #9: monotonic phase-latency Evidence
+
+PR #5 を旧baseのまま残さず、最新親 SHA `6de451b12293083103ebe5fc38a4112cbeab06b8` から再構成し、Issue #4 の10ファイル差分だけを再適用した。
+
+競合解決方針:
+
+- production/test filesはIssue #7〜#9で変更されていなかったためIssue #4差分をそのまま再適用;
+- `.ai/index.md` はruntime optimization observationを保持し、SQLite WAL observationを追加;
+- `docs/STAGE4_SHADOW.md` はIssue #7〜#9のbounded dataset / single-target projection / latency Evidence節を保持し、campaign checkpoint節だけを追加.
+
+Rebased PR #5 head `ba7eb86076a4c9bb3a9f02946794d08639254f32` は CI #1215 / run `33240396419` で再検証済み:
+
+- Ruff: success
+- mypy strict: success
+- pytest: **409 passed in 25.30s**
+- coverage: **87%**
+- Bandit: success
+- pip-audit: success
+- Gitleaks: success
+- ClickHouse integration: success
+- pinned legacy audit: **144,000 rows success**
+- overall CI: **success**
+
+この再統合でも signer / mainnet broadcast / funded execution / profitability promotion は追加していない。
+
