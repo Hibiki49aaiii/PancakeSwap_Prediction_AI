@@ -16,6 +16,22 @@ For a read-only preflight:
 - do not update cycle or campaign Evidence as a side effect of validation;
 - reuse the real runtime configuration so the preflight does not become a second, drifting configuration model.
 
+## Inspecting existing runtime state
+
+If preflight must inspect an existing runtime database, do not reuse a normal connection helper whose setup has write-side effects.
+
+For the Shadow Ledger specifically:
+
+- the runtime connection enables SQLite WAL mode and is therefore not the correct preflight primitive;
+- use a SQLite URI `mode=ro` connection with query-only semantics;
+- do not run schema initialization or additive migrations;
+- treat a missing database as a distinct "new campaign" state rather than creating it;
+- distinguish an empty unbound legacy ledger from event-bearing unbound history;
+- compare an existing immutable campaign manifest against the exact manifest the runtime would bind;
+- malformed schema/manifest state must fail closed without serializing raw database/provider errors.
+
+Read-only compatibility inspection should prove that the selected existing state can be safely continued, not repair it into compatibility.
+
 ## Readiness semantics
 
 A green preflight means only structural campaign-start readiness:
@@ -46,3 +62,4 @@ Calling a schema initializer during a preflight can turn “missing database” 
 - `src/pancake_prediction/shadow_runtime_cli.py`
 - `docs/STAGE4_SHADOW.md`
 - Issue #11 tests
+- Issue #13 tests
