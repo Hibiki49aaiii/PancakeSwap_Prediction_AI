@@ -100,7 +100,7 @@ pcs-prediction historical-bootstrap \
   --db artifacts/bnbusd-history.sqlite
 ```
 
-Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands. pcs-prediction shadow-chain-sync and pcs-clickhouse binance-live-sync maintain prospective source data, pcs-clickhouse shadow-infer performs a single target cycle, and pcs-shadow-runtime composes continuous Stage 4 collection, reconciliation and deadline-safe inference. See docs/STAGE4_SHADOW.md.
+Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands. pcs-prediction shadow-chain-sync and pcs-clickhouse binance-live-sync maintain prospective source data, pcs-clickhouse shadow-infer performs a single target cycle, and pcs-shadow-runtime composes continuous Stage 4 collection, reconciliation and deadline-safe inference. `pcs-prediction shadow-runtime-health` read-only checks the optional runtime status checkpoint for freshness/success/retry/fatal state without treating liveness as campaign Evidence. See docs/STAGE4_SHADOW.md.
 
 The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
 

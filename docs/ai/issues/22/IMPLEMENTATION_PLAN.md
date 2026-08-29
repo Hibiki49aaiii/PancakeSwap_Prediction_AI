@@ -208,3 +208,106 @@ All untrusted file failures collapse to stable reason codes. Safety-field contra
 ### Human understanding
 
 The checker answers an operational monitoring question only. A passing health check must never be presented as Stage 4 completion or profitability evidence.
+
+
+# Implementation Result — 2026-08-29
+
+Issue #22 implementation is complete.
+
+## Implemented
+
+- Added pure/read-only `src/pancake_prediction/shadow_runtime_health.py`.
+- Added typed immutable `ShadowRuntimeHealthReport`.
+- Added `pcs-prediction shadow-runtime-health`.
+- Required operational freshness policy:
+  - `--status-file`
+  - `--max-status-age-seconds`
+- Optional successful-cycle freshness policy:
+  - `--max-last-success-age-seconds`
+- Fresh `cycle_success`:
+  - alive;
+  - non-degraded;
+  - exit 0.
+- Fresh `cycle_error_retry`:
+  - alive;
+  - degraded;
+  - exit 0 by default.
+- Optional last-success threshold can fail a fresh retry check without falsely marking the process dead.
+- `cycle_error_fatal`, stale status, future timestamp, malformed JSON, unreadable file, schema contradiction and safety contradiction fail closed with exit 2.
+- Raw filesystem/JSON parser details and status paths are not emitted.
+- Unknown extra JSON fields are accepted for forward compatibility.
+- Status inspection is read-only and does not touch:
+  - Shadow ledger;
+  - canonical SQLite;
+  - ClickHouse;
+  - campaign manifest;
+  - campaign Evidence.
+- Added unit and CLI regression coverage.
+
+## Implementation correction
+
+Initial implementation commit `db5adb19d4c839b4a678245e3e83a865bcf58bf0` passed Ruff, pytest, Bandit and pip-audit, but mypy strict found a local variable name collision in `cli.main()`: the new health result reused the generic name `report`, conflicting with a later Shadow Ledger report assignment in the same function scope.
+
+No runtime behavior change was required. The health variable was renamed to `health_report` in:
+
+`9ec82d2ea5dc5d902ef85cb4f619c71b3533d75b`
+
+This preserved the implementation while restoring strict type consistency.
+
+## Verification
+
+Production/test source SHA:
+
+`9ec82d2ea5dc5d902ef85cb4f619c71b3533d75b`
+
+Quality Evidence #325 / run `33257550925`:
+
+- **516 tests passed**
+- **87% coverage**
+- Ruff success
+- mypy strict success
+- Bandit success
+- pip-audit success
+- final quality gate success
+
+Full CI #1389 / run `33257552873`:
+
+- test / coverage success
+- ClickHouse integration success
+- Gitleaks success
+- pinned legacy **144,000-round** audit success
+- overall CI success
+
+Persisted source quality Evidence was updated automatically in:
+
+`ba71f332deab4f7c7e59be88692fdd40f8f8e5c6`
+
+## Post-Implementation Review
+
+### Operational semantics
+
+The checker distinguishes **process health** from **campaign validity**. A fresh success or retry can pass operational health while Stage 4 campaign Evidence remains incomplete.
+
+### Retry behavior
+
+A bounded retry is intentionally treated as alive-but-degraded rather than dead. Operators can independently require recent successful cycles through `--max-last-success-age-seconds`.
+
+### Schema evolution
+
+The checker validates safety- and liveness-critical invariants but permits unknown additional keys. This keeps current safety checks strict without freezing the entire status payload forever.
+
+### Failure privacy
+
+Untrusted file paths, raw JSON parser messages and filesystem exception messages are not propagated into the health report.
+
+### Read-only boundary
+
+The health path performs no storage initialization or mutation and never acquires runtime/source locks. It is safe to call from an external supervisor.
+
+### Safety
+
+No private key, signer, transaction signing, mainnet broadcast, funded execution, credential issuance/change, profitability promotion or full-history promotion was introduced.
+
+### Remaining empirical boundary
+
+This improves supervision of a long-running Stage 4 campaign; it does not complete that campaign. The real multi-day prospective campaign remains the next empirical milestone.

@@ -254,6 +254,33 @@ A retry before the first successful cycle records `last_success_at_ms=null`. Aft
 
 Status path, wall-clock liveness timestamps and current process state are intentionally excluded from `ShadowRuntimeConfig`, campaign manifest identity, and campaign Evidence.
 
+### Read-only operational health check
+
+The official read-only consumer for this checkpoint is:
+
+    pcs-prediction shadow-runtime-health \
+      --status-file artifacts/stage4-runtime-status.json \
+      --max-status-age-seconds 30
+
+The command emits machine-readable JSON and returns exit 0 only when the configured operational policy passes.
+
+Semantics:
+
+- a fresh `cycle_success` is alive and non-degraded;
+- a fresh `cycle_error_retry` is alive but degraded;
+- `cycle_error_fatal` is not alive and fails the check;
+- stale, unreadable, malformed, schema-invalid or future-dated status fails closed.
+
+A supervisor that also requires a recent successfully completed cycle can add:
+
+    --max-last-success-age-seconds 300
+
+This policy is deliberately separate from status freshness. A runtime can be fresh and actively retrying while its last successful cycle becomes too old.
+
+The checker validates the Issue #21 safety fields as exactly false, does not expose raw file/JSON errors, allows unknown extra fields for forward-compatible status evolution, and performs no writes or storage initialization.
+
+A passing health check means only that the runtime's operational checkpoint satisfies the configured liveness policy. It does **not** evaluate campaign Evidence, Stage 4 completion, predictive skill or profitability.
+
 src/pancake_prediction/shadow_runtime.py composes one complete cycle:
 
 1. validate the retry-safe ClickHouse schema;
