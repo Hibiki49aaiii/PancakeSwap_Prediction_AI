@@ -245,7 +245,10 @@ class HistoricalCollector:
                 ):
                     inserted += 1
             previous_checkpoint = max(previous_checkpoint, end)
-            self.store.record_metadata(checkpoint_key, str(previous_checkpoint))
+            self.store.record_monotonic_int_metadata(
+                checkpoint_key,
+                previous_checkpoint,
+            )
             cursor = end + 1
         return inserted, new_oracles
 
@@ -362,7 +365,10 @@ class HistoricalCollector:
                 )
                 oracle_count += count
 
-        self.store.record_metadata(f"{market.symbol}.last_collected_block", str(to_block))
+        self.store.record_monotonic_int_metadata(
+            f"{market.symbol}.last_collected_block",
+            to_block,
+        )
         return {
             "market": market.symbol,
             "from_block": from_block,
