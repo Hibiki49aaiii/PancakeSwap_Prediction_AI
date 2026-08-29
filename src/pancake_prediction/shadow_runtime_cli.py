@@ -5,11 +5,16 @@ import json
 import os
 import time
 from collections.abc import Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import cast
 
 from .binance_archive import TimestampUnit
 from .binance_live import BinanceLiveError, BinancePublicHttpClient
+from .binance_live_lock import (
+    BinanceLiveLineageLockError,
+    BinanceLiveLineageProcessLock,
+)
 from .clickhouse import ClickHouseError, ClickHouseHttpClient
 from .contracts import MARKETS
 from .rpc import JsonRpcClient, RpcError
@@ -313,7 +318,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if preflight_report.ready else 2
 
     try:
-        with ShadowRuntimeProcessLock(Path(args.shadow_db)):
+        with ShadowRuntimeProcessLock(Path(args.shadow_db)), ExitStack() as lineage_locks:
+            lineage_locks.enter_context(
+                BinanceLiveLineageProcessLock(
+                    clickhouse,
+                    market=str(args.market),
+                    venue="spot",
+                    timestamp_unit=config.spot_timestamp_unit,
+                    availability_lag_ms=config.spot_availability_lag_ms,
+                )
+            )
+            if config.include_perp:
+                lineage_locks.enter_context(
+                    BinanceLiveLineageProcessLock(
+                        clickhouse,
+                        market=str(args.market),
+                        venue="um_futures",
+                        timestamp_unit=config.perp_timestamp_unit,
+                        availability_lag_ms=config.perp_availability_lag_ms,
+                    )
+                )
             while True:
                 cycle_report = _run_once(
                     parser,
@@ -339,7 +363,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     time.sleep(poll_seconds)
                 except KeyboardInterrupt:
                     return 0
-    except ShadowRuntimeLockError as exc:
+    except (ShadowRuntimeLockError, BinanceLiveLineageLockError) as exc:
         parser.error(str(exc))
 
 
