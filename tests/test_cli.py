@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -558,3 +559,88 @@ def test_cli_shadow_chain_sync_binds_incremental_collection_options(
     }
     assert "secret-rpc" not in output
 
+
+
+def test_cli_shadow_runtime_health_returns_machine_readable_exit_codes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status = tmp_path / "runtime-status.json"
+    now_ms = time.time_ns() // 1_000_000
+    success = {
+        "status": "cycle_success",
+        "cycle_status": "prediction_recorded",
+        "updated_at_ms": now_ms,
+        "last_success_at_ms": now_ms,
+        "consecutive_cycle_errors": 0,
+        "signing_enabled": False,
+        "live_broadcast": False,
+        "funded_execution": False,
+        "profitability_gate_eligible": False,
+    }
+    status.write_text(json.dumps(success), encoding="utf-8")
+
+    assert (
+        cli.main(
+            [
+                "shadow-runtime-health",
+                "--status-file",
+                str(status),
+                "--max-status-age-seconds",
+                "60",
+            ]
+        )
+        == 0
+    )
+    healthy = json.loads(capsys.readouterr().out)
+    assert healthy["check_passed"] is True
+    assert healthy["operationally_alive"] is True
+    assert healthy["reason"] == "fresh_success"
+    assert "runtime-status.json" not in json.dumps(healthy)
+
+    fatal = {
+        "status": "cycle_error_fatal",
+        "error_type": "ValueError",
+        "updated_at_ms": time.time_ns() // 1_000_000,
+        "last_success_at_ms": None,
+        "consecutive_cycle_errors": 1,
+        "max_consecutive_cycle_errors": 5,
+        "signing_enabled": False,
+        "live_broadcast": False,
+        "funded_execution": False,
+        "profitability_gate_eligible": False,
+    }
+    status.write_text(json.dumps(fatal), encoding="utf-8")
+
+    assert (
+        cli.main(
+            [
+                "shadow-runtime-health",
+                "--status-file",
+                str(status),
+                "--max-status-age-seconds",
+                "60",
+            ]
+        )
+        == 2
+    )
+    unhealthy = json.loads(capsys.readouterr().out)
+    assert unhealthy["check_passed"] is False
+    assert unhealthy["operationally_alive"] is False
+    assert unhealthy["reason"] == "fatal_status"
+
+
+def test_cli_shadow_runtime_health_rejects_nonpositive_threshold(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "shadow-runtime-health",
+                "--status-file",
+                str(tmp_path / "status.json"),
+                "--max-status-age-seconds",
+                "0",
+            ]
+        )
+    assert exc_info.value.code == 2

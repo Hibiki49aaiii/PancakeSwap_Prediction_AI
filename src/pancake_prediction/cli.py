@@ -35,6 +35,7 @@ from .shadow_ledger import (
     settlement_from_payload,
 )
 from .shadow_reconciliation import reconcile_shadow_settlements
+from .shadow_runtime_health import inspect_shadow_runtime_health
 
 PACKAGE_NAME = "pancakeswap-prediction-ai"
 
@@ -271,6 +272,14 @@ def build_parser() -> argparse.ArgumentParser:
     shadow_gate.add_argument("--max-feature-set-ids", type=int, default=1)
     shadow_gate.add_argument("--allow-single-direction", action="store_true")
     shadow_gate.add_argument("--allow-missing-actionable-pnl", action="store_true")
+
+    shadow_health = subparsers.add_parser(
+        "shadow-runtime-health",
+        help="check the read-only Stage 4 operational status checkpoint",
+    )
+    shadow_health.add_argument("--status-file", type=Path, required=True)
+    shadow_health.add_argument("--max-status-age-seconds", type=float, required=True)
+    shadow_health.add_argument("--max-last-success-age-seconds", type=float, default=None)
     return parser
 
 
@@ -326,6 +335,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "status":
         _print_json(_status_payload())
         return 0
+    if args.command == "shadow-runtime-health":
+        try:
+            report = inspect_shadow_runtime_health(
+                Path(args.status_file),
+                max_status_age_seconds=float(args.max_status_age_seconds),
+                max_last_success_age_seconds=(
+                    None
+                    if args.max_last_success_age_seconds is None
+                    else float(args.max_last_success_age_seconds)
+                ),
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        _print_json(report.as_dict())
+        return 0 if report.check_passed else 2
     if args.command == "rpc-probe":
         probe_result = probe_archive_state(
             JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
