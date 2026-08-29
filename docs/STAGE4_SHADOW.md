@@ -206,6 +206,25 @@ The build report exposes:
 
 Regression tests require the bounded feature rows and resulting `ShadowInferenceResult` to match the full-path result exactly.
 
+### Single-target pool projection
+
+Historical OOS evaluation still uses `build_oos_pool_projections()` to produce projections across a complete replay.
+
+Stage 4 live inference needs only the current target. It therefore uses `build_oos_pool_projection_for_target()`, which calls the same internal target-projection implementation as the full OOS builder.
+
+The single-target path preserves:
+
+- the same pre-lock decision snapshot;
+- the same purge boundary;
+- only prior rounds settled before the target decision;
+- the same trailing projection training window;
+- the same median Bull/Bear growth estimator;
+- the same projection model ID and train-max epoch.
+
+A shared `BacktestEventIndex` is reused across the target and prior-round snapshots so the live path does not repeatedly rebuild event lookup structures.
+
+Regression tests require the single-target result to equal `build_oos_pool_projections(...)[target_epoch]` exactly and require target final-pool changes to remain irrelevant.
+
 The installed runtime command is:
 
     pcs-shadow-runtime
