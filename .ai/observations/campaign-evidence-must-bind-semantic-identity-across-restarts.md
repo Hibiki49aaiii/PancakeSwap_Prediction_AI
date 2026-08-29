@@ -46,10 +46,11 @@ Operational settings that do not change decision semantics should not unnecessar
 - ClickHouse query chunk size;
 - HTTP page/batch size;
 - historical log chunk size;
-- bootstrap query window;
-- reorg scan overlap.
+- bootstrap query window.
 
-These may change runtime cost or latency, but not the semantic definition of one prediction.
+By contrast, the chain reorg lookback is part of source-integrity semantics: changing how far the runtime re-proves/reconciles canonical chain state can change which source history is accepted, so it belongs in campaign identity.
+
+Pure performance settings may change runtime cost or latency, but not the semantic definition of one prediction.
 
 ## Evidence binding
 
