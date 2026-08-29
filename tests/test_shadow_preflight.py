@@ -18,7 +18,10 @@ from pancake_prediction.clickhouse_schema import ClickHouseBinanceSchemaReport
 from pancake_prediction.contracts import MARKETS
 from pancake_prediction.rpc import RpcError
 from pancake_prediction.shadow_inference import ShadowInferenceConfig
-from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
+from pancake_prediction.shadow_runtime import (
+    ShadowRuntimeConfig,
+    build_shadow_runtime_campaign_manifest,
+)
 
 
 @dataclass(frozen=True)
@@ -250,6 +253,15 @@ def test_preflight_ready_when_structural_inputs_and_sources_are_available(
     assert report.last_collected_block == 900
     assert report.bsc_chain_id == 56
     assert report.bsc_head_block == 1_000
+    expected_manifest = build_shadow_runtime_campaign_manifest(
+        MARKETS["BNBUSD"],
+        oracle_proxy_anchor="0x" + "1" * 40,
+        chainlink_aggregator_anchor="0x" + "2" * 40,
+        config=_config(),
+    )
+    assert report.expected_campaign_manifest_digest == expected_manifest.digest
+    assert report.expected_campaign_manifest == expected_manifest.canonical_payload()
+    assert report.checks["campaign_manifest_constructible"] is True
     assert report.spot_lineage is not None
     assert report.spot_lineage.row_count == 100
     assert report.perp_lineage is not None
@@ -283,6 +295,8 @@ def test_preflight_missing_canonical_database_does_not_create_it(
     assert report.ready is False
     assert report.checks["canonical_database_exists"] is False
     assert report.checks["canonical_inputs_loadable"] is False
+    assert report.checks["campaign_manifest_constructible"] is False
+    assert report.expected_campaign_manifest_digest is None
     assert canonical.exists() is False
 
 
@@ -317,6 +331,7 @@ def test_preflight_fails_wrong_chain_stale_head_invalid_anchor_and_lineage(
     assert report.ready is False
     for name in (
         "chainlink_aggregator_anchor_valid",
+        "campaign_manifest_constructible",
         "settled_history_capacity",
         "replay_capacity",
         "chainlink_history_capacity",
