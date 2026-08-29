@@ -216,3 +216,107 @@ def test_chunked_builder_can_skip_perp_query() -> None:
     assert result.spot_query_start_ms == 940_000
     assert result.perp_query_start_ms is None
     assert result.query_end_ms == 2_000_000
+
+def test_chunked_builder_required_epochs_matches_full_rows_with_less_io() -> None:
+    replay = ReplaySnapshot(
+        1,
+        "BNBUSD",
+        "c" * 64,
+        (
+            _round(3, 1_000, 1_600, "bull"),
+            _round(4, 1_300, 1_900, "bear"),
+        ),
+    )
+    chainlink = tuple(
+        _chainlink(index, 1_100 + index * 20)
+        for index in range(25)
+    )
+    events = (
+        _bet(3, 1_250, 100, "BetBull", 1),
+        _bet(4, 1_550, 200, "BetBear", 2),
+        *chainlink,
+    )
+    spot = (
+        _trade(1, 1_270_000, price_e8=60_050_000_000, side="buy", lag_ms=25),
+        _trade(2, 1_279_000, price_e8=60_100_000_000, side="buy", lag_ms=25),
+        _trade(3, 1_570_000, price_e8=60_020_000_000, side="sell", lag_ms=25),
+        _trade(4, 1_579_000, price_e8=59_980_000_000, side="sell", lag_ms=25),
+    )
+    perp = (
+        _trade(11, 1_275_000, price_e8=60_110_000_000, side="sell", lag_ms=40),
+        _trade(12, 1_575_000, price_e8=59_990_000_000, side="buy", lag_ms=40),
+    )
+
+    full_source = TradeSource(spot=spot, perp=perp)
+    full = build_chunked_clickhouse_research_dataset(
+        replay,
+        events,
+        full_source,
+        spot_availability_lag_ms=25,
+        perp_availability_lag_ms=40,
+        chunk_span_ms=200_000,
+        flow_lookback_ms=60_000,
+        max_spot_age_ms=20_000,
+        max_perp_age_ms=20_000,
+        oracle_history_updates=20,
+        oracle_hazard_min_intervals=2,
+    )
+    bounded_source = TradeSource(spot=spot, perp=perp)
+    bounded = build_chunked_clickhouse_research_dataset(
+        replay,
+        events,
+        bounded_source,
+        spot_availability_lag_ms=25,
+        perp_availability_lag_ms=40,
+        chunk_span_ms=200_000,
+        flow_lookback_ms=60_000,
+        max_spot_age_ms=20_000,
+        max_perp_age_ms=20_000,
+        oracle_history_updates=20,
+        oracle_hazard_min_intervals=2,
+        required_epochs={4},
+    )
+
+    expected_rows = tuple(
+        row for row in full.dataset.research_feature_rows if row.epoch == 4
+    )
+    assert bounded.dataset.research_feature_rows == expected_rows
+    assert bounded.dataset.candidate_rounds == 1
+    assert bounded.dataset.pool_feature_rows == 1
+    assert bounded.requested_epoch_count == 1
+    assert bounded.requested_epoch_min == 4
+    assert bounded.requested_epoch_max == 4
+    assert bounded.chunks_loaded == 1
+    assert full.chunks_loaded == 2
+    assert len(bounded_source.calls) == 2
+    assert len(full_source.calls) == 4
+
+
+def test_chunked_builder_empty_required_epochs_performs_no_trade_queries() -> None:
+    replay = ReplaySnapshot(
+        1,
+        "BNBUSD",
+        "d" * 64,
+        (_round(3, 1_000, 1_600, "bull"),),
+    )
+    events = tuple(_chainlink(index, 1_100 + index * 20) for index in range(10))
+    source = TradeSource(spot=(), perp=())
+
+    result = build_chunked_clickhouse_research_dataset(
+        replay,
+        events,
+        source,
+        spot_availability_lag_ms=25,
+        required_epochs=(),
+        oracle_history_updates=10,
+        oracle_hazard_min_intervals=2,
+    )
+
+    assert result.dataset.candidate_rounds == 0
+    assert result.dataset.row_count == 0
+    assert result.chunks_loaded == 0
+    assert result.requested_epoch_count == 0
+    assert result.requested_epoch_min is None
+    assert result.requested_epoch_max is None
+    assert source.calls == []
+
