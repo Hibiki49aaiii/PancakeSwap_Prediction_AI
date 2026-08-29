@@ -542,8 +542,7 @@ def test_shadow_runtime_cli_once_cycle_error_exits_without_retry_or_secret(
         fail_cycle,
     )
     monkeypatch.setattr(
-        shadow_runtime_cli.time,
-        "sleep",
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
         lambda seconds: pytest.fail(f"once mode must not retry: {seconds}"),
     )
 
