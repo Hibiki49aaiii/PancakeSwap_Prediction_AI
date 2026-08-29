@@ -232,6 +232,28 @@ A successful cycle resets the counter to zero. Reaching the configured consecuti
 
 Retry status is operational telemetry only. It does not update `--evidence-output`, campaign latest Evidence, or campaign last-success Evidence. `--max-consecutive-cycle-errors` is likewise excluded from `ShadowRuntimeConfig`, campaign manifest identity, and campaign Evidence semantics.
 
+### Atomic operational status checkpoint
+
+For file-based process monitoring, normal runtime accepts:
+
+    --status-output artifacts/stage4-runtime-status.json
+
+This file is an operational liveness checkpoint, not campaign Evidence.
+
+It is atomically replaced on:
+
+- successful cycles with `status=cycle_success` and the completed cycle status;
+- retryable errors with `status=cycle_error_retry`;
+- terminal cycle errors with `status=cycle_error_fatal` before exit.
+
+The payload records `updated_at_ms`, the last successful cycle timestamp, consecutive-error state, and the same signing/broadcast/funding safety flags used elsewhere. Error payloads contain only the exception class and never the raw exception message.
+
+A retry before the first successful cycle records `last_success_at_ms=null`. After a successful cycle, later retry states preserve that successful timestamp.
+
+`--status-output` is incompatible with `--preflight-only` and must use a path distinct from all Evidence outputs. If an explicitly configured status checkpoint cannot be written atomically, the runtime fails closed.
+
+Status path, wall-clock liveness timestamps and current process state are intentionally excluded from `ShadowRuntimeConfig`, campaign manifest identity, and campaign Evidence.
+
 src/pancake_prediction/shadow_runtime.py composes one complete cycle:
 
 1. validate the retry-safe ClickHouse schema;
