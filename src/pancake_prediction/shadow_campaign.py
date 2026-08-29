@@ -61,6 +61,7 @@ class ShadowCampaignGateReport:
             "policy": asdict(self.policy),
             "ledger_head_digest": self.audit.head_digest,
             "ledger_event_count": self.audit.event_count,
+            "campaign_manifest_digest": self.audit.campaign_manifest_digest,
             "checks": self.checks,
             "unresolved_ppm": self.unresolved_ppm,
             "settlement_coverage_ppm": self.settlement_coverage_ppm,
@@ -127,6 +128,7 @@ def evaluate_shadow_campaign(
     bear_count = int(audit.action_counts.get("bear", 0))
     checks = {
         "ledger_integrity_ready": audit.integrity_ready,
+        "campaign_manifest_bound": audit.campaign_manifest_digest is not None,
         "prediction_count_sufficient": audit.prediction_count >= selected.min_predictions,
         "settlement_count_sufficient": audit.settlement_count >= selected.min_settlements,
         "probability_scored_sufficient": (
@@ -183,6 +185,8 @@ def build_shadow_campaign_evidence(
         raise ValueError("evidence_role must be latest_attempt or last_success")
     if evidence_role == "last_success" and not campaign.gate_ready:
         raise ValueError("last_success evidence requires a ready campaign")
+    if campaign.audit.campaign_manifest_digest is None:
+        raise ValueError("campaign evidence requires a bound campaign manifest")
     if not ledger_path.is_file():
         raise ValueError(f"shadow ledger does not exist: {ledger_path}")
 
@@ -194,6 +198,7 @@ def build_shadow_campaign_evidence(
         "workflow_outcome": "success" if campaign.gate_ready else "incomplete",
         "ledger_sha256": _sha256_file(ledger_path),
         "ledger_binding": {
+            "campaign_manifest_digest": campaign.audit.campaign_manifest_digest,
             "event_count": campaign.audit.event_count,
             "head_digest": campaign.audit.head_digest,
             "campaign_digest": campaign.campaign_digest,
