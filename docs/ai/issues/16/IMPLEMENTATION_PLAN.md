@@ -118,3 +118,124 @@ Sequential archive ingestion into an already-live lineage remains separate work.
 - branch: `agent/v0.7-alpha-research`
 - base SHA: `7be4a6eb664e651621d31b946e16b51ac45b6278`
 - 461 tests / 87% / CI #1305 green.
+
+
+# Implementation Result — 2026-08-29
+
+Issue #16 implementation is complete.
+
+## Implemented
+
+- Extracted reusable `SqliteExclusiveProcessLock` into `process_lock.py`.
+- Existing `ShadowRuntimeProcessLock` now reuses the generic primitive without changing its external behavior.
+- Added `binance_live_lock.py` with:
+  - read-only `ClickHouseLineageTarget` Protocol;
+  - canonical ClickHouse endpoint normalization;
+  - canonical Binance live lineage identity;
+  - SHA-256 lineage digest;
+  - OS-temp digest-only lock path;
+  - `BinanceLiveLineageProcessLock`.
+- Lineage identity binds:
+  - normalized ClickHouse endpoint;
+  - ClickHouse database;
+  - market;
+  - Binance symbol;
+  - venue;
+  - timestamp unit;
+  - availability lag.
+- ClickHouse username/password do not participate in lock identity.
+- Default HTTP/HTTPS ports and trailing root slash normalize to the same endpoint identity.
+- Lock filename exposes only a 64-hex SHA-256 digest.
+- Same lineage contention is non-blocking and fail-closed.
+- Different lineages can be locked independently.
+- `pcs-shadow-runtime` now acquires:
+  1. Shadow campaign runtime lock;
+  2. Spot live-lineage lock;
+  3. Perp live-lineage lock when enabled;
+  before entering any runtime cycle.
+- `--no-perp` acquires only Spot.
+- `--preflight-only` returns before either runtime or lineage lock construction.
+- `pcs-clickhouse binance-live-sync` performs schema validation, then acquires the exact lineage lock before constructing/fetching live Binance rows.
+- Manual CLI contention prevents `sync_binance_live_aggtrades()` from executing.
+- Runtime contention prevents `run_shadow_runtime_cycle()` from executing.
+- Lock mechanism remains excluded from campaign manifest and Evidence semantics.
+
+## Files Changed
+
+- `.ai/index.md`
+- `.ai/observations/prospective-observation-lineages-need-single-writer-coordination.md`
+- `docs/STAGE4_SHADOW.md`
+- `docs/ai/issues/16/HUMAN_UNDERSTANDING.md`
+- `docs/ai/issues/16/IMPLEMENTATION_PLAN.md`
+- `src/pancake_prediction/binance_live_lock.py`
+- `src/pancake_prediction/clickhouse_cli.py`
+- `src/pancake_prediction/process_lock.py`
+- `src/pancake_prediction/shadow_runtime_cli.py`
+- `src/pancake_prediction/shadow_runtime_lock.py`
+- `tests/test_binance_live_lock.py`
+- `tests/test_campaign_cli.py`
+- `tests/test_clickhouse_cli.py`
+- `tests/test_shadow_runtime_cli.py`
+
+## Verification
+
+Production/test source SHA:
+`32c998f3b556f496d63b6061b5b1400ebe73b8be`
+
+Quality Evidence #304 / run `33249529724`:
+
+- pytest: **469 passed**
+- coverage: **87%**
+- Ruff: success
+- mypy strict: success
+- Bandit: success
+- pip-audit: success
+- final quality gate: success
+
+Full PR CI #1325 / run `33249531556`:
+
+- pytest: **469 passed in 17.37s**
+- coverage: **87%**
+- test: success
+- ClickHouse integration: success
+- Gitleaks: success
+- pinned legacy **144,000-round** audit: success
+- overall CI: success
+
+## Implementation corrections from quality review
+
+The first integrated version exposed three useful test/design issues:
+
+1. lineage lock typing was too concrete and rejected test/client implementations that only need `endpoint/database`;
+2. an existing live-sync CLI fake lacked the new lineage identity fields;
+3. fixed credential literals in a security test triggered S106.
+
+The final design uses a narrow read-only Protocol, updates the existing fake surface, and tests credential exclusion without hardcoded secret literals.
+
+A second mypy pass showed the Protocol attributes needed read-only property semantics to accept frozen test clients. That was corrected without weakening the lock boundary.
+
+## Post-Implementation Review
+
+### Correctness
+
+Two official local writers cannot concurrently fetch/insert the same prospective Binance lineage. This prevents duplicate trade IDs with different actual observation times from being resolved solely by ClickHouse ingest-version ordering.
+
+### Architecture
+
+Process coordination is shared across both runtime and manual live-sync entrypoints while remaining separate from prediction/campaign semantic identity.
+
+### Privacy
+
+The local lock filename contains no raw endpoint, database name, username, password or credential; only the SHA-256 digest is used.
+
+### Backward compatibility
+
+Read/query/archive-ingest paths are unchanged. Existing Shadow runtime campaign locking remains intact and now reuses the common SQLite primitive.
+
+### Safety
+
+No signer, private key, mainnet transaction signing, broadcast, funded execution, credential issuance/change, profitability promotion or historical-source promotion was introduced.
+
+### Remaining boundary
+
+This protects official writers on one host. Distributed multi-host live writers remain out of scope.
