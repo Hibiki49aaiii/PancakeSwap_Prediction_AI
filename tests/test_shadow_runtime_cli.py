@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from pancake_prediction import shadow_runtime_cli
-from pancake_prediction.binance_live import BinanceLiveError
+from pancake_prediction.binance_live import (
+    BinanceLiveError,
+    BinanceLiveSourceIntegrityError,
+)
 from pancake_prediction.binance_live_lock import (
     BinanceLiveLineageLockError,
     BinanceLiveLineageProcessLock,
@@ -15,6 +18,7 @@ from pancake_prediction.binance_live_lock import (
 from pancake_prediction.clickhouse import ClickHouseError
 from pancake_prediction.contracts import Market
 from pancake_prediction.rpc import RpcError
+from pancake_prediction.shadow_chain_sync import ShadowChainSourceIntegrityError
 from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 from pancake_prediction.shadow_runtime_lock import (
     ShadowRuntimeLockError,
@@ -555,6 +559,87 @@ def test_shadow_runtime_cli_once_cycle_error_exits_without_retry_or_secret(
     assert "BinanceLiveError" in captured.err
     assert "secret-binance" not in captured.err
     assert "token" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        ValueError("sensitive-value-detail"),
+        ShadowChainSourceIntegrityError("sensitive-route-detail"),
+        BinanceLiveSourceIntegrityError("sensitive-lineage-detail"),
+    ),
+)
+def test_shadow_runtime_cli_continuous_fatal_cycle_error_exits_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    error: Exception,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+
+    def fail_cycle(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        fail_cycle,
+    )
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        lambda seconds: pytest.fail(f"fatal cycle error must not retry: {seconds}"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(_base_args(tmp_path))
+    assert exc_info.value.code == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert type(error).__name__ in captured.err
+    assert str(error) not in captured.err
+
+
+def test_shadow_runtime_cli_continuous_retries_generic_binance_live_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    calls = 0
+
+    def cycle(*args: object, **kwargs: object) -> FakeCycleReport:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise BinanceLiveError("sensitive-catch-up-detail")
+        return FakeCycleReport()
+
+    sleeps = 0
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleeps
+        assert seconds == 1.0
+        sleeps += 1
+        if sleeps == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        fake_sleep,
+    )
+
+    assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
+    assert calls == 2
+    assert sleeps == 2
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert lines[0]["status"] == "cycle_error_retry"
+    assert lines[0]["error_type"] == "BinanceLiveError"
+    assert lines[0]["consecutive_cycle_errors"] == 1
+    assert lines[1]["status"] == "no_eligible_target"
+    assert "sensitive-catch-up-detail" not in json.dumps(lines)
 
 
 def test_shadow_runtime_cli_continuous_recovers_after_cycle_error_with_locks_held(
