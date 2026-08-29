@@ -245,6 +245,36 @@ Early exits remain semantically visible. For example, `source_warmup` has no tar
 
 `submission_margin_ms <= 0` means the submission-equivalent deadline has been reached or missed. Stage 4 still does not sign or broadcast any transaction.
 
+### Campaign start preflight
+
+Before starting a long-running campaign, the same runtime configuration can be checked without entering the mutating live cycle:
+
+    pcs-shadow-runtime \
+      --market BNBUSD \
+      --canonical-db artifacts/bnbusd-history.sqlite \
+      --shadow-db artifacts/shadow.sqlite3 \
+      --stake-wei 10000000000000000 \
+      --bet-gas-wei 50000000000000 \
+      --claim-gas-wei 30000000000000 \
+      --inclusion-latency-seconds 2 \
+      --preflight-only \
+      --preflight-output evidence/stage4-shadow-preflight.json
+
+The preflight reuses the exact `ShadowRuntimeConfig` selected for the real runtime. It is read-only:
+
+- it does not create or initialize the canonical SQLite database;
+- it does not initialize or write the Shadow Ledger;
+- it does not collect Prediction or Chainlink logs;
+- it does not ingest Binance trades into ClickHouse;
+- it does not build a target prediction;
+- it does not update runtime or campaign Evidence.
+
+It checks the existing canonical database and source-anchor metadata, configured historical sample capacity, active Chainlink history, BSC chain/head connectivity, retry-safe ClickHouse schema, configured Spot/Perp lineage presence, and read-only one-row Binance Spot/Perp endpoint probes.
+
+A ready preflight means only **structural campaign-start readiness**. It does not prove that the live oracle route still matches the stored anchor, because the first normal runtime chain sync remains the authoritative fail-closed route-stability check. It also does not satisfy prospective live flow warmup, prove that a current target is inferable, prove complete historical feature coverage, establish profitability, or authorize funded execution.
+
+The command exits 0 when all mandatory structural checks pass and 2 when any check is incomplete. `--preflight-output` is written atomically and cannot be combined with cycle/campaign Evidence outputs.
+
 The installed runtime command is:
 
     pcs-shadow-runtime
