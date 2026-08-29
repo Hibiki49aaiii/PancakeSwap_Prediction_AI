@@ -1,23 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
 from pancake_prediction.shadow_campaign import (
     ShadowCampaignPolicy,
+    build_shadow_campaign_evidence,
     evaluate_shadow_campaign,
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerStore
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,28 +61,12 @@ def main() -> int:
         max_feature_set_ids=int(args.max_feature_set_ids),
     )
     report = evaluate_shadow_campaign(audit, policy)
-    payload = {
-        "evidence_version": 1,
-        "evidence_role": "latest_attempt",
-        "purpose": "stage4_shadow_campaign_operational_readiness",
-        "success": report.gate_ready,
-        "workflow_outcome": "success" if report.gate_ready else "incomplete",
-        "ledger_sha256": _sha256(args.db),
-        "campaign": report.as_dict(),
-        "profitability_gate_eligible": False,
-        "full_historical_gate_satisfied": False,
-        "signing_enabled": False,
-        "live_broadcast": False,
-        "interpretation": (
-            "Stage 4 shadow operational-readiness evidence only. This proves append-only decision "
-            "capture, settlement reconciliation, minimum campaign coverage, "
-            "and metric availability. "
-            "PnL sign is intentionally not a pass condition and no funded execution is authorized."
-        ),
-    }
+    payload = build_shadow_campaign_evidence(args.db, report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    args.output.write_text(rendered, encoding="utf-8")
+    temporary = args.output.with_name(args.output.name + ".tmp")
+    temporary.write_text(rendered, encoding="utf-8")
+    temporary.replace(args.output)
     print(rendered, end="")
     return 0 if report.gate_ready else 2
 
