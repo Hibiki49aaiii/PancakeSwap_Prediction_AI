@@ -63,10 +63,9 @@ def test_shadow_runtime_lock_context_releases_after_exception(
     shadow = tmp_path / "shadow.sqlite3"
     first = ShadowRuntimeProcessLock(shadow)
 
-    with pytest.raises(RuntimeError, match="cycle failed"):
-        with first:
-            assert first.acquired is True
-            raise RuntimeError("cycle failed")
+    with pytest.raises(RuntimeError, match="cycle failed"), first:
+        assert first.acquired is True
+        raise RuntimeError("cycle failed")
 
     assert first.acquired is False
     with ShadowRuntimeProcessLock(shadow) as second:
