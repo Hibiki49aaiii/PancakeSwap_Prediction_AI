@@ -293,7 +293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     binance = BinancePublicHttpClient()
 
     if bool(args.preflight_only):
-        report = run_shadow_runtime_preflight(
+        preflight_report = run_shadow_runtime_preflight(
             rpc,
             clickhouse,
             binance,
@@ -301,14 +301,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.canonical_db),
             config=config,
         )
-        rendered = _render_preflight(report)
+        rendered = _render_preflight(preflight_report)
         print(rendered, flush=True)
         if args.preflight_output is not None:
             _write_evidence(Path(args.preflight_output), rendered)
-        return 0 if report.ready else 2
+        return 0 if preflight_report.ready else 2
 
     while True:
-        report = _run_once(
+        cycle_report = _run_once(
             parser,
             args,
             rpc=rpc,
@@ -316,12 +316,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             binance=binance,
             config=config,
         )
-        rendered = _render(report)
+        rendered = _render(cycle_report)
         print(rendered, flush=True)
         if args.evidence_output is not None:
             _write_evidence(Path(args.evidence_output), rendered)
         try:
-            _checkpoint_campaign_evidence(args, report)
+            _checkpoint_campaign_evidence(args, cycle_report)
         except (OSError, ValueError) as exc:
             parser.error(f"Stage 4 campaign evidence checkpoint failed: {exc}")
         if bool(args.once):
