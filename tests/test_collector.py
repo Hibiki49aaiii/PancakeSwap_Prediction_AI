@@ -54,6 +54,16 @@ class _RangeLimitedRpc:
         }
 
 
+class _InjectHigherCheckpointStore(EventStore):
+    injected = False
+
+    def record_monotonic_int_metadata(self, key: str, value: int) -> int:
+        if key.startswith("collector.progress.") and not self.injected:
+            self.injected = True
+            super().record_monotonic_int_metadata(key, value + 4)
+        return super().record_monotonic_int_metadata(key, value)
+
+
 class _ReorgDuringChunkRpc(_RangeLimitedRpc):
     def __init__(self) -> None:
         super().__init__(max_span=10)
@@ -195,6 +205,60 @@ def test_collector_resumes_after_last_successful_chunk(tmp_path: Path) -> None:
     )
     assert second_rpc.calls == [(9, 12)]
     assert report["prediction_events_inserted"] == 0
+    assert store.metadata("BNBUSD.last_collected_block") == "12"
+
+
+def test_collector_chunk_checkpoint_cannot_regress_after_higher_writer(
+    tmp_path: Path,
+) -> None:
+    store = _InjectHigherCheckpointStore(tmp_path / "events.sqlite3")
+    store.initialize()
+    rpc = _RangeLimitedRpc(max_span=4)
+    HistoricalCollector(
+        rpc,
+        store,
+        chunk_size=4,
+        reorg_lookback=0,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        4,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT value
+            FROM metadata
+            WHERE key LIKE 'collector.progress.%'
+            """
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["value"] == "8"
+
+
+def test_collector_last_collected_block_cannot_regress(
+    tmp_path: Path,
+) -> None:
+    store = EventStore(tmp_path / "events.sqlite3")
+    store.initialize()
+    store.record_monotonic_int_metadata("BNBUSD.last_collected_block", 12)
+
+    HistoricalCollector(
+        _RangeLimitedRpc(max_span=4),
+        store,
+        chunk_size=4,
+        reorg_lookback=0,
+    ).collect_market(
+        MARKETS["BNBUSD"],
+        1,
+        8,
+        include_chainlink=False,
+        prediction_analytic_only=True,
+    )
+
     assert store.metadata("BNBUSD.last_collected_block") == "12"
 
 
