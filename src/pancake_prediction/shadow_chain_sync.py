@@ -11,6 +11,10 @@ from .rpc import RpcError
 from .store import EventStore
 
 
+class ShadowChainSourceIntegrityError(RpcError):
+    pass
+
+
 class ShadowChainSyncRpc(ReadOnlyRpc, Protocol):
     pass
 
@@ -132,7 +136,7 @@ def sync_shadow_chain(
         oracle_proxy = str(proof.get("oracle", "")).lower()
         aggregator = str(proof.get("chainlink_aggregator", "")).lower()
         if oracle_proxy != anchored_proxy or aggregator != anchored_aggregator:
-            raise RpcError(
+            raise ShadowChainSourceIntegrityError(
                 "live oracle route differs from canonical route anchor; "
                 "start a new source-bound campaign"
             )
@@ -163,7 +167,7 @@ def sync_shadow_chain(
     oracle_proxy = str(proof.get("oracle", "")).lower()
     aggregator = str(proof.get("chainlink_aggregator", "")).lower()
     if oracle_proxy != anchored_proxy or aggregator != anchored_aggregator:
-        raise RpcError(
+        raise ShadowChainSourceIntegrityError(
             "live oracle route differs from canonical route anchor; "
             "start a new source-bound campaign"
         )
