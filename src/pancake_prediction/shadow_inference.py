@@ -17,7 +17,10 @@ from .baseline import (
 )
 from .calibration import CalibrationPoint, fit_histogram_calibrator
 from .economics import PPM, ParimutuelQuote, expected_value_wei
-from .pool_projection import PoolProjectionBaselineConfig, build_oos_pool_projections
+from .pool_projection import (
+    PoolProjectionBaselineConfig,
+    build_oos_pool_projection_for_target,
+)
 from .replay import ChainEvent, ReplaySnapshot, RoundRecord
 from .research_ledger import ResearchPredictionRecord, feature_digest, validate_research_prediction
 
@@ -375,13 +378,13 @@ def build_shadow_inference(
     raw_probability = model.predict_ppm(target_row)
     calibrated_probability = calibrator.predict_ppm(raw_probability)
 
-    projections = build_oos_pool_projections(
+    projection = build_oos_pool_projection_for_target(
         replay,
         events,
         backtest_config,
+        target_epoch=target_epoch,
         config=selected.pool_projection_config(),
     )
-    projection = projections.get(target_epoch)
     if projection is None:
         raise ValueError("target round has no leakage-safe pool projection")
     if projection.generated_at > snapshot.decision_timestamp:
