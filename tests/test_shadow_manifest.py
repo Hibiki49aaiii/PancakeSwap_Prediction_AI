@@ -85,6 +85,7 @@ def test_shadow_campaign_manifest_is_deterministic_and_normalizes_addresses() ->
         "latency",
         "campaign_policy",
         "chain_confirmations",
+        "chain_reorg_lookback",
     ),
 )
 def test_shadow_campaign_manifest_semantic_drift_changes_digest(changed: str) -> None:
@@ -117,6 +118,11 @@ def test_shadow_campaign_manifest_semantic_drift_changes_digest(changed: str) ->
         )
     elif changed == "chain_confirmations":
         config = replace(base, chain_confirmations=base.chain_confirmations + 1)
+    elif changed == "chain_reorg_lookback":
+        config = replace(
+            base,
+            chain_reorg_lookback=base.chain_reorg_lookback + 1,
+        )
     else:
         raise AssertionError(changed)
 
@@ -137,7 +143,6 @@ def test_shadow_campaign_manifest_ignores_performance_only_tuning() -> None:
     tuned = replace(
         base,
         chain_chunk_size=17,
-        chain_reorg_lookback=128,
         binance_bootstrap_window_ms=300_000,
         binance_batch_size=777,
         binance_max_pages=7,
