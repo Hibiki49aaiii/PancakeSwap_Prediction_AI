@@ -299,6 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             binance,
             MARKETS[str(args.market)],
             Path(args.canonical_db),
+            Path(args.shadow_db),
             config=config,
         )
         rendered = _render_preflight(preflight_report)
