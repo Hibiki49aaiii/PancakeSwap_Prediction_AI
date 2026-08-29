@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -20,7 +20,8 @@ from .clickhouse_dataset import (
     build_chunked_clickhouse_research_dataset,
 )
 from .clickhouse_schema import inspect_binance_trade_schema
-from .contracts import Market
+from .contracts import CHAIN_ID_BSC, Market
+from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .research_inputs import load_canonical_research_inputs
 from .shadow_campaign import (
     ShadowCampaignGateReport,
@@ -37,6 +38,7 @@ from .shadow_inference import (
     select_shadow_target,
 )
 from .shadow_ledger import ShadowLedgerEvent, ShadowLedgerStore
+from .shadow_manifest import ShadowCampaignManifest
 from .shadow_reconciliation import ShadowReconciliationReport, reconcile_shadow_settlements
 
 
@@ -100,6 +102,70 @@ class ShadowRuntimeConfig:
             )
         self.inference.validate()
         self.campaign_policy.validate()
+
+
+def build_shadow_runtime_campaign_manifest(
+    market: Market,
+    *,
+    oracle_proxy_anchor: str,
+    chainlink_aggregator_anchor: str,
+    config: ShadowRuntimeConfig | None = None,
+) -> ShadowCampaignManifest:
+    selected = config or ShadowRuntimeConfig()
+    selected.validate()
+    symbol = BINANCE_SYMBOL_BY_MARKET.get(market.symbol)
+    if symbol is None:
+        raise ValueError(f"unsupported research market: {market.symbol}")
+
+    perp: dict[str, object] = {"enabled": False}
+    if selected.include_perp:
+        perp = {
+            "enabled": True,
+            "venue": "um_futures",
+            "source_name": "binance-rest:um_futures",
+            "symbol": symbol,
+            "timestamp_unit": selected.perp_timestamp_unit,
+            "availability_lag_ms": selected.perp_availability_lag_ms,
+        }
+
+    return ShadowCampaignManifest(
+        chain_id=CHAIN_ID_BSC,
+        market=market.symbol,
+        prediction_contract=market.address,
+        oracle_proxy_anchor=oracle_proxy_anchor,
+        chainlink_aggregator_anchor=chainlink_aggregator_anchor,
+        semantic_config={
+            "chain": {
+                "confirmations": selected.chain_confirmations,
+            },
+            "binance": {
+                "spot": {
+                    "venue": "spot",
+                    "source_name": "binance-rest:spot",
+                    "symbol": symbol,
+                    "timestamp_unit": selected.spot_timestamp_unit,
+                    "availability_lag_ms": selected.spot_availability_lag_ms,
+                },
+                "perp": perp,
+            },
+            "feature_timing": {
+                "flow_lookback_ms": selected.flow_lookback_ms,
+                "max_spot_age_ms": selected.max_spot_age_ms,
+                "max_perp_age_ms": selected.max_perp_age_ms,
+                "max_chainlink_age_ms": selected.max_chainlink_age_ms,
+                "chainlink_availability_lag_ms": (
+                    selected.chainlink_availability_lag_ms
+                ),
+                "oracle_history_updates": selected.oracle_history_updates,
+                "oracle_hazard_horizon_ms": selected.oracle_hazard_horizon_ms,
+                "oracle_hazard_min_intervals": (
+                    selected.oracle_hazard_min_intervals
+                ),
+            },
+            "inference": asdict(selected.inference),
+            "campaign_policy": asdict(selected.campaign_policy),
+        },
+    )
 
 
 @dataclass(frozen=True, slots=True)
