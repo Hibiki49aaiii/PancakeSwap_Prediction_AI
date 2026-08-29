@@ -342,3 +342,39 @@ def test_required_shadow_feature_epochs_ignore_target_final_outcome() -> None:
 
     assert second == first
 
+def test_bounded_shadow_feature_rows_produce_identical_inference() -> None:
+    replay, events, rows = _fixture()
+    config = _config()
+    required = set(
+        required_shadow_feature_epochs(
+            replay,
+            events,
+            target_epoch=40,
+            config=config,
+        )
+    )
+    bounded_rows = tuple(row for row in rows if row.epoch in required)
+
+    full = build_shadow_inference(
+        replay,
+        events,
+        rows,
+        target_epoch=40,
+        config=config,
+    )
+    bounded = build_shadow_inference(
+        replay,
+        events,
+        bounded_rows,
+        target_epoch=40,
+        config=config,
+    )
+
+    assert bounded == full
+    assert bounded.prediction == full.prediction
+    assert bounded.raw_model_id == full.raw_model_id
+    assert bounded.calibrator_model_id == full.calibrator_model_id
+    assert bounded.projection == full.projection
+    assert bounded.bull_expected_value_wei == full.bull_expected_value_wei
+    assert bounded.bear_expected_value_wei == full.bear_expected_value_wei
+
