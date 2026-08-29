@@ -19,8 +19,11 @@ class BinanceLiveLineageLockError(RuntimeError):
 
 
 class ClickHouseLineageTarget(Protocol):
-    endpoint: str
-    database: str
+    @property
+    def endpoint(self) -> str: ...
+
+    @property
+    def database(self) -> str: ...
 
 
 def _normalized_clickhouse_endpoint(endpoint: str) -> str:
