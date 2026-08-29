@@ -144,6 +144,12 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
                 "config": config,
             }
         )
+        competing_lock = shadow_runtime_cli.ShadowRuntimeProcessLock(shadow_database)
+        with pytest.raises(
+            shadow_runtime_cli.ShadowRuntimeLockError,
+            match="already holds",
+        ):
+            competing_lock.acquire()
         shadow_database.write_bytes(b"shadow-ledger-snapshot")
         return FakeCycleReport()
 
@@ -320,6 +326,40 @@ def test_shadow_runtime_cli_rejects_conflicting_evidence_paths(tmp_path: Path) -
     assert exc_info.value.code == 2
 
 
+def test_shadow_runtime_cli_lock_contention_prevents_runtime_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BSC_RPC_URL", "https://example.invalid")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: object())
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+
+    def must_not_run(*args: object, **kwargs: object) -> object:
+        raise AssertionError("runtime cycle must not run while campaign lock is held")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        must_not_run,
+    )
+
+    shadow = tmp_path / "shadow.sqlite3"
+    with shadow_runtime_cli.ShadowRuntimeProcessLock(shadow):
+        with pytest.raises(SystemExit) as exc_info:
+            shadow_runtime_cli.main([*_base_args(tmp_path), "--once"])
+        assert exc_info.value.code == 2
+
+
 def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -379,6 +419,15 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
         must_not_run_cycle,
     )
 
+    def must_not_construct_runtime_lock(path: Path) -> object:
+        raise AssertionError(f"preflight must not construct runtime lock for {path}")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ShadowRuntimeProcessLock",
+        must_not_construct_runtime_lock,
+    )
+
     output = tmp_path / "evidence" / "preflight.json"
     assert (
         shadow_runtime_cli.main(
@@ -406,6 +455,7 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
     assert isinstance(config, ShadowRuntimeConfig)
     assert config.inference.purge_rounds == 3
     assert not (tmp_path / "shadow.sqlite3").exists()
+    assert not (tmp_path / "shadow.sqlite3.runtime-lock.sqlite3").exists()
     assert not output.with_name(output.name + ".tmp").exists()
 
     rendered = output.read_text(encoding="utf-8")
