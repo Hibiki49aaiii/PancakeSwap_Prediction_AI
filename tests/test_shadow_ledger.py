@@ -12,6 +12,7 @@ from pancake_prediction.shadow_ledger import (
     ShadowLedgerStore,
     ShadowSettlementRecord,
 )
+from pancake_prediction.shadow_manifest import ShadowCampaignManifest
 
 
 def _prediction(*, epoch: int = 100, action: str = "bull") -> ResearchPredictionRecord:
@@ -34,6 +35,20 @@ def _prediction(*, epoch: int = 100, action: str = "bull") -> ResearchPrediction
         ),
         train_max_epoch=epoch - 3,
         metadata={"fold": 1, "source": "test"},
+    )
+
+
+def _manifest(*, stake_wei: int = 100) -> ShadowCampaignManifest:
+    return ShadowCampaignManifest(
+        chain_id=56,
+        market="BNBUSD",
+        prediction_contract="0x" + "10" * 20,
+        oracle_proxy_anchor="0x" + "11" * 20,
+        chainlink_aggregator_anchor="0x" + "22" * 20,
+        semantic_config={
+            "inference": {"stake_wei": stake_wei},
+            "campaign_policy": {"min_predictions": 1_000},
+        },
     )
 
 
@@ -214,6 +229,57 @@ def test_shadow_audit_detects_payload_tampering(tmp_path: Path) -> None:
     report = store.audit()
     assert report.integrity_ready is False
     assert any("event digest mismatch" in item for item in report.integrity_errors)
+
+
+def test_shadow_ledger_binds_manifest_idempotently(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    manifest = _manifest()
+
+    first = store.bind_campaign_manifest(manifest)
+    retry = store.bind_campaign_manifest(manifest)
+
+    assert retry == first
+    assert first.manifest_digest == manifest.digest
+    loaded = store.campaign_manifest()
+    assert loaded == first
+    report = store.audit()
+    assert report.campaign_manifest_digest == manifest.digest
+    assert report.integrity_ready is True
+
+
+def test_shadow_ledger_rejects_conflicting_campaign_manifest(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.bind_campaign_manifest(_manifest(stake_wei=100))
+
+    with pytest.raises(ValueError, match="conflicts"):
+        store.bind_campaign_manifest(_manifest(stake_wei=101))
+
+
+def test_shadow_ledger_rejects_retroactive_manifest_binding(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.append_prediction(_prediction())
+
+    with pytest.raises(ValueError, match="retroactively"):
+        store.bind_campaign_manifest(_manifest())
+
+
+def test_shadow_manifest_sqlite_triggers_block_update_and_delete(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.bind_campaign_manifest(_manifest())
+
+    connection = sqlite3.connect(store.path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "UPDATE shadow_campaign_manifest SET manifest_digest = ? WHERE singleton = 1",
+                ("f" * 64,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute(
+                "DELETE FROM shadow_campaign_manifest WHERE singleton = 1"
+            )
+    finally:
+        connection.close()
 
 
 def test_shadow_ledger_sqlite_triggers_block_update_and_delete(tmp_path: Path) -> None:
