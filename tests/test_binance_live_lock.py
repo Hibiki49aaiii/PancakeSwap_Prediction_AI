@@ -32,11 +32,13 @@ def _client(
 def test_binance_live_lineage_identity_normalizes_endpoint_and_excludes_credentials(
     tmp_path: Path,
 ) -> None:
-    first = _client(username="alice", password="first-secret")
+    first_credential = str(tmp_path / "credential-a")
+    second_credential = str(tmp_path / "credential-b")
+    first = _client(username="alice", password=first_credential)
     second = _client(
         "http://example.invalid",
         username="bob",
-        password="second-secret",
+        password=second_credential,
     )
 
     first_identity = binance_live_lineage_identity(
