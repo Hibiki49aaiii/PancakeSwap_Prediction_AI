@@ -7,6 +7,7 @@ import pytest
 
 from pancake_prediction.binance_live import (
     BinanceLiveError,
+    BinanceLiveSourceIntegrityError,
     BinanceRestPage,
     inspect_binance_live_coverage,
     latest_binance_live_cursor,
@@ -273,7 +274,7 @@ def test_live_sync_fails_closed_when_max_pages_exhausted() -> None:
     clickhouse = FakeClickHouse()
     rest = FakeRest([_page(full_page, observed_at_ms=5_000)])
 
-    with pytest.raises(BinanceLiveError, match="max_pages"):
+    with pytest.raises(BinanceLiveError, match="max_pages") as exc_info:
         sync_binance_live_aggtrades(
             clickhouse,
             clickhouse,
@@ -286,6 +287,7 @@ def test_live_sync_fails_closed_when_max_pages_exhausted() -> None:
             max_pages=1,
             ingest_version=100,
         )
+    assert not isinstance(exc_info.value, BinanceLiveSourceIntegrityError)
 
 
 def test_live_sync_rejects_non_boolean_maker_flag() -> None:
@@ -409,7 +411,10 @@ def test_live_sync_rejects_non_live_cursor_after_prospective_start() -> None:
     )
     rest = FakeRest([])
 
-    with pytest.raises(BinanceLiveError, match="source-bound campaign"):
+    with pytest.raises(
+        BinanceLiveSourceIntegrityError,
+        match="source-bound campaign",
+    ):
         sync_binance_live_aggtrades(
             clickhouse,
             clickhouse,
