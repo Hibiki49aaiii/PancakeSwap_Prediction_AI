@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -12,8 +12,39 @@ from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 
 
 @dataclass(frozen=True)
+class FakeAudit:
+    event_count: int = 12
+    head_digest: str = "a" * 64
+
+
+@dataclass(frozen=True)
+class FakeCampaign:
+    gate_ready: bool = False
+    audit: FakeAudit = field(default_factory=FakeAudit)
+
+    @property
+    def campaign_digest(self) -> str:
+        return "b" * 64
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "gate_ready": self.gate_ready,
+            "campaign_digest": self.campaign_digest,
+            "audit": {
+                "event_count": self.audit.event_count,
+                "head_digest": self.audit.head_digest,
+            },
+            "profitability_gate_eligible": False,
+            "full_historical_gate_satisfied": False,
+            "signing_enabled": False,
+            "live_broadcast": False,
+        }
+
+
+@dataclass(frozen=True)
 class FakeCycleReport:
     status: str = "no_eligible_target"
+    campaign: FakeCampaign = field(default_factory=FakeCampaign)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -95,6 +126,7 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
                 "config": config,
             }
         )
+        shadow_database.write_bytes(b"shadow-ledger-snapshot")
         return FakeCycleReport()
 
     monkeypatch.setattr(
@@ -104,11 +136,19 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
     )
 
     evidence = tmp_path / "evidence" / "runtime-latest.json"
+    campaign_evidence = tmp_path / "evidence" / "campaign-latest.json"
+    campaign_last_success = tmp_path / "evidence" / "campaign-last-success.json"
+    campaign_last_success.parent.mkdir(parents=True, exist_ok=True)
+    campaign_last_success.write_text("established-success\n", encoding="utf-8")
     args = [
         *_base_args(tmp_path),
         "--once",
         "--evidence-output",
         str(evidence),
+        "--campaign-evidence-output",
+        str(campaign_evidence),
+        "--campaign-last-success-output",
+        str(campaign_last_success),
         "--chain-confirmations",
         "5",
         "--spot-timestamp-unit",
@@ -146,6 +186,17 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
     assert payload["funded_execution"] is False
     assert not evidence.with_name(evidence.name + ".tmp").exists()
 
+    campaign_payload = json.loads(campaign_evidence.read_text(encoding="utf-8"))
+    assert campaign_payload["evidence_role"] == "latest_attempt"
+    assert campaign_payload["success"] is False
+    assert campaign_payload["workflow_outcome"] == "incomplete"
+    assert campaign_payload["ledger_binding"]["campaign_digest"] == "b" * 64
+    assert campaign_payload["signing_enabled"] is False
+    assert campaign_payload["live_broadcast"] is False
+    assert campaign_payload["funded_execution"] is False
+    assert campaign_last_success.read_text(encoding="utf-8") == "established-success\n"
+    assert not campaign_evidence.with_name(campaign_evidence.name + ".tmp").exists()
+
     config = captured["config"]
     assert isinstance(config, ShadowRuntimeConfig)
     assert config.chain_confirmations == 5
@@ -165,6 +216,90 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
     assert "clickhouse-secret" not in output
     assert "secret-rpc" not in evidence.read_text(encoding="utf-8")
     assert "clickhouse-secret" not in evidence.read_text(encoding="utf-8")
+    assert "secret-rpc" not in campaign_evidence.read_text(encoding="utf-8")
+    assert "clickhouse-secret" not in campaign_evidence.read_text(encoding="utf-8")
+
+
+def test_shadow_runtime_cli_writes_last_success_only_for_ready_campaign(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BSC_RPC_URL", "https://secret-rpc.example.invalid/key")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: object())
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+
+    def fake_cycle(
+        received_rpc: object,
+        received_clickhouse: object,
+        received_binance: object,
+        market: Market,
+        canonical_database: Path,
+        shadow_database: Path,
+        *,
+        config: ShadowRuntimeConfig,
+    ) -> FakeCycleReport:
+        del received_rpc, received_clickhouse, received_binance
+        del market, canonical_database, config
+        shadow_database.write_bytes(b"ready-shadow-ledger")
+        return FakeCycleReport(campaign=FakeCampaign(gate_ready=True))
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", fake_cycle)
+
+    latest = tmp_path / "evidence" / "campaign-latest.json"
+    last_success = tmp_path / "evidence" / "campaign-last-success.json"
+    assert (
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--once",
+                "--campaign-evidence-output",
+                str(latest),
+                "--campaign-last-success-output",
+                str(last_success),
+            ]
+        )
+        == 0
+    )
+
+    latest_payload = json.loads(latest.read_text(encoding="utf-8"))
+    success_payload = json.loads(last_success.read_text(encoding="utf-8"))
+    assert latest_payload["evidence_role"] == "latest_attempt"
+    assert success_payload["evidence_role"] == "last_success"
+    assert latest_payload["success"] is True
+    assert success_payload["success"] is True
+    assert (
+        latest_payload["ledger_binding"]["campaign_digest"]
+        == success_payload["ledger_binding"]["campaign_digest"]
+        == "b" * 64
+    )
+    assert not latest.with_name(latest.name + ".tmp").exists()
+    assert not last_success.with_name(last_success.name + ".tmp").exists()
+
+
+def test_shadow_runtime_cli_rejects_conflicting_evidence_paths(tmp_path: Path) -> None:
+    shared = tmp_path / "evidence.json"
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--once",
+                "--evidence-output",
+                str(shared),
+                "--campaign-evidence-output",
+                str(shared),
+            ]
+        )
+    assert exc_info.value.code == 2
 
 
 def test_shadow_runtime_cli_rejects_subsecond_polling(tmp_path: Path) -> None:
