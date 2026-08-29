@@ -48,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shadow-db", type=Path, required=True)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--max-consecutive-cycle-errors", type=int, default=5)
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--preflight-output", type=Path)
     parser.add_argument("--evidence-output", type=Path)
@@ -246,7 +247,6 @@ def _checkpoint_campaign_evidence(
 
 
 def _run_once(
-    parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     *,
     rpc: JsonRpcClient,
@@ -254,19 +254,35 @@ def _run_once(
     binance: BinancePublicHttpClient,
     config: ShadowRuntimeConfig,
 ) -> ShadowRuntimeCycleReport:
-    try:
-        return run_shadow_runtime_cycle(
-            rpc,
-            clickhouse,
-            binance,
-            MARKETS[str(args.market)],
-            Path(args.canonical_db),
-            Path(args.shadow_db),
-            config=config,
-        )
-    except (BinanceLiveError, ClickHouseError, RpcError, ValueError) as exc:
-        parser.error(f"Stage 4 runtime cycle failed: {exc}")
+    return run_shadow_runtime_cycle(
+        rpc,
+        clickhouse,
+        binance,
+        MARKETS[str(args.market)],
+        Path(args.canonical_db),
+        Path(args.shadow_db),
+        config=config,
+    )
 
+
+def _cycle_error_retry_payload(
+    exc: Exception,
+    *,
+    consecutive_cycle_errors: int,
+    max_consecutive_cycle_errors: int,
+    retry_after_seconds: float,
+) -> dict[str, object]:
+    return {
+        "status": "cycle_error_retry",
+        "error_type": type(exc).__name__,
+        "consecutive_cycle_errors": consecutive_cycle_errors,
+        "max_consecutive_cycle_errors": max_consecutive_cycle_errors,
+        "retry_after_seconds": retry_after_seconds,
+        "signing_enabled": False,
+        "live_broadcast": False,
+        "funded_execution": False,
+        "profitability_gate_eligible": False,
+    }
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
@@ -274,6 +290,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     poll_seconds = float(args.poll_seconds)
     if poll_seconds < 1.0:
         parser.error("--poll-seconds must be at least 1.0")
+    max_consecutive_cycle_errors = int(args.max_consecutive_cycle_errors)
+    if max_consecutive_cycle_errors < 1:
+        parser.error("--max-consecutive-cycle-errors must be at least 1")
 
     _validate_evidence_output_paths(parser, args)
     if bool(args.preflight_only):
@@ -338,15 +357,49 @@ def main(argv: Sequence[str] | None = None) -> int:
                         availability_lag_ms=config.perp_availability_lag_ms,
                     )
                 )
+            consecutive_cycle_errors = 0
             while True:
-                cycle_report = _run_once(
-                    parser,
-                    args,
-                    rpc=rpc,
-                    clickhouse=clickhouse,
-                    binance=binance,
-                    config=config,
-                )
+                try:
+                    cycle_report = _run_once(
+                        args,
+                        rpc=rpc,
+                        clickhouse=clickhouse,
+                        binance=binance,
+                        config=config,
+                    )
+                except (BinanceLiveError, ClickHouseError, RpcError, ValueError) as exc:
+                    if bool(args.once):
+                        parser.error(
+                            "Stage 4 runtime cycle failed with "
+                            f"{type(exc).__name__}"
+                        )
+                    consecutive_cycle_errors += 1
+                    if consecutive_cycle_errors >= max_consecutive_cycle_errors:
+                        parser.error(
+                            "Stage 4 runtime reached the maximum consecutive "
+                            f"cycle errors ({max_consecutive_cycle_errors}); "
+                            f"last error type: {type(exc).__name__}"
+                        )
+                    print(
+                        _render_payload(
+                            _cycle_error_retry_payload(
+                                exc,
+                                consecutive_cycle_errors=consecutive_cycle_errors,
+                                max_consecutive_cycle_errors=(
+                                    max_consecutive_cycle_errors
+                                ),
+                                retry_after_seconds=poll_seconds,
+                            )
+                        ),
+                        flush=True,
+                    )
+                    try:
+                        time.sleep(poll_seconds)
+                    except KeyboardInterrupt:
+                        return 0
+                    continue
+
+                consecutive_cycle_errors = 0
                 rendered = _render(cycle_report)
                 print(rendered, flush=True)
                 if args.evidence_output is not None:
