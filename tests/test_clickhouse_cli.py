@@ -8,10 +8,17 @@ from pathlib import Path
 import pytest
 
 from pancake_prediction import clickhouse_cli
+from pancake_prediction.binance_live_lock import (
+    BinanceLiveLineageLockError,
+    BinanceLiveLineageProcessLock,
+)
 from pancake_prediction.clickhouse import BinanceArchiveIngestReport
 
 
 class FakeClient:
+    endpoint = "http://127.0.0.1:8123"
+    database = "default"
+
     def execute(self, query: str) -> str:
         assert query == "SELECT 1"
         return "1\n"
@@ -46,6 +53,18 @@ class FakeClient:
                 yield {"name": name, "type": value_type}
             return
         raise AssertionError(f"unexpected query: {query}")
+
+
+@dataclass(frozen=True, slots=True)
+class FakeLiveReport:
+    rows: int = 3
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "market": "BNBUSD",
+            "venue": "spot",
+            "rows": self.rows,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +225,115 @@ def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
     payload = json.loads(capsys.readouterr().out)
     assert payload["rows"] == 3
     assert payload["availability_lag_ms"] == 25
+
+
+def test_clickhouse_cli_binance_live_sync_holds_lineage_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    client = FakeClient()
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: client,
+    )
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+
+    def fake_sync(
+        sink: object,
+        cursor_source: object,
+        rest_source: object,
+        **kwargs: object,
+    ) -> FakeLiveReport:
+        del cursor_source, rest_source
+        assert sink is client
+        assert kwargs["market"] == "BNBUSD"
+        assert kwargs["venue"] == "spot"
+        assert kwargs["timestamp_unit"] == "milliseconds"
+        assert kwargs["availability_lag_ms"] == 250
+        competing = BinanceLiveLineageProcessLock(
+            client,
+            market="BNBUSD",
+            venue="spot",
+            timestamp_unit="milliseconds",
+            availability_lag_ms=250,
+        )
+        with pytest.raises(BinanceLiveLineageLockError, match="already writes"):
+            competing.acquire()
+        return FakeLiveReport()
+
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "sync_binance_live_aggtrades",
+        fake_sync,
+    )
+    assert (
+        clickhouse_cli.main(
+            [
+                "binance-live-sync",
+                "--market",
+                "BNBUSD",
+                "--venue",
+                "spot",
+                "--timestamp-unit",
+                "milliseconds",
+                "--availability-lag-ms",
+                "250",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rows"] == 3
+
+
+def test_clickhouse_cli_binance_live_contention_prevents_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    client = FakeClient()
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: client,
+    )
+
+    def must_not_sync(*args: object, **kwargs: object) -> object:
+        raise AssertionError("live sync must not run while lineage lock is held")
+
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "sync_binance_live_aggtrades",
+        must_not_sync,
+    )
+
+    with BinanceLiveLineageProcessLock(
+        client,
+        market="BNBUSD",
+        venue="spot",
+        timestamp_unit="milliseconds",
+        availability_lag_ms=250,
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            clickhouse_cli.main(
+                [
+                    "binance-live-sync",
+                    "--market",
+                    "BNBUSD",
+                    "--venue",
+                    "spot",
+                    "--timestamp-unit",
+                    "milliseconds",
+                    "--availability-lag-ms",
+                    "250",
+                ]
+            )
+        assert exc_info.value.code == 2
 
 
 def test_clickhouse_cli_window_reports_only_summary(
