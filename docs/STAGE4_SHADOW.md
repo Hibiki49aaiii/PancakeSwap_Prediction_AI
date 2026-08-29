@@ -284,7 +284,7 @@ A real Stage 4 runtime binds one immutable semantic campaign manifest to the Sha
 The manifest binds the settings that define the decision/economic contract:
 
 - BSC chain, market, Prediction contract, oracle proxy anchor and Chainlink aggregator anchor;
-- chain confirmation policy;
+- chain confirmation policy and reorg lookback;
 - Binance Spot lineage and, when enabled, USD-M Perp lineage;
 - feature timing / freshness / Chainlink hazard assumptions;
 - the complete Shadow inference configuration, including training, calibration, purge, pool projection, stake, gas, decision lead, inclusion latency and minimum EV;
@@ -292,7 +292,7 @@ The manifest binds the settings that define the decision/economic contract:
 
 Restarting against the same ledger is idempotent only when the canonical manifest is identical. A semantic change creates a different digest and the runtime fails closed before settlement reconciliation.
 
-Performance-only tuning that does not change decision semantics is intentionally excluded from campaign identity. Examples include chain log chunk size, reorg scan overlap, Binance HTTP bootstrap/page/batch limits and ClickHouse dataset chunk span.
+Performance-only tuning that does not change decision semantics is intentionally excluded from campaign identity. Examples include chain log chunk size, Binance HTTP bootstrap/page/batch limits and ClickHouse dataset chunk span. The chain reorg lookback is deliberately included because it changes the source-integrity/reconciliation boundary.
 
 An existing event-bearing ledger without a campaign manifest is **not** automatically adopted. Its historical semantic identity cannot be established retrospectively, so the runtime requires a new manifest-bound campaign instead of guessing.
 
