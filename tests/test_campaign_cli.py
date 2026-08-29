@@ -19,6 +19,9 @@ from pancake_prediction.shadow_inference import (
 
 
 class ReadyClient:
+    endpoint = "http://127.0.0.1:8123"
+    database = "default"
+
     def query_json_rows(self, query: str) -> Iterator[dict[str, object]]:
         if "system.tables" in query:
             yield {
