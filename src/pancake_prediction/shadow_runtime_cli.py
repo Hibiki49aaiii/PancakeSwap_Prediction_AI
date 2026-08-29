@@ -56,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-consecutive-cycle-errors", type=int, default=5)
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--preflight-output", type=Path)
+    parser.add_argument("--status-output", type=Path)
     parser.add_argument("--evidence-output", type=Path)
     parser.add_argument("--campaign-evidence-output", type=Path)
     parser.add_argument("--campaign-last-success-output", type=Path)
@@ -204,13 +205,14 @@ def _render_payload(payload: dict[str, object]) -> str:
     )
 
 
-def _validate_evidence_output_paths(
+def _validate_output_paths(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
 ) -> None:
     seen: dict[Path, str] = {}
     for label, raw_path in (
         ("--preflight-output", args.preflight_output),
+        ("--status-output", args.status_output),
         ("--evidence-output", args.evidence_output),
         ("--campaign-evidence-output", args.campaign_evidence_output),
         ("--campaign-last-success-output", args.campaign_last_success_output),
@@ -270,24 +272,89 @@ def _run_once(
     )
 
 
+def _operational_now_ms() -> int:
+    return time.time_ns() // 1_000_000
+
+
+def _operational_safety_fields() -> dict[str, object]:
+    return {
+        "signing_enabled": False,
+        "live_broadcast": False,
+        "funded_execution": False,
+        "profitability_gate_eligible": False,
+    }
+
+
+def _cycle_success_status_payload(
+    report: ShadowRuntimeCycleReport,
+    *,
+    updated_at_ms: int,
+) -> dict[str, object]:
+    return {
+        "status": "cycle_success",
+        "cycle_status": report.status,
+        "updated_at_ms": updated_at_ms,
+        "last_success_at_ms": updated_at_ms,
+        "consecutive_cycle_errors": 0,
+        **_operational_safety_fields(),
+    }
+
+
 def _cycle_error_retry_payload(
     exc: Exception,
     *,
     consecutive_cycle_errors: int,
     max_consecutive_cycle_errors: int,
     retry_after_seconds: float,
+    updated_at_ms: int,
+    last_success_at_ms: int | None,
 ) -> dict[str, object]:
     return {
         "status": "cycle_error_retry",
         "error_type": type(exc).__name__,
+        "updated_at_ms": updated_at_ms,
+        "last_success_at_ms": last_success_at_ms,
         "consecutive_cycle_errors": consecutive_cycle_errors,
         "max_consecutive_cycle_errors": max_consecutive_cycle_errors,
         "retry_after_seconds": retry_after_seconds,
-        "signing_enabled": False,
-        "live_broadcast": False,
-        "funded_execution": False,
-        "profitability_gate_eligible": False,
+        **_operational_safety_fields(),
     }
+
+
+def _cycle_error_fatal_payload(
+    exc: Exception,
+    *,
+    consecutive_cycle_errors: int,
+    max_consecutive_cycle_errors: int,
+    updated_at_ms: int,
+    last_success_at_ms: int | None,
+) -> dict[str, object]:
+    return {
+        "status": "cycle_error_fatal",
+        "error_type": type(exc).__name__,
+        "updated_at_ms": updated_at_ms,
+        "last_success_at_ms": last_success_at_ms,
+        "consecutive_cycle_errors": consecutive_cycle_errors,
+        "max_consecutive_cycle_errors": max_consecutive_cycle_errors,
+        **_operational_safety_fields(),
+    }
+
+
+def _checkpoint_operational_status(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    payload: dict[str, object],
+) -> None:
+    if args.status_output is None:
+        return
+    try:
+        _write_evidence(Path(args.status_output), _render_payload(payload))
+    except OSError as exc:
+        parser.error(
+            "Stage 4 operational status checkpoint failed with "
+            f"{type(exc).__name__}"
+        )
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
@@ -299,8 +366,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if max_consecutive_cycle_errors < 1:
         parser.error("--max-consecutive-cycle-errors must be at least 1")
 
-    _validate_evidence_output_paths(parser, args)
+    _validate_output_paths(parser, args)
     if bool(args.preflight_only):
+        if args.status_output is not None:
+            parser.error("--status-output cannot be combined with --preflight-only")
         if any(
             value is not None
             for value in (
@@ -363,6 +432,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 )
             consecutive_cycle_errors = 0
+            last_success_at_ms: int | None = None
             while True:
                 try:
                     cycle_report = _run_once(
@@ -377,34 +447,69 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ShadowChainSourceIntegrityError,
                     ValueError,
                 ) as exc:
+                    fatal_count = consecutive_cycle_errors + 1
+                    _checkpoint_operational_status(
+                        parser,
+                        args,
+                        _cycle_error_fatal_payload(
+                            exc,
+                            consecutive_cycle_errors=fatal_count,
+                            max_consecutive_cycle_errors=max_consecutive_cycle_errors,
+                            updated_at_ms=_operational_now_ms(),
+                            last_success_at_ms=last_success_at_ms,
+                        ),
+                    )
                     parser.error(
                         "Stage 4 runtime cycle failed with "
                         f"{type(exc).__name__}"
                     )
                 except (BinanceLiveError, ClickHouseError, RpcError) as exc:
+                    terminal_count = consecutive_cycle_errors + 1
                     if bool(args.once):
+                        _checkpoint_operational_status(
+                            parser,
+                            args,
+                            _cycle_error_fatal_payload(
+                                exc,
+                                consecutive_cycle_errors=terminal_count,
+                                max_consecutive_cycle_errors=max_consecutive_cycle_errors,
+                                updated_at_ms=_operational_now_ms(),
+                                last_success_at_ms=last_success_at_ms,
+                            ),
+                        )
                         parser.error(
                             "Stage 4 runtime cycle failed with "
                             f"{type(exc).__name__}"
                         )
-                    consecutive_cycle_errors += 1
+                    consecutive_cycle_errors = terminal_count
                     if consecutive_cycle_errors >= max_consecutive_cycle_errors:
+                        _checkpoint_operational_status(
+                            parser,
+                            args,
+                            _cycle_error_fatal_payload(
+                                exc,
+                                consecutive_cycle_errors=consecutive_cycle_errors,
+                                max_consecutive_cycle_errors=max_consecutive_cycle_errors,
+                                updated_at_ms=_operational_now_ms(),
+                                last_success_at_ms=last_success_at_ms,
+                            ),
+                        )
                         parser.error(
                             "Stage 4 runtime reached the maximum consecutive "
                             f"cycle errors ({max_consecutive_cycle_errors}); "
                             f"last error type: {type(exc).__name__}"
                         )
+                    retry_payload = _cycle_error_retry_payload(
+                        exc,
+                        consecutive_cycle_errors=consecutive_cycle_errors,
+                        max_consecutive_cycle_errors=max_consecutive_cycle_errors,
+                        retry_after_seconds=poll_seconds,
+                        updated_at_ms=_operational_now_ms(),
+                        last_success_at_ms=last_success_at_ms,
+                    )
+                    _checkpoint_operational_status(parser, args, retry_payload)
                     print(
-                        _render_payload(
-                            _cycle_error_retry_payload(
-                                exc,
-                                consecutive_cycle_errors=consecutive_cycle_errors,
-                                max_consecutive_cycle_errors=(
-                                    max_consecutive_cycle_errors
-                                ),
-                                retry_after_seconds=poll_seconds,
-                            )
-                        ),
+                        _render_payload(retry_payload),
                         flush=True,
                     )
                     try:
@@ -424,6 +529,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     parser.error(
                         f"Stage 4 campaign evidence checkpoint failed: {exc}"
                     )
+                last_success_at_ms = _operational_now_ms()
+                _checkpoint_operational_status(
+                    parser,
+                    args,
+                    _cycle_success_status_payload(
+                        cycle_report,
+                        updated_at_ms=last_success_at_ms,
+                    ),
+                )
                 if bool(args.once):
                     return 0
                 try:
