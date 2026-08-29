@@ -5,8 +5,8 @@
   "mypy": "success",
   "pip_audit": "success",
   "pytest": "success",
-  "pytest_passed": 476,
+  "pytest_passed": 480,
   "ready": true,
   "ruff": "success",
-  "source_sha": "76d381716b6554f740f5faceabbbc451271e45b3"
+  "source_sha": "d685a4cd2e7637ba5486c3728b4b13c12be042fc"
 }
