@@ -188,6 +188,15 @@ def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
         assert kwargs["timestamp_unit"] == "auto"
         assert kwargs["availability_lag_ms"] == 25
         assert kwargs["batch_size"] == 2_000
+        competing = BinanceLiveLineageProcessLock(
+            sink,
+            market="BNBUSD",
+            venue="spot",
+            timestamp_unit="auto",
+            availability_lag_ms=25,
+        )
+        with pytest.raises(BinanceLiveLineageLockError, match="already writes"):
+            competing.acquire()
         return BinanceArchiveIngestReport(
             market="BNBUSD",
             venue="spot",
@@ -225,6 +234,62 @@ def test_clickhouse_cli_binance_ingest_passes_explicit_latency_and_batching(
     payload = json.loads(capsys.readouterr().out)
     assert payload["rows"] == 3
     assert payload["availability_lag_ms"] == 25
+
+
+def test_clickhouse_cli_binance_ingest_contention_prevents_archive_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    client = FakeClient()
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: client,
+    )
+
+    archive = tmp_path / "x.zip"
+    checksum = tmp_path / "x.zip.CHECKSUM"
+    archive.write_bytes(b"unused")
+    checksum.write_text("unused", encoding="utf-8")
+
+    def must_not_ingest(*args: object, **kwargs: object) -> object:
+        raise AssertionError(
+            "archive ingest must not run while live lineage lock is held"
+        )
+
+    monkeypatch.setattr(
+        clickhouse_cli,
+        "ingest_binance_archive",
+        must_not_ingest,
+    )
+
+    with BinanceLiveLineageProcessLock(
+        client,
+        market="BNBUSD",
+        venue="spot",
+        timestamp_unit="auto",
+        availability_lag_ms=25,
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            clickhouse_cli.main(
+                [
+                    "binance-ingest",
+                    "--market",
+                    "BNBUSD",
+                    "--archive",
+                    str(archive),
+                    "--checksum",
+                    str(checksum),
+                    "--venue",
+                    "spot",
+                    "--timestamp-unit",
+                    "auto",
+                    "--availability-lag-ms",
+                    "25",
+                ]
+            )
+        assert exc_info.value.code == 2
 
 
 def test_clickhouse_cli_binance_live_sync_holds_lineage_lock(
