@@ -248,6 +248,11 @@ def _patch_common(
         "load_canonical_research_inputs",
         lambda database, market: FakeInputs(replay=replay, events=()),
     )
+    monkeypatch.setattr(
+        shadow_runtime,
+        "required_shadow_feature_epochs",
+        lambda *args, **kwargs: (1, 2, 10),
+    )
 
 
 def test_runtime_cycle_skips_heavy_dataset_outside_decision_window(
@@ -308,10 +313,16 @@ def test_runtime_cycle_records_prediction_before_deadline(
         lambda *args, **kwargs: target,
     )
     dataset = FakeChunkedDataset(FakeDatasetRows((object(),)))
+    captured: dict[str, object] = {}
+
+    def fake_dataset(*args: object, **kwargs: object) -> FakeChunkedDataset:
+        captured["required_epochs"] = kwargs.get("required_epochs")
+        return dataset
+
     monkeypatch.setattr(
         shadow_runtime,
         "build_chunked_clickhouse_research_dataset",
-        lambda *args, **kwargs: dataset,
+        fake_dataset,
     )
     monkeypatch.setattr(
         shadow_runtime,
@@ -347,6 +358,7 @@ def test_runtime_cycle_records_prediction_before_deadline(
     assert report.target == target
     assert report.ledger_event is not None
     assert report.ledger_event.kind == "prediction"
+    assert captured["required_epochs"] == (1, 2, 10)
     assert ShadowLedgerStore(shadow_db).audit().prediction_count == 1
 
 
