@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .shadow_ledger import ShadowLedgerAuditReport
+from .shadow_manifest import canonical_manifest_fragment_digest
 
 PPM = 1_000_000
 
@@ -114,6 +115,7 @@ def evaluate_shadow_campaign(
     selected = policy or ShadowCampaignPolicy()
     selected.validate()
 
+    selected_policy_digest = canonical_manifest_fragment_digest(asdict(selected))
     unresolved_ppm = _ratio_ppm(audit.unresolved_count, audit.prediction_count)
     settlement_coverage_ppm = _ratio_ppm(
         audit.settlement_count,
@@ -129,6 +131,9 @@ def evaluate_shadow_campaign(
     checks = {
         "ledger_integrity_ready": audit.integrity_ready,
         "campaign_manifest_bound": audit.campaign_manifest_digest is not None,
+        "campaign_policy_matches_manifest": (
+            audit.campaign_manifest_policy_digest == selected_policy_digest
+        ),
         "prediction_count_sufficient": audit.prediction_count >= selected.min_predictions,
         "settlement_count_sufficient": audit.settlement_count >= selected.min_settlements,
         "probability_scored_sufficient": (
