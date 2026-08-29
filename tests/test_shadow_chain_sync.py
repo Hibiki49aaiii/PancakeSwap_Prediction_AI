@@ -7,7 +7,6 @@ import pytest
 
 from pancake_prediction import shadow_chain_sync
 from pancake_prediction.contracts import MARKETS
-from pancake_prediction.rpc import RpcError
 from pancake_prediction.store import EventStore
 
 
