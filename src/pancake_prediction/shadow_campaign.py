@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .shadow_ledger import ShadowLedgerAuditReport
 
@@ -159,3 +160,55 @@ def evaluate_shadow_campaign(
         settlement_coverage_ppm=settlement_coverage_ppm,
         actionable_pnl_coverage_ppm=actionable_pnl_coverage_ppm,
     )
+
+
+_EVIDENCE_ROLES = {"latest_attempt", "last_success"}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_shadow_campaign_evidence(
+    ledger_path: Path,
+    campaign: ShadowCampaignGateReport,
+    *,
+    evidence_role: str = "latest_attempt",
+) -> dict[str, object]:
+    if evidence_role not in _EVIDENCE_ROLES:
+        raise ValueError("evidence_role must be latest_attempt or last_success")
+    if evidence_role == "last_success" and not campaign.gate_ready:
+        raise ValueError("last_success evidence requires a ready campaign")
+    if not ledger_path.is_file():
+        raise ValueError(f"shadow ledger does not exist: {ledger_path}")
+
+    return {
+        "evidence_version": 1,
+        "evidence_role": evidence_role,
+        "purpose": "stage4_shadow_campaign_operational_readiness",
+        "success": campaign.gate_ready,
+        "workflow_outcome": "success" if campaign.gate_ready else "incomplete",
+        "ledger_sha256": _sha256_file(ledger_path),
+        "ledger_binding": {
+            "event_count": campaign.audit.event_count,
+            "head_digest": campaign.audit.head_digest,
+            "campaign_digest": campaign.campaign_digest,
+            "physical_sha256_scope": "sqlite_main_database_file",
+        },
+        "campaign": campaign.as_dict(),
+        "profitability_gate_eligible": False,
+        "full_historical_gate_satisfied": False,
+        "signing_enabled": False,
+        "live_broadcast": False,
+        "funded_execution": False,
+        "interpretation": (
+            "Stage 4 shadow operational-readiness evidence only. This proves append-only "
+            "decision capture, settlement reconciliation, minimum campaign coverage, and "
+            "metric availability. PnL sign is intentionally not a pass condition and no "
+            "funded execution is authorized."
+        ),
+    }
