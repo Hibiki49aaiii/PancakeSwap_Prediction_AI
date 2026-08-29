@@ -35,6 +35,7 @@ def _audit(**overrides: object) -> ShadowLedgerAuditReport:
         "feature_set_ids": ("full-v1",),
         "action_counts": {"bull": 250, "bear": 250, "skip": 500},
         "integrity_errors": (),
+        "campaign_manifest_digest": "f" * 64,
     }
     values.update(overrides)
     return ShadowLedgerAuditReport(**values)  # type: ignore[arg-type]
@@ -55,6 +56,20 @@ def test_shadow_campaign_gate_can_pass_with_negative_pnl() -> None:
     assert payload["live_broadcast"] is False
     assert len(report.campaign_digest) == 64
     assert report.campaign_digest == evaluate_shadow_campaign(_audit()).campaign_digest
+
+
+def test_shadow_campaign_gate_requires_bound_manifest() -> None:
+    report = evaluate_shadow_campaign(_audit(campaign_manifest_digest=None))
+
+    assert report.gate_ready is False
+    assert report.checks["campaign_manifest_bound"] is False
+
+
+def test_shadow_campaign_digest_binds_manifest_identity() -> None:
+    first = evaluate_shadow_campaign(_audit(campaign_manifest_digest="f" * 64))
+    second = evaluate_shadow_campaign(_audit(campaign_manifest_digest="e" * 64))
+
+    assert first.campaign_digest != second.campaign_digest
 
 
 def test_shadow_campaign_gate_fails_unresolved_or_short_campaign() -> None:
@@ -179,6 +194,7 @@ def test_shadow_campaign_evidence_binds_logical_ledger_state(tmp_path: Path) -> 
     assert payload["success"] is True
     assert payload["workflow_outcome"] == "success"
     assert payload["ledger_sha256"] == hashlib.sha256(ledger.read_bytes()).hexdigest()
+    assert binding["campaign_manifest_digest"] == report.audit.campaign_manifest_digest
     assert binding["event_count"] == report.audit.event_count
     assert binding["head_digest"] == report.audit.head_digest
     assert binding["campaign_digest"] == report.campaign_digest
@@ -223,4 +239,13 @@ def test_shadow_campaign_evidence_rejects_unknown_role(tmp_path: Path) -> None:
             evaluate_shadow_campaign(_audit()),
             evidence_role="historical_success",
         )
+
+
+def test_shadow_campaign_evidence_rejects_unbound_manifest(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+    report = evaluate_shadow_campaign(_audit(campaign_manifest_digest=None))
+
+    with pytest.raises(ValueError, match="bound campaign manifest"):
+        build_shadow_campaign_evidence(ledger, report)
 
