@@ -337,7 +337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "shadow-runtime-health":
         try:
-            report = inspect_shadow_runtime_health(
+            health_report = inspect_shadow_runtime_health(
                 Path(args.status_file),
                 max_status_age_seconds=float(args.max_status_age_seconds),
                 max_last_success_age_seconds=(
@@ -348,8 +348,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except ValueError as exc:
             parser.error(str(exc))
-        _print_json(report.as_dict())
-        return 0 if report.check_passed else 2
+        _print_json(health_report.as_dict())
+        return 0 if health_report.check_passed else 2
     if args.command == "rpc-probe":
         probe_result = probe_archive_state(
             JsonRpcClient(_rpc_url_or_error(parser, args.rpc_url)),
