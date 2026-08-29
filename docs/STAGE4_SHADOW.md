@@ -308,6 +308,27 @@ An existing event-bearing ledger without a campaign manifest is **not** automati
 
 The ledger audit also checks that the requested audit `purge_rounds` matches the bound inference manifest, that prediction market identity matches the manifest, and that the Stage 4 campaign policy used for evaluation matches the policy bound in the manifest.
 
+### Campaign single-writer runtime lock
+
+Normal Stage 4 operation is campaign-single-writer.
+
+Before any source synchronization, `pcs-shadow-runtime` acquires a non-blocking exclusive coordination lock derived from the resolved `--shadow-db` path:
+
+    <shadow-db>.runtime-lock.sqlite3
+
+The lock database is separate from the append-only Shadow Ledger because the runtime opens the real ledger through independent SQLite connections during reconciliation, audit and append. Holding an exclusive transaction on the real ledger would block the runtime itself.
+
+The coordination DB uses a live SQLite `BEGIN EXCLUSIVE` transaction with zero busy timeout:
+
+- the first runtime process acquires it and keeps it for the complete `--once` cycle or continuous loop;
+- a second process targeting the same Shadow DB fails before chain/Binance synchronization starts;
+- release occurs on normal exit, exception or connection/process termination;
+- the lock DB file may remain after release; file existence alone does not mean a runtime still owns the campaign.
+
+This coordination state is intentionally excluded from campaign manifest identity and campaign Evidence. It is operational process ownership, not decision semantics.
+
+`--preflight-only` remains read-only and does not create or acquire the runtime lock.
+
 The installed runtime command is:
 
     pcs-shadow-runtime
