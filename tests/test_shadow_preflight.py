@@ -96,6 +96,10 @@ class FakeRpc:
 class FakeClickHouse:
     spot_rows: int = 100
     perp_rows: int = 100
+    spot_live_rows: int = 0
+    perp_live_rows: int = 0
+    spot_latest_source: str = "BNBUSDT-archive.zip"
+    perp_latest_source: str = "BNBUSDT-perp-archive.zip"
     fail: bool = False
 
     def query_json_rows(
@@ -104,18 +108,48 @@ class FakeClickHouse:
         *,
         parameters: Mapping[str, QueryParameter] | None = None,
     ) -> Iterator[dict[str, object]]:
-        del query
         if self.fail:
             raise ClickHouseError("clickhouse-secret-password")
         if parameters is None:
             raise AssertionError("lineage query must be parameterized")
         venue = str(parameters["venue"])
         count = self.spot_rows if venue == "spot" else self.perp_rows
-        yield {
-            "row_count": count,
-            "first_trade_timestamp_ms": None if count == 0 else 100,
-            "last_trade_timestamp_ms": None if count == 0 else 200,
-        }
+        live_count = (
+            self.spot_live_rows if venue == "spot" else self.perp_live_rows
+        )
+        latest_source = (
+            self.spot_latest_source
+            if venue == "spot"
+            else self.perp_latest_source
+        )
+
+        if "first_trade_timestamp_ms" in query:
+            yield {
+                "row_count": count,
+                "first_trade_timestamp_ms": None if count == 0 else 100,
+                "last_trade_timestamp_ms": None if count == 0 else 200,
+            }
+            return
+
+        if "first_available_at_ms" in query:
+            yield {
+                "row_count": live_count,
+                "first_available_at_ms": None if live_count == 0 else 150,
+                "last_available_at_ms": None if live_count == 0 else 250,
+            }
+            return
+
+        if "ORDER BY aggregate_trade_id DESC LIMIT 1" in query:
+            if count == 0:
+                return
+            yield {
+                "aggregate_trade_id": count,
+                "trade_timestamp_ms": 200,
+                "source_name": latest_source,
+            }
+            return
+
+        raise AssertionError(f"unexpected lineage query: {query}")
 
 
 @dataclass
@@ -267,8 +301,15 @@ def test_preflight_ready_when_structural_inputs_and_sources_are_available(
     assert report.checks["campaign_manifest_constructible"] is True
     assert report.spot_lineage is not None
     assert report.spot_lineage.row_count == 100
+    assert report.spot_lineage.live_row_count == 0
+    assert report.spot_lineage.latest_source_name == "BNBUSDT-archive.zip"
+    assert report.spot_lineage.prospective_source_consistent is True
     assert report.perp_lineage is not None
     assert report.perp_lineage.row_count == 100
+    assert report.perp_lineage.live_row_count == 0
+    assert report.perp_lineage.prospective_source_consistent is True
+    assert report.checks["spot_lineage_source_consistent"] is True
+    assert report.checks["perp_lineage_source_consistent"] is True
     assert report.binance_spot_probe_rows == 1
     assert report.binance_perp_probe_rows == 1
     assert report.as_dict()["signing_enabled"] is False
@@ -376,7 +417,146 @@ def test_preflight_does_not_require_perp_when_disabled(
     assert report.perp_lineage is None
     assert report.binance_perp_probe_rows is None
     assert report.checks["perp_lineage_present"] is True
+    assert report.checks["perp_lineage_source_consistent"] is True
     assert report.checks["binance_perp_reachable"] is True
+
+
+def test_preflight_accepts_live_lineages_with_live_latest_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(
+            spot_live_rows=25,
+            perp_live_rows=30,
+            spot_latest_source="binance-rest:spot",
+            perp_latest_source="binance-rest:um_futures",
+        ),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        tmp_path / "shadow.sqlite3",
+        config=_config(),
+    )
+
+    assert report.ready is True
+    assert report.spot_lineage is not None
+    assert report.spot_lineage.live_row_count == 25
+    assert report.spot_lineage.latest_source_name == "binance-rest:spot"
+    assert report.spot_lineage.prospective_source_consistent is True
+    assert report.perp_lineage is not None
+    assert report.perp_lineage.live_row_count == 30
+    assert report.perp_lineage.latest_source_name == "binance-rest:um_futures"
+    assert report.perp_lineage.prospective_source_consistent is True
+
+
+def test_preflight_rejects_live_spot_lineage_advanced_by_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(
+            spot_live_rows=25,
+            spot_latest_source="BNBUSDT-late-archive.zip",
+        ),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        tmp_path / "shadow.sqlite3",
+        config=_config(),
+    )
+
+    assert report.ready is False
+    assert report.checks["spot_lineage_present"] is True
+    assert report.checks["spot_lineage_source_consistent"] is False
+    assert "spot_lineage_source_consistent" in report.failures
+    assert report.spot_lineage is not None
+    assert report.spot_lineage.live_row_count == 25
+    assert report.spot_lineage.latest_source_name == "BNBUSDT-late-archive.zip"
+
+
+def test_preflight_rejects_live_perp_lineage_advanced_by_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(
+            perp_live_rows=30,
+            perp_latest_source="BNBUSDT-perp-late-archive.zip",
+        ),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        tmp_path / "shadow.sqlite3",
+        config=_config(),
+    )
+
+    assert report.ready is False
+    assert report.checks["perp_lineage_present"] is True
+    assert report.checks["perp_lineage_source_consistent"] is False
+    assert "perp_lineage_source_consistent" in report.failures
+
+
+def test_preflight_fails_closed_on_malformed_live_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "canonical.sqlite3"
+    canonical.write_bytes(b"existing")
+    _patch_canonical(monkeypatch)
+    monkeypatch.setattr(
+        shadow_preflight,
+        "inspect_binance_trade_schema",
+        lambda source: _schema(),
+    )
+
+    report = shadow_preflight.run_shadow_runtime_preflight(
+        FakeRpc(),
+        FakeClickHouse(
+            spot_live_rows=10,
+            spot_latest_source="",
+        ),
+        FakeBinance(),
+        MARKETS["BNBUSD"],
+        canonical,
+        tmp_path / "shadow.sqlite3",
+        config=_config(),
+    )
+
+    assert report.ready is False
+    assert report.checks["spot_lineage_present"] is False
+    assert report.checks["spot_lineage_source_consistent"] is False
+    assert "spot_lineage_source_consistent" in report.failures
 
 
 def test_preflight_accepts_exact_bound_shadow_manifest_without_mutation(
