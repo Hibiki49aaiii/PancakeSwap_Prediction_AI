@@ -39,6 +39,19 @@ Regression coverage requires:
 - target final outcome/final pool mutation does not change the required epoch plan or prediction;
 - bounded ClickHouse path performs fewer chunk queries when non-required epochs occupy different chunks.
 
+## Batch-vs-single-target boundary
+
+The same principle applies to derived models that have both historical batch and live target use cases.
+
+For pool projection, historical OOS evaluation legitimately computes projections for every target epoch. Stage 4 online inference needs exactly one target projection. Calling the full all-target builder in the live path preserves correctness but wastes decision-window time and can become quadratic as replay history grows.
+
+The safe pattern is to extract a shared target-level implementation, then expose:
+
+- an all-target wrapper for historical/OOS analysis;
+- an exactly-one-target wrapper for online inference.
+
+Both wrappers must produce an identical projection for the same target, including model identity and purge provenance.
+
 ## Why it matters
 
 Performance work near a live decision cutoff can accidentally become hidden model drift. Separating model semantics from data-access cost keeps latency improvements reviewable and preserves historical OOS comparability.
@@ -59,6 +72,7 @@ The bounded path is not constant-time as history grows because the current model
 - `src/pancake_prediction/shadow_inference.py`
 - `src/pancake_prediction/clickhouse_dataset.py`
 - `src/pancake_prediction/shadow_runtime.py`
+- `src/pancake_prediction/pool_projection.py`
 - `tests/test_shadow_inference.py`
 - `tests/test_clickhouse_dataset.py`
 - `docs/ai/issues/7/IMPLEMENTATION_PLAN.md`
