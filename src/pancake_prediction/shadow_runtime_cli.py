@@ -13,6 +13,7 @@ from .binance_live import BinanceLiveError, BinancePublicHttpClient
 from .clickhouse import ClickHouseError, ClickHouseHttpClient
 from .contracts import MARKETS
 from .rpc import JsonRpcClient, RpcError
+from .shadow_campaign import build_shadow_campaign_evidence
 from .shadow_inference import ShadowInferenceConfig
 from .shadow_runtime import (
     ShadowRuntimeConfig,
@@ -35,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--evidence-output", type=Path)
+    parser.add_argument("--campaign-evidence-output", type=Path)
+    parser.add_argument("--campaign-last-success-output", type=Path)
 
     parser.add_argument("--chain-confirmations", type=int, default=3)
     parser.add_argument("--chain-chunk-size", type=int, default=2_000)
@@ -164,6 +167,60 @@ def _write_evidence(path: Path, rendered: str) -> None:
     temporary.replace(path)
 
 
+def _render_payload(payload: dict[str, object]) -> str:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _validate_evidence_output_paths(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    seen: dict[Path, str] = {}
+    for label, raw_path in (
+        ("--evidence-output", args.evidence_output),
+        ("--campaign-evidence-output", args.campaign_evidence_output),
+        ("--campaign-last-success-output", args.campaign_last_success_output),
+    ):
+        if raw_path is None:
+            continue
+        path = Path(raw_path).resolve()
+        previous = seen.get(path)
+        if previous is not None:
+            parser.error(f"{label} must differ from {previous}")
+        seen[path] = label
+
+
+def _checkpoint_campaign_evidence(
+    args: argparse.Namespace,
+    report: ShadowRuntimeCycleReport,
+) -> None:
+    latest_path = args.campaign_evidence_output
+    last_success_path = args.campaign_last_success_output
+    if latest_path is None and last_success_path is None:
+        return
+
+    ledger_path = Path(args.shadow_db)
+    if latest_path is not None:
+        latest = build_shadow_campaign_evidence(
+            ledger_path,
+            report.campaign,
+            evidence_role="latest_attempt",
+        )
+        _write_evidence(Path(latest_path), _render_payload(latest))
+
+    if last_success_path is not None and report.campaign.gate_ready:
+        last_success = build_shadow_campaign_evidence(
+            ledger_path,
+            report.campaign,
+            evidence_role="last_success",
+        )
+        _write_evidence(Path(last_success_path), _render_payload(last_success))
+
+
 def _run_once(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
@@ -194,6 +251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if poll_seconds < 1.0:
         parser.error("--poll-seconds must be at least 1.0")
 
+    _validate_evidence_output_paths(parser, args)
+
     config = _runtime_config(args)
     try:
         config.validate()
@@ -217,6 +276,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(rendered, flush=True)
         if args.evidence_output is not None:
             _write_evidence(Path(args.evidence_output), rendered)
+        try:
+            _checkpoint_campaign_evidence(args, report)
+        except (OSError, ValueError) as exc:
+            parser.error(f"Stage 4 campaign evidence checkpoint failed: {exc}")
         if bool(args.once):
             return 0
         try:
