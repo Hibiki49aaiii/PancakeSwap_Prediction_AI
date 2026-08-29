@@ -204,6 +204,55 @@ def _target_row(
     return matches[0]
 
 
+def _eligible_training_records(
+    replay: ReplaySnapshot,
+    *,
+    target_epoch: int,
+    target_decision_timestamp: int,
+    purge_rounds: int,
+) -> tuple[RoundRecord, ...]:
+    latest_allowed_epoch = target_epoch - purge_rounds - 1
+    by_epoch: dict[int, RoundRecord] = {}
+    for record in replay.rounds:
+        if (
+            record.epoch <= latest_allowed_epoch
+            and record.label in {"bull", "bear"}
+            and record.end_timestamp is not None
+            and record.end_timestamp < target_decision_timestamp
+        ):
+            if record.epoch in by_epoch:
+                raise ValueError(f"duplicate replay epoch {record.epoch}")
+            by_epoch[record.epoch] = record
+    return tuple(by_epoch[epoch] for epoch in sorted(by_epoch))
+
+
+def required_shadow_feature_epochs(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    *,
+    target_epoch: int,
+    config: ShadowInferenceConfig | None = None,
+) -> tuple[int, ...]:
+    selected = config or ShadowInferenceConfig()
+    selected.validate()
+    target = _target_round(replay, target_epoch)
+    snapshot = build_decision_snapshot(
+        replay,
+        target,
+        events,
+        selected.backtest_config(),
+    )
+    if snapshot is None:
+        raise ValueError("target round has no valid pre-lock decision snapshot")
+    training = _eligible_training_records(
+        replay,
+        target_epoch=target_epoch,
+        target_decision_timestamp=snapshot.decision_timestamp,
+        purge_rounds=selected.purge_rounds,
+    )
+    return tuple(record.epoch for record in training) + (target_epoch,)
+
+
 def _eligible_training_rows(
     replay: ReplaySnapshot,
     rows: tuple[ResearchFeatureRow, ...],
@@ -212,20 +261,17 @@ def _eligible_training_rows(
     target_decision_timestamp: int,
     purge_rounds: int,
 ) -> tuple[tuple[ResearchFeatureRow, ...], dict[int, int]]:
-    latest_allowed_epoch = target_epoch - purge_rounds - 1
-    settled: dict[int, RoundRecord] = {}
-    outcomes: dict[int, int] = {}
-    for record in replay.rounds:
-        if (
-            record.epoch <= latest_allowed_epoch
-            and record.label in {"bull", "bear"}
-            and record.end_timestamp is not None
-            and record.end_timestamp < target_decision_timestamp
-        ):
-            if record.epoch in settled:
-                raise ValueError(f"duplicate replay epoch {record.epoch}")
-            settled[record.epoch] = record
-            outcomes[record.epoch] = 1 if record.label == "bull" else 0
+    training_records = _eligible_training_records(
+        replay,
+        target_epoch=target_epoch,
+        target_decision_timestamp=target_decision_timestamp,
+        purge_rounds=purge_rounds,
+    )
+    settled = {record.epoch: record for record in training_records}
+    outcomes = {
+        record.epoch: 1 if record.label == "bull" else 0
+        for record in training_records
+    }
 
     by_epoch: dict[int, ResearchFeatureRow] = {}
     for row in rows:
