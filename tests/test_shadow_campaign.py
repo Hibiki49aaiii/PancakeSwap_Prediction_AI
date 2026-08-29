@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,7 @@ from pancake_prediction.shadow_campaign import (
     evaluate_shadow_campaign,
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport
+from pancake_prediction.shadow_manifest import canonical_manifest_fragment_digest
 
 
 def _audit(**overrides: object) -> ShadowLedgerAuditReport:
@@ -36,6 +37,11 @@ def _audit(**overrides: object) -> ShadowLedgerAuditReport:
         "action_counts": {"bull": 250, "bear": 250, "skip": 500},
         "integrity_errors": (),
         "campaign_manifest_digest": "f" * 64,
+        "audit_purge_rounds": 2,
+        "campaign_manifest_market": "BNBUSD",
+        "campaign_manifest_policy_digest": canonical_manifest_fragment_digest(
+            asdict(ShadowCampaignPolicy())
+        ),
     }
     values.update(overrides)
     return ShadowLedgerAuditReport(**values)  # type: ignore[arg-type]
@@ -117,10 +123,56 @@ def test_shadow_campaign_gate_detects_model_or_feature_drift() -> None:
         _audit(
             model_ids=("shadow-wf-v1", "shadow-wf-v2"),
             feature_set_ids=("full-v1", "without-round_history-v1"),
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(relaxed)
+            ),
         ),
         relaxed,
     )
     assert relaxed_report.gate_ready is True
+
+
+def test_shadow_campaign_gate_rejects_policy_drift_from_manifest() -> None:
+    changed = replace(
+        ShadowCampaignPolicy(),
+        min_predictions=999,
+    )
+    report = evaluate_shadow_campaign(_audit(), changed)
+
+    assert report.gate_ready is False
+    assert report.checks["campaign_policy_matches_manifest"] is False
+
+
+def test_shadow_campaign_gate_accepts_exact_bound_policy() -> None:
+    policy = replace(
+        ShadowCampaignPolicy(),
+        min_predictions=10,
+        min_settlements=8,
+        min_probability_scored=8,
+        min_actionable_predictions=2,
+        min_decision_span_ms=60_000,
+    )
+    report = evaluate_shadow_campaign(
+        _audit(
+            prediction_count=10,
+            settlement_count=9,
+            unresolved_count=1,
+            probability_scored_count=9,
+            actionable_prediction_count=4,
+            settled_actionable_count=4,
+            observed_pnl_count=4,
+            first_decision_timestamp_ms=1_000_000,
+            last_decision_timestamp_ms=1_060_000,
+            action_counts={"bull": 2, "bear": 2, "skip": 6},
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(policy)
+            ),
+        ),
+        policy,
+    )
+
+    assert report.gate_ready is True
+    assert report.checks["campaign_policy_matches_manifest"] is True
 
 
 def test_shadow_campaign_gate_requires_integrity_and_minimum_samples() -> None:
@@ -174,6 +226,9 @@ def test_shadow_campaign_custom_policy_can_define_small_smoke_gate() -> None:
             first_decision_timestamp_ms=1_000_000,
             last_decision_timestamp_ms=1_060_000,
             action_counts={"bull": 2, "bear": 2, "skip": 6},
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(small)
+            ),
         ),
         small,
     )
