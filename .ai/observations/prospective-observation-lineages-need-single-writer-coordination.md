@@ -54,6 +54,19 @@ Under that table model:
 
 A future data model may relax this only if historical and prospective observations are separated or combine with deterministic information-availability semantics.
 
+## Preflight and runtime must share the same integrity definition
+
+If normal runtime already knows how to reject a source-integrity violation, read-only preflight should reuse that exact invariant whenever it can prove the same state without mutation.
+
+For Binance prospective lineages:
+
+- archive-only history before live collection is valid;
+- once live provenance exists, the latest cursor must still be from the expected live source;
+- malformed live coverage/cursor state fails closed;
+- preflight should call the same coverage/cursor helpers as runtime instead of reimplementing a weaker approximation.
+
+This prevents a green preflight from being followed immediately by a deterministic runtime source-integrity failure.
+
 ## Semantic boundary
 
 The lock is operational coordination, not prediction semantics.
@@ -83,3 +96,4 @@ Multi-host writers require either:
 - `src/pancake_prediction/clickhouse_cli.py`
 - Issue #16 tests
 - Issue #17 tests
+- Issue #18 tests
