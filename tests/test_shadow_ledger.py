@@ -11,6 +11,7 @@ from pancake_prediction.research_ledger import ResearchPredictionRecord, feature
 from pancake_prediction.shadow_ledger import (
     ShadowLedgerStore,
     ShadowSettlementRecord,
+    inspect_shadow_ledger_read_only,
 )
 from pancake_prediction.shadow_manifest import ShadowCampaignManifest
 
@@ -232,6 +233,54 @@ def test_shadow_audit_detects_payload_tampering(tmp_path: Path) -> None:
     report = store.audit()
     assert report.integrity_ready is False
     assert any("event digest mismatch" in item for item in report.integrity_errors)
+
+
+def test_shadow_ledger_read_only_inspection_missing_path_does_not_create_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "missing.sqlite3"
+
+    report = inspect_shadow_ledger_read_only(path)
+
+    assert report.database_exists is False
+    assert report.schema_ready is True
+    assert report.binding_state == "absent"
+    assert report.event_count is None
+    assert path.exists() is False
+
+
+def test_shadow_ledger_read_only_inspection_bound_manifest_preserves_main_file(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    binding = store.bind_campaign_manifest(_manifest())
+    before = store.path.read_bytes()
+
+    report = inspect_shadow_ledger_read_only(store.path)
+
+    assert report.database_exists is True
+    assert report.schema_ready is True
+    assert report.binding_state == "bound"
+    assert report.event_count == 0
+    assert report.manifest_digest == binding.manifest_digest
+    assert report.manifest_payload == binding.payload
+    assert report.errors == ()
+    assert store.path.read_bytes() == before
+
+
+def test_shadow_ledger_read_only_inspection_rejects_non_ledger_sqlite(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "not-ledger.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE unrelated(value INTEGER)")
+
+    report = inspect_shadow_ledger_read_only(path)
+
+    assert report.database_exists is True
+    assert report.schema_ready is False
+    assert report.binding_state == "invalid"
+    assert report.errors == ("shadow_ledger_core_schema_missing",)
 
 
 def test_shadow_ledger_binds_manifest_idempotently(tmp_path: Path) -> None:
