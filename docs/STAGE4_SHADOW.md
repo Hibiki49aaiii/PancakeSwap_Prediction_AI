@@ -136,6 +136,10 @@ This is necessary because retry-safe `ReplacingMergeTree(ingest_version)` dedupl
 
 The lineage lock is local process coordination only and is deliberately excluded from campaign manifest identity and campaign Evidence. A multi-host deployment would require a distributed coordination design or a different commutative observation model.
 
+Historical archive preparation is also one-way under the current table model. `pcs-clickhouse binance-ingest` acquires the same lineage lock as live writers, verifies the archive checksum, then checks for existing `binance-rest:<venue>` provenance before any archive row insert. If prospective live rows already exist for that lineage, archive ingest fails closed.
+
+This keeps a later archive `ingest_version` from replacing a live row whose `event_timestamp_ms` records a later actual HTTP observation time. Historical Binance archives must therefore be prepared before prospective Stage 4 collection begins for that exact lineage.
+
 Example Spot sync:
 
     pcs-clickhouse binance-live-sync \
@@ -563,7 +567,7 @@ Before starting pcs-shadow-runtime:
 
 1. bootstrap the canonical recent BSC dataset with a proven current Chainlink proxy -> aggregator route;
 2. have enough settled historical canonical rounds for the selected min-train / calibration / pool-projection configuration;
-3. have matching historical Binance Spot / Perp data in ClickHouse under the same timestamp-unit and availability-lag lineage selected by the runtime;
+3. have matching historical Binance Spot / Perp data in ClickHouse under the same timestamp-unit and availability-lag lineage selected by the runtime, and finish archive ingestion before any prospective live row exists for that lineage;
 4. start the live runtime before expecting a prospectively valid current microstructure row, allowing at least the configured flow-lookback warmup.
 
 Do not bootstrap a live campaign by fetching old REST trades after the fact and relabeling them as prospectively observed.
