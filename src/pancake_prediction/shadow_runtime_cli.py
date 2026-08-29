@@ -24,6 +24,10 @@ from .shadow_runtime import (
     ShadowRuntimeCycleReport,
     run_shadow_runtime_cycle,
 )
+from .shadow_runtime_lock import (
+    ShadowRuntimeLockError,
+    ShadowRuntimeProcessLock,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -308,29 +312,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             _write_evidence(Path(args.preflight_output), rendered)
         return 0 if preflight_report.ready else 2
 
-    while True:
-        cycle_report = _run_once(
-            parser,
-            args,
-            rpc=rpc,
-            clickhouse=clickhouse,
-            binance=binance,
-            config=config,
-        )
-        rendered = _render(cycle_report)
-        print(rendered, flush=True)
-        if args.evidence_output is not None:
-            _write_evidence(Path(args.evidence_output), rendered)
-        try:
-            _checkpoint_campaign_evidence(args, cycle_report)
-        except (OSError, ValueError) as exc:
-            parser.error(f"Stage 4 campaign evidence checkpoint failed: {exc}")
-        if bool(args.once):
-            return 0
-        try:
-            time.sleep(poll_seconds)
-        except KeyboardInterrupt:
-            return 0
+    try:
+        with ShadowRuntimeProcessLock(Path(args.shadow_db)):
+            while True:
+                cycle_report = _run_once(
+                    parser,
+                    args,
+                    rpc=rpc,
+                    clickhouse=clickhouse,
+                    binance=binance,
+                    config=config,
+                )
+                rendered = _render(cycle_report)
+                print(rendered, flush=True)
+                if args.evidence_output is not None:
+                    _write_evidence(Path(args.evidence_output), rendered)
+                try:
+                    _checkpoint_campaign_evidence(args, cycle_report)
+                except (OSError, ValueError) as exc:
+                    parser.error(
+                        f"Stage 4 campaign evidence checkpoint failed: {exc}"
+                    )
+                if bool(args.once):
+                    return 0
+                try:
+                    time.sleep(poll_seconds)
+                except KeyboardInterrupt:
+                    return 0
+    except ShadowRuntimeLockError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":
