@@ -197,6 +197,29 @@ When no target is currently eligible the command reconciles prior settlements, r
 
 ## Continuous Stage 4 runtime
 
+### Bounded continuous-cycle recovery
+
+`pcs-shadow-runtime --once` remains strict: any supported runtime-cycle `RpcError`, `BinanceLiveError`, `ClickHouseError`, or `ValueError` exits with status 2 immediately.
+
+Continuous mode instead tolerates a bounded number of consecutive failed cycles. The operational option:
+
+    --max-consecutive-cycle-errors 5
+
+defaults to 5 and must be at least 1.
+
+When a continuous cycle fails below that limit, the runtime:
+
+- keeps the Shadow campaign and configured Binance lineage locks held;
+- increments the consecutive-error counter;
+- emits a `cycle_error_retry` JSON status to stdout;
+- includes only the exception class name, counters, and retry interval;
+- never serializes the raw exception message;
+- sleeps the existing `--poll-seconds` interval and retries.
+
+A successful cycle resets the counter to zero. Reaching the configured consecutive-error limit fails closed with exit status 2. `KeyboardInterrupt` during retry sleep exits cleanly.
+
+Retry status is operational telemetry only. It does not update `--evidence-output`, campaign latest Evidence, or campaign last-success Evidence. `--max-consecutive-cycle-errors` is likewise excluded from `ShadowRuntimeConfig`, campaign manifest identity, and campaign Evidence semantics.
+
 src/pancake_prediction/shadow_runtime.py composes one complete cycle:
 
 1. validate the retry-safe ClickHouse schema;
