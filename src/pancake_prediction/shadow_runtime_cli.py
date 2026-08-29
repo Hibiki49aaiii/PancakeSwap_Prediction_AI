@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import cast
 
 from .binance_archive import TimestampUnit
-from .binance_live import BinanceLiveError, BinancePublicHttpClient
+from .binance_live import (
+    BinanceLiveError,
+    BinanceLiveSourceIntegrityError,
+    BinancePublicHttpClient,
+)
 from .binance_live_lock import (
     BinanceLiveLineageLockError,
     BinanceLiveLineageProcessLock,
@@ -19,6 +23,7 @@ from .clickhouse import ClickHouseError, ClickHouseHttpClient
 from .contracts import MARKETS
 from .rpc import JsonRpcClient, RpcError
 from .shadow_campaign import build_shadow_campaign_evidence
+from .shadow_chain_sync import ShadowChainSourceIntegrityError
 from .shadow_inference import ShadowInferenceConfig
 from .shadow_preflight import (
     ShadowRuntimePreflightReport,
@@ -367,7 +372,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                         binance=binance,
                         config=config,
                     )
-                except (BinanceLiveError, ClickHouseError, RpcError, ValueError) as exc:
+                except (
+                    BinanceLiveSourceIntegrityError,
+                    ShadowChainSourceIntegrityError,
+                    ValueError,
+                ) as exc:
+                    parser.error(
+                        "Stage 4 runtime cycle failed with "
+                        f"{type(exc).__name__}"
+                    )
+                except (BinanceLiveError, ClickHouseError, RpcError) as exc:
                     if bool(args.once):
                         parser.error(
                             "Stage 4 runtime cycle failed with "
