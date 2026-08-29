@@ -254,6 +254,47 @@ class EventStore:
             row = conn.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return None if row is None else str(row["value"])
 
+    def record_monotonic_int_metadata(self, key: str, value: int) -> int:
+        if value < 0:
+            raise ValueError("monotonic metadata value must be non-negative")
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO metadata(key,value) VALUES(?,?)",
+                    (key, str(value)),
+                )
+                conn.commit()
+                return value
+
+            raw_current = str(row["value"])
+            try:
+                current = int(raw_current, 10)
+            except ValueError as exc:
+                raise ValueError(
+                    f"existing monotonic metadata {key!r} is not an integer"
+                ) from exc
+            if current < 0:
+                raise ValueError(
+                    f"existing monotonic metadata {key!r} must be non-negative"
+                )
+            if value > current:
+                conn.execute(
+                    """
+                    UPDATE metadata
+                    SET value=?,updated_at=CURRENT_TIMESTAMP
+                    WHERE key=?
+                    """,
+                    (str(value), key),
+                )
+                current = value
+            conn.commit()
+            return current
+
     def begin_collector_run(
         self,
         *,
