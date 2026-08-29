@@ -46,7 +46,10 @@ def _manifest(*, stake_wei: int = 100) -> ShadowCampaignManifest:
         oracle_proxy_anchor="0x" + "11" * 20,
         chainlink_aggregator_anchor="0x" + "22" * 20,
         semantic_config={
-            "inference": {"stake_wei": stake_wei},
+            "inference": {
+                "stake_wei": stake_wei,
+                "purge_rounds": 2,
+            },
             "campaign_policy": {"min_predictions": 1_000},
         },
     )
@@ -245,6 +248,41 @@ def test_shadow_ledger_binds_manifest_idempotently(tmp_path: Path) -> None:
     report = store.audit()
     assert report.campaign_manifest_digest == manifest.digest
     assert report.integrity_ready is True
+
+
+def test_shadow_ledger_audit_rejects_purge_drift_from_manifest(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.bind_campaign_manifest(_manifest())
+    store.append_prediction(_prediction())
+
+    report = store.audit(purge_rounds=3)
+
+    assert report.integrity_ready is False
+    assert report.audit_purge_rounds == 3
+    assert any(
+        "purge_rounds differs from bound manifest" in item
+        for item in report.integrity_errors
+    )
+
+
+def test_shadow_ledger_audit_rejects_prediction_market_drift_from_manifest(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.bind_campaign_manifest(_manifest())
+    changed = replace(_prediction(), market="BTCUSD")
+    store.append_prediction(changed)
+
+    report = store.audit()
+
+    assert report.integrity_ready is False
+    assert report.campaign_manifest_market == "BNBUSD"
+    assert any(
+        "prediction market differs from bound campaign manifest" in item
+        for item in report.integrity_errors
+    )
 
 
 def test_shadow_ledger_rejects_conflicting_campaign_manifest(tmp_path: Path) -> None:
