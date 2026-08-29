@@ -250,7 +250,8 @@ def required_shadow_feature_epochs(
         target_decision_timestamp=snapshot.decision_timestamp,
         purge_rounds=selected.purge_rounds,
     )
-    return tuple(record.epoch for record in training) + (target_epoch,)
+    training_epochs = tuple(record.epoch for record in training)
+    return (*training_epochs, target_epoch)
 
 
 def _eligible_training_rows(
