@@ -215,6 +215,7 @@ class ShadowRuntimeCycleReport:
                 None if self.ledger_event is None else self.ledger_event.as_dict()
             ),
             "campaign": self.campaign.as_dict(),
+            "campaign_manifest_digest": self.campaign.audit.campaign_manifest_digest,
             "timing": {
                 "clock": "monotonic_perf_counter",
                 "phase_durations_ms": dict(self.phase_durations_ms),
@@ -417,6 +418,16 @@ def run_shadow_runtime_cycle(
     shadow_store = ShadowLedgerStore(shadow_database)
     shadow_store.initialize()
     phase_durations_ms["shadow_ledger_init"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
+    manifest = build_shadow_runtime_campaign_manifest(
+        market,
+        oracle_proxy_anchor=chain_report.oracle_proxy,
+        chainlink_aggregator_anchor=chain_report.chainlink_aggregator,
+        config=selected,
+    )
+    shadow_store.bind_campaign_manifest(manifest)
+    phase_durations_ms["campaign_manifest_bind"] = _elapsed_ms(phase_start_ns)
 
     phase_start_ns = time.perf_counter_ns()
     reconciliation = reconcile_shadow_settlements(shadow_store, inputs.replay)
