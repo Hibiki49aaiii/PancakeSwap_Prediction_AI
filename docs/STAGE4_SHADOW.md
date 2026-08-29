@@ -295,7 +295,11 @@ The preflight reuses the exact `ShadowRuntimeConfig` selected for the real runti
 - it does not build a target prediction;
 - it does not update runtime or campaign Evidence.
 
-It checks the existing canonical database and source-anchor metadata, configured historical sample capacity, active Chainlink history, BSC chain/head connectivity, retry-safe ClickHouse schema, configured Spot/Perp lineage presence, read-only one-row Binance Spot/Perp endpoint probes, and the selected `--shadow-db` campaign-manifest compatibility.
+It checks the existing canonical database and source-anchor metadata, configured historical sample capacity, active Chainlink history, BSC chain/head connectivity, retry-safe ClickHouse schema, configured Spot/Perp lineage presence, prospective Binance lineage source integrity, read-only one-row Binance Spot/Perp endpoint probes, and the selected `--shadow-db` campaign-manifest compatibility.
+
+For each configured Binance lineage, preflight also reuses the normal runtime's live coverage and latest-cursor helpers. Archive-only historical history remains valid while live coverage is zero. Once `binance-rest:<venue>` live provenance exists, the latest cursor must still come from that same live source. A live lineage advanced by archive/non-live provenance, or malformed coverage/cursor state, makes `spot_lineage_source_consistent` / `perp_lineage_source_consistent` fail and therefore makes the overall preflight not ready.
+
+The serialized lineage report includes live-row count, latest aggregate trade ID, latest source name, and the source-consistency result. These are source-provenance fields only; raw ClickHouse/Binance credentials are never emitted.
 
 Shadow Ledger inspection uses a SQLite URI `mode=ro` path rather than the normal runtime connection, so preflight does not enable WAL mode, initialize schema, bind a manifest, or repair state. The compatibility states are:
 
