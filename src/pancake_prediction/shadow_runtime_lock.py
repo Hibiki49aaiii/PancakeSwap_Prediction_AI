@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .process_lock import SqliteExclusiveProcessLock, SqliteProcessLockError
 
 
 class ShadowRuntimeLockError(RuntimeError):
@@ -17,7 +18,7 @@ def shadow_runtime_lock_path(shadow_database: Path) -> Path:
 @dataclass(slots=True)
 class ShadowRuntimeProcessLock:
     shadow_database: Path
-    _connection: sqlite3.Connection | None = field(
+    _lock: SqliteExclusiveProcessLock | None = field(
         init=False,
         default=None,
         repr=False,
@@ -29,55 +30,31 @@ class ShadowRuntimeProcessLock:
 
     @property
     def acquired(self) -> bool:
-        return self._connection is not None
+        return self._lock is not None and self._lock.acquired
 
     def acquire(self) -> ShadowRuntimeProcessLock:
-        if self._connection is not None:
+        if self._lock is not None:
             raise ShadowRuntimeLockError("Stage 4 runtime lock is already acquired")
 
-        path = self.lock_database
-        path.parent.mkdir(parents=True, exist_ok=True)
-        connection: sqlite3.Connection | None = None
+        lock = SqliteExclusiveProcessLock(
+            self.lock_database,
+            contention_message=(
+                "another Stage 4 runtime already holds this campaign lock"
+            ),
+            failure_message="Stage 4 runtime campaign lock could not be acquired",
+        )
         try:
-            connection = sqlite3.connect(
-                path,
-                timeout=0.0,
-                isolation_level=None,
-            )
-            connection.execute("PRAGMA busy_timeout = 0")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS stage4_runtime_lock (
-                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1)
-                )
-                """
-            )
-            connection.execute("BEGIN EXCLUSIVE")
-        except sqlite3.Error as exc:
-            if connection is not None:
-                connection.close()
-            message = str(exc).lower()
-            if "locked" in message or "busy" in message:
-                raise ShadowRuntimeLockError(
-                    "another Stage 4 runtime already holds this campaign lock"
-                ) from None
-            raise ShadowRuntimeLockError(
-                "Stage 4 runtime campaign lock could not be acquired"
-            ) from None
-
-        self._connection = connection
+            lock.acquire()
+        except SqliteProcessLockError as exc:
+            raise ShadowRuntimeLockError(str(exc)) from None
+        self._lock = lock
         return self
 
     def release(self) -> None:
-        connection = self._connection
-        self._connection = None
-        if connection is None:
-            return
-        try:
-            if connection.in_transaction:
-                connection.rollback()
-        finally:
-            connection.close()
+        lock = self._lock
+        self._lock = None
+        if lock is not None:
+            lock.release()
 
     def __enter__(self) -> ShadowRuntimeProcessLock:
         return self.acquire()
