@@ -180,11 +180,31 @@ src/pancake_prediction/shadow_runtime.py composes one complete cycle:
 5. reload canonical research inputs;
 6. reconcile any previously recorded predictions whose rounds are now settled;
 7. select an eligible current target;
-8. build the heavy research dataset only when a target window is open;
-9. fit, calibrate, project the final pool, and calculate EV;
-10. re-check the deadline;
-11. append the prediction only if it was still timely;
-12. audit the ledger and evaluate the Stage 4 campaign gate.
+8. derive the exact feature epochs allowed by the target's purge/settlement cutoff;
+9. build a target-bounded research dataset only for those epochs;
+10. fit, calibrate, project the final pool, and calculate EV;
+11. re-check the deadline;
+12. append the prediction only if it was still timely;
+13. audit the ledger and evaluate the Stage 4 campaign gate.
+
+### Target-bounded dataset path
+
+A live target does **not** change the model training semantics to a fixed recent-N window.
+
+The current baseline intentionally fits on every ResearchFeatureRow that is already settled, outside the purge zone, and available before the target decision. Removing older eligible rows would change model/calibrator identity and therefore is a model change, not a runtime optimization.
+
+Instead, `required_shadow_feature_epochs()` declares the exact eligible training epochs plus the target epoch. `build_chunked_clickhouse_research_dataset(..., required_epochs=...)` keeps the full canonical replay/events for prior-history semantics, but filters expensive Binance ClickHouse chunk reads and alpha construction to those required epochs.
+
+The build report exposes:
+
+- requested_epoch_count;
+- requested_epoch_min;
+- requested_epoch_max;
+- chunks_loaded;
+- max Spot/Perp rows loaded per chunk;
+- query time bounds.
+
+Regression tests require the bounded feature rows and resulting `ShadowInferenceResult` to match the full-path result exactly.
 
 The installed runtime command is:
 
