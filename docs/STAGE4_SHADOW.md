@@ -102,6 +102,10 @@ The collector overlaps the previous range by the configured reorg lookback, re-v
 - PancakeSwap Prediction events;
 - AnswerUpdated events from the proven Chainlink aggregator.
 
+The persisted integer collector checkpoints are monotonic high-water marks. Per-address `collector.progress.*` keys and `<market>.last_collected_block` are updated under one SQLite `BEGIN IMMEDIATE` read/compare/write transaction. A delayed collector that completed an older range cannot overwrite a newer stored height.
+
+Reorg protection does not require checkpoint rollback. Resume still intentionally replays from approximately `completed_through + 1 - reorg_lookback`, so the persisted high-water remains monotonic while the read window overlaps recent canonical history.
+
 The CLI entrypoint is:
 
     pcs-prediction shadow-chain-sync \
