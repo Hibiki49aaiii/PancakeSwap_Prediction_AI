@@ -32,6 +32,7 @@ from .shadow_inference import (
     ShadowInferenceResult,
     ShadowTargetSelection,
     build_shadow_inference,
+    required_shadow_feature_epochs,
     select_shadow_target,
 )
 from .shadow_ledger import ShadowLedgerEvent, ShadowLedgerStore
@@ -379,6 +380,13 @@ def run_shadow_runtime_cycle(
             purge_rounds=selected.inference.purge_rounds,
         )
 
+    required_epochs = required_shadow_feature_epochs(
+        inputs.replay,
+        inputs.events,
+        target_epoch=target.epoch,
+        config=selected.inference,
+    )
+
     dataset = build_chunked_clickhouse_research_dataset(
         inputs.replay,
         inputs.events,
@@ -399,6 +407,7 @@ def run_shadow_runtime_cycle(
         oracle_history_updates=selected.oracle_history_updates,
         oracle_hazard_horizon_ms=selected.oracle_hazard_horizon_ms,
         oracle_hazard_min_intervals=selected.oracle_hazard_min_intervals,
+        required_epochs=required_epochs,
     )
     try:
         inference = build_shadow_inference(
