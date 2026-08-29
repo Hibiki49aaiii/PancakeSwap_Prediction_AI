@@ -4,9 +4,9 @@
   "evidence_version": 1,
   "mypy": "failure",
   "pip_audit": "success",
-  "pytest": "failure",
-  "pytest_passed": 468,
+  "pytest": "success",
+  "pytest_passed": 469,
   "ready": false,
-  "ruff": "failure",
-  "source_sha": "ee0a8f08245f9ad3458eca66161b5868b39d5674"
+  "ruff": "success",
+  "source_sha": "680fa0db0f00082a8463261ac5f10157b2576783"
 }
