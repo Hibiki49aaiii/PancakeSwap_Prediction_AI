@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pancake_prediction.store import EventStore
 
 
@@ -11,6 +13,45 @@ def _block(number: int, block_hash: str, parent_hash: str | None = None) -> dict
         "parentHash": parent_hash or "0x" + "aa" * 32,
         "timestamp": hex(1_700_000_000 + number),
     }
+
+
+def test_monotonic_int_metadata_is_high_water_mark(tmp_path: Path) -> None:
+    store = EventStore(tmp_path / "db.sqlite3")
+    store.initialize()
+
+    assert store.record_monotonic_int_metadata("progress", 100) == 100
+    assert store.metadata("progress") == "100"
+    assert store.record_monotonic_int_metadata("progress", 120) == 120
+    assert store.metadata("progress") == "120"
+    assert store.record_monotonic_int_metadata("progress", 120) == 120
+    assert store.metadata("progress") == "120"
+    assert store.record_monotonic_int_metadata("progress", 100) == 120
+    assert store.metadata("progress") == "120"
+
+
+def test_monotonic_int_metadata_rejects_negative_requested_value(
+    tmp_path: Path,
+) -> None:
+    store = EventStore(tmp_path / "db.sqlite3")
+    store.initialize()
+
+    with pytest.raises(ValueError, match="non-negative"):
+        store.record_monotonic_int_metadata("progress", -1)
+
+
+@pytest.mark.parametrize("stored", ("not-an-int", "-1"))
+def test_monotonic_int_metadata_rejects_invalid_existing_value(
+    tmp_path: Path,
+    stored: str,
+) -> None:
+    store = EventStore(tmp_path / "db.sqlite3")
+    store.initialize()
+    store.record_metadata("progress", stored)
+
+    with pytest.raises(ValueError, match="monotonic metadata"):
+        store.record_monotonic_int_metadata("progress", 100)
+
+    assert store.metadata("progress") == stored
 
 
 def test_reorg_marks_old_block_noncanonical(tmp_path: Path) -> None:
