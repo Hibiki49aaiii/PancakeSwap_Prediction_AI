@@ -275,6 +275,29 @@ A ready preflight means only **structural campaign-start readiness**. It does no
 
 The command exits 0 when all mandatory structural checks pass and 2 when any check is incomplete. `--preflight-output` is written atomically and cannot be combined with cycle/campaign Evidence outputs.
 
+The preflight also constructs the exact **expected campaign manifest** from the existing oracle anchors and current runtime configuration and reports its canonical payload and SHA-256 digest. It does not initialize or bind the Shadow Ledger.
+
+### Immutable campaign identity
+
+A real Stage 4 runtime binds one immutable semantic campaign manifest to the Shadow Ledger before settlement reconciliation or any new prediction append.
+
+The manifest binds the settings that define the decision/economic contract:
+
+- BSC chain, market, Prediction contract, oracle proxy anchor and Chainlink aggregator anchor;
+- chain confirmation policy;
+- Binance Spot lineage and, when enabled, USD-M Perp lineage;
+- feature timing / freshness / Chainlink hazard assumptions;
+- the complete Shadow inference configuration, including training, calibration, purge, pool projection, stake, gas, decision lead, inclusion latency and minimum EV;
+- the complete Stage 4 campaign evaluation policy.
+
+Restarting against the same ledger is idempotent only when the canonical manifest is identical. A semantic change creates a different digest and the runtime fails closed before settlement reconciliation.
+
+Performance-only tuning that does not change decision semantics is intentionally excluded from campaign identity. Examples include chain log chunk size, reorg scan overlap, Binance HTTP bootstrap/page/batch limits and ClickHouse dataset chunk span.
+
+An existing event-bearing ledger without a campaign manifest is **not** automatically adopted. Its historical semantic identity cannot be established retrospectively, so the runtime requires a new manifest-bound campaign instead of guessing.
+
+The ledger audit also checks that the requested audit `purge_rounds` matches the bound inference manifest, that prediction market identity matches the manifest, and that the Stage 4 campaign policy used for evaluation matches the policy bound in the manifest.
+
 The installed runtime command is:
 
     pcs-shadow-runtime
@@ -348,11 +371,13 @@ It serializes the `ShadowCampaignGateReport` already produced by the cycle, so t
 the same inference `purge_rounds` and campaign policy that the runtime used. The two campaign
 paths must be distinct from each other and from `--evidence-output`.
 
-Campaign Evidence binds the append-only ledger through the logical hash-chain
-`event_count` / `head_digest` and `campaign_digest`. The retained `ledger_sha256` is a
-SHA-256 of the SQLite main database file and is explicitly labeled as a physical-file snapshot
-identifier. Because the ledger uses SQLite WAL mode, the logical hash-chain binding is the
-authoritative campaign-state identity rather than the physical-file hash alone.
+Campaign Evidence binds the append-only ledger through the immutable
+`campaign_manifest_digest`, logical hash-chain `event_count` / `head_digest`, and
+`campaign_digest`. The campaign digest itself includes the manifest identity. The retained
+`ledger_sha256` is a SHA-256 of the SQLite main database file and is explicitly labeled as a
+physical-file snapshot identifier. Because the ledger uses SQLite WAL mode, the manifest +
+logical hash-chain binding is the authoritative campaign-state identity rather than the
+physical-file hash alone.
 
 Possible non-fatal cycle statuses include:
 
@@ -371,11 +396,15 @@ Every event contains sequence, event kind, market and epoch, canonical JSON payl
 
 The ledger also stores the expected event count and head digest. Application-level SQLite triggers reject UPDATE and DELETE operations on event rows.
 
+A separate singleton `shadow_campaign_manifest` binds canonical manifest JSON and its SHA-256 digest. UPDATE and DELETE are rejected by SQLite triggers. First binding is allowed only while the event ledger is empty; an identical retry is idempotent and a conflicting or retroactive binding is rejected.
+
 Retries are idempotent: re-appending the exact same prediction or settlement returns the existing event, while a different payload for the same kind + market + epoch is rejected.
 
 Settlement cannot be appended before its corresponding prediction. Settlement timestamps earlier than the prediction decision timestamp are rejected.
 
-The audit recomputes the entire hash chain and reports prediction / settlement / unresolved counts, actionable Bull / Bear / Skip counts, model IDs and feature-set IDs, Brier score, directional accuracy, Shadow PnL coverage and aggregate PnL, campaign span, and integrity errors.
+The audit recomputes the entire hash chain and reports prediction / settlement / unresolved counts, actionable Bull / Bear / Skip counts, model IDs and feature-set IDs, Brier score, directional accuracy, Shadow PnL coverage and aggregate PnL, campaign span, campaign-manifest identity, audit purge semantics, and integrity errors.
+
+A bound manifest is also used to reject audit purge drift and prediction-market drift. The Stage 4 campaign gate independently requires the selected campaign policy digest to equal the policy digest stored in the manifest.
 
 The audit always keeps profitability_gate_eligible=false, full_historical_gate_satisfied=false, signing_enabled=false, and live_broadcast=false.
 
@@ -423,10 +452,12 @@ src/pancake_prediction/shadow_campaign.py evaluates operational-readiness covera
 | actionable settled PnL records | 100% required |
 | model IDs in one campaign | <= 1 |
 | feature-set IDs in one campaign | <= 1 |
+| immutable campaign manifest | required |
+| campaign policy matches manifest | required |
 
 A campaign may pass this Stage 4 operational gate with negative PnL. That is deliberate. Stage 4 proves prospective operation and evidence completeness, not alpha.
 
-The continuous runtime audits with the same purge boundary configured for inference. A custom purge boundary therefore cannot accidentally be audited using the default value.
+The continuous runtime audits with the same purge boundary configured for inference. The ledger audit rejects a purge boundary different from the bound campaign manifest, and the campaign gate rejects an evaluation policy different from the bound manifest policy.
 
 ## Ledger CLI
 
@@ -458,6 +489,8 @@ Evaluate the default Stage 4 campaign gate:
     pcs-prediction shadow-campaign-gate \
       --db artifacts/shadow.sqlite3 \
       --purge-rounds 2
+
+A manually initialized ledger that has never been bound by the Stage 4 runtime can still be inspected with the low-level ledger CLI, but it is intentionally **not eligible** to pass the Stage 4 campaign gate. Event-bearing unbound history cannot be retroactively promoted into a manifest-proven campaign.
 
 ## Evidence
 
