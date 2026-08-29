@@ -11,8 +11,6 @@ from pancake_prediction.shadow_campaign import (
 )
 from pancake_prediction.shadow_ledger import ShadowLedgerStore
 
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Build fail-closed Stage 4 shadow campaign evidence from an append-only ledger."
@@ -65,7 +63,9 @@ def main() -> int:
     payload = build_shadow_campaign_evidence(args.db, report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    args.output.write_text(rendered, encoding="utf-8")
+    temporary = args.output.with_name(args.output.name + ".tmp")
+    temporary.write_text(rendered, encoding="utf-8")
+    temporary.replace(args.output)
     print(rendered, end="")
     return 0 if report.gate_ready else 2
 
