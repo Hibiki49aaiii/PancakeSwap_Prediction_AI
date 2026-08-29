@@ -9,6 +9,7 @@ from pancake_prediction.replay import ChainEvent, ReplaySnapshot, RoundRecord
 from pancake_prediction.shadow_inference import (
     ShadowInferenceConfig,
     build_shadow_inference,
+    required_shadow_feature_epochs,
     select_shadow_target,
 )
 
@@ -300,4 +301,44 @@ def test_shadow_target_selection_rejects_negative_clock() -> None:
             now_timestamp=-1,
             config=_config(),
         )
+
+def test_required_shadow_feature_epochs_match_inference_eligibility() -> None:
+    replay, events, _rows = _fixture()
+    required = required_shadow_feature_epochs(
+        replay,
+        events,
+        target_epoch=40,
+        config=_config(),
+    )
+
+    assert required[-1] == 40
+    assert required[:-1] == tuple(range(1, 38))
+    assert 38 not in required
+    assert 39 not in required
+
+
+def test_required_shadow_feature_epochs_ignore_target_final_outcome() -> None:
+    replay, events, _rows = _fixture()
+    first = required_shadow_feature_epochs(
+        replay,
+        events,
+        target_epoch=40,
+        config=_config(),
+    )
+    changed_target = replace(
+        replay.rounds[-1],
+        label="bull" if replay.rounds[-1].label != "bull" else "bear",
+        close_price=50_000,
+        bull_amount_wei=99_999,
+        bear_amount_wei=1,
+        total_amount_wei=100_000,
+    )
+    second = required_shadow_feature_epochs(
+        replace(replay, rounds=(*replay.rounds[:-1], changed_target)),
+        events,
+        target_epoch=40,
+        config=_config(),
+    )
+
+    assert second == first
 
