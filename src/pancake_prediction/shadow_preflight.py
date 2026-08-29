@@ -6,7 +6,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .binance_archive import TimestampUnit
-from .binance_live import BinanceAggTradeSource, BinanceLiveError, LiveVenue
+from .binance_live import (
+    BinanceAggTradeSource,
+    BinanceLiveError,
+    LiveVenue,
+    inspect_binance_live_coverage,
+    latest_binance_live_cursor,
+)
 from .clickhouse import (
     ClickHouseError,
     ClickHouseParameterizedJsonSource,
@@ -41,6 +47,10 @@ class BinanceLineagePreflight:
     row_count: int
     first_trade_timestamp_ms: int | None
     last_trade_timestamp_ms: int | None
+    live_row_count: int
+    latest_aggregate_trade_id: int | None
+    latest_source_name: str | None
+    prospective_source_consistent: bool
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -208,6 +218,36 @@ def _lineage_summary(
         raise ValueError("empty ClickHouse lineage unexpectedly has time bounds")
     if row_count > 0 and (first is None or last is None or last < first):
         raise ValueError("ClickHouse lineage time bounds are invalid")
+
+    live_coverage = inspect_binance_live_coverage(
+        source,
+        market=market,
+        venue=venue,
+        availability_lag_ms=availability_lag_ms,
+        timestamp_unit=timestamp_unit,
+    )
+    cursor = latest_binance_live_cursor(
+        source,
+        market=market,
+        venue=venue,
+        availability_lag_ms=availability_lag_ms,
+        timestamp_unit=timestamp_unit,
+    )
+    if live_coverage.row_count > row_count:
+        raise ValueError("Binance live coverage exceeds configured lineage size")
+    if row_count == 0 and cursor is not None:
+        raise ValueError("empty ClickHouse lineage unexpectedly has a latest cursor")
+    if row_count > 0 and cursor is None:
+        raise ValueError("non-empty ClickHouse lineage has no latest cursor")
+
+    expected_live_source = f"binance-rest:{venue}"
+    prospective_source_consistent = (
+        live_coverage.row_count == 0
+        or (
+            cursor is not None
+            and cursor.source_name == expected_live_source
+        )
+    )
     return BinanceLineagePreflight(
         venue=venue,
         symbol=symbol,
@@ -216,6 +256,12 @@ def _lineage_summary(
         row_count=row_count,
         first_trade_timestamp_ms=first,
         last_trade_timestamp_ms=last,
+        live_row_count=live_coverage.row_count,
+        latest_aggregate_trade_id=(
+            None if cursor is None else cursor.aggregate_trade_id
+        ),
+        latest_source_name=None if cursor is None else cursor.source_name,
+        prospective_source_consistent=prospective_source_consistent,
     )
 
 
@@ -394,8 +440,12 @@ def run_shadow_runtime_preflight(
                 availability_lag_ms=selected.spot_availability_lag_ms,
             )
             checks["spot_lineage_present"] = spot_lineage.row_count > 0
+            checks["spot_lineage_source_consistent"] = (
+                spot_lineage.prospective_source_consistent
+            )
         except (ClickHouseError, KeyError, ValueError):
             checks["spot_lineage_present"] = False
+            checks["spot_lineage_source_consistent"] = False
         if selected.include_perp:
             try:
                 perp_lineage = _lineage_summary(
@@ -406,13 +456,20 @@ def run_shadow_runtime_preflight(
                     availability_lag_ms=selected.perp_availability_lag_ms,
                 )
                 checks["perp_lineage_present"] = perp_lineage.row_count > 0
+                checks["perp_lineage_source_consistent"] = (
+                    perp_lineage.prospective_source_consistent
+                )
             except (ClickHouseError, KeyError, ValueError):
                 checks["perp_lineage_present"] = False
+                checks["perp_lineage_source_consistent"] = False
         else:
             checks["perp_lineage_present"] = True
+            checks["perp_lineage_source_consistent"] = True
     else:
         checks["spot_lineage_present"] = False
+        checks["spot_lineage_source_consistent"] = False
         checks["perp_lineage_present"] = not selected.include_perp
+        checks["perp_lineage_source_consistent"] = not selected.include_perp
 
     symbol = BINANCE_SYMBOL_BY_MARKET[market.symbol]
     binance_spot_probe_rows: int | None = None
