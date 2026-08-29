@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -119,6 +120,10 @@ class ShadowRuntimeCycleReport:
     inference: ShadowInferenceResult | None
     ledger_event: ShadowLedgerEvent | None
     campaign: ShadowCampaignGateReport
+    phase_durations_ms: Mapping[str, int]
+    total_duration_ms: int
+    decision_to_completion_ms: int | None
+    submission_margin_ms: int | None
     reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -144,6 +149,13 @@ class ShadowRuntimeCycleReport:
                 None if self.ledger_event is None else self.ledger_event.as_dict()
             ),
             "campaign": self.campaign.as_dict(),
+            "timing": {
+                "clock": "monotonic_perf_counter",
+                "phase_durations_ms": dict(self.phase_durations_ms),
+                "total_duration_ms": self.total_duration_ms,
+                "decision_to_completion_ms": self.decision_to_completion_ms,
+                "submission_margin_ms": self.submission_margin_ms,
+            },
             "signing_enabled": False,
             "live_broadcast": False,
             "funded_execution": False,
@@ -153,6 +165,10 @@ class ShadowRuntimeCycleReport:
 
 def _clock_ms() -> int:
     return time.time_ns() // 1_000_000
+
+
+def _elapsed_ms(start_ns: int) -> int:
+    return max(0, (time.perf_counter_ns() - start_ns) // 1_000_000)
 
 
 def _live_warmup_ready(
@@ -189,11 +205,26 @@ def _finish_report(
     shadow_store: ShadowLedgerStore,
     policy: ShadowCampaignPolicy,
     purge_rounds: int,
+    phase_durations_ms: dict[str, int],
+    cycle_started_perf_ns: int,
     reason: str | None = None,
 ) -> ShadowRuntimeCycleReport:
+    campaign_start_ns = time.perf_counter_ns()
     campaign = evaluate_shadow_campaign(
         shadow_store.audit(purge_rounds=purge_rounds),
         policy,
+    )
+    phase_durations_ms["campaign_audit"] = _elapsed_ms(campaign_start_ns)
+    total_duration_ms = _elapsed_ms(cycle_started_perf_ns)
+    decision_to_completion_ms = (
+        None
+        if target is None
+        else completion_ms - target.decision_timestamp * 1_000
+    )
+    submission_margin_ms = (
+        None
+        if target is None
+        else target.latest_submission_timestamp * 1_000 - completion_ms
     )
     return ShadowRuntimeCycleReport(
         market=market.symbol,
@@ -212,6 +243,10 @@ def _finish_report(
         inference=inference,
         ledger_event=ledger_event,
         campaign=campaign,
+        phase_durations_ms=dict(phase_durations_ms),
+        total_duration_ms=total_duration_ms,
+        decision_to_completion_ms=decision_to_completion_ms,
+        submission_margin_ms=submission_margin_ms,
         reason=reason,
     )
 
@@ -228,18 +263,23 @@ def run_shadow_runtime_cycle(
     now_timestamp_ms: int | None = None,
     completion_timestamp_ms: int | None = None,
 ) -> ShadowRuntimeCycleReport:
+    cycle_started_perf_ns = time.perf_counter_ns()
+    phase_durations_ms: dict[str, int] = {}
     selected = config or ShadowRuntimeConfig()
     selected.validate()
     started_ms = _clock_ms() if now_timestamp_ms is None else now_timestamp_ms
     if started_ms < 0:
         raise ValueError("now_timestamp_ms must be non-negative")
 
+    phase_start_ns = time.perf_counter_ns()
     schema = inspect_binance_trade_schema(clickhouse)
+    phase_durations_ms["schema_check"] = _elapsed_ms(phase_start_ns)
     if not schema.ready:
         raise ValueError(
             "ClickHouse binance_agg_trades schema is not retry-safe for Stage 4"
         )
 
+    phase_start_ns = time.perf_counter_ns()
     chain_report = sync_shadow_chain(
         rpc,
         market,
@@ -248,6 +288,9 @@ def run_shadow_runtime_cycle(
         chunk_size=selected.chain_chunk_size,
         reorg_lookback=selected.chain_reorg_lookback,
     )
+    phase_durations_ms["chain_sync"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
     spot_report = sync_binance_live_aggtrades(
         clickhouse,
         clickhouse,
@@ -261,8 +304,11 @@ def run_shadow_runtime_cycle(
         batch_size=selected.binance_batch_size,
         max_pages=selected.binance_max_pages,
     )
+    phase_durations_ms["binance_spot_sync"] = _elapsed_ms(phase_start_ns)
+
     perp_report: BinanceLiveSyncReport | None = None
     if selected.include_perp:
+        phase_start_ns = time.perf_counter_ns()
         perp_report = sync_binance_live_aggtrades(
             clickhouse,
             clickhouse,
@@ -276,7 +322,9 @@ def run_shadow_runtime_cycle(
             batch_size=selected.binance_batch_size,
             max_pages=selected.binance_max_pages,
         )
+        phase_durations_ms["binance_perp_sync"] = _elapsed_ms(phase_start_ns)
 
+    phase_start_ns = time.perf_counter_ns()
     spot_coverage = inspect_binance_live_coverage(
         clickhouse,
         market=market.symbol,
@@ -293,13 +341,23 @@ def run_shadow_runtime_cycle(
             availability_lag_ms=selected.perp_availability_lag_ms,
             timestamp_unit=selected.perp_timestamp_unit,
         )
+    phase_durations_ms["live_coverage"] = _elapsed_ms(phase_start_ns)
 
+    phase_start_ns = time.perf_counter_ns()
     inputs = load_canonical_research_inputs(canonical_database, market.symbol)
+    phase_durations_ms["canonical_input_load"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
     shadow_store = ShadowLedgerStore(shadow_database)
     shadow_store.initialize()
+    phase_durations_ms["shadow_ledger_init"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
     reconciliation = reconcile_shadow_settlements(shadow_store, inputs.replay)
+    phase_durations_ms["settlement_reconciliation"] = _elapsed_ms(phase_start_ns)
 
     selection_ms = _clock_ms() if now_timestamp_ms is None else now_timestamp_ms
+    phase_start_ns = time.perf_counter_ns()
     spot_ready = _live_warmup_ready(
         spot_coverage,
         now_timestamp_ms=selection_ms,
@@ -314,6 +372,7 @@ def run_shadow_runtime_cycle(
             flow_lookback_ms=selected.flow_lookback_ms,
         )
     )
+    phase_durations_ms["source_warmup_check"] = _elapsed_ms(phase_start_ns)
     if not spot_ready or not perp_ready:
         pending_sources = [
             source
@@ -344,15 +403,19 @@ def run_shadow_runtime_cycle(
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
             purge_rounds=selected.inference.purge_rounds,
+            phase_durations_ms=phase_durations_ms,
+            cycle_started_perf_ns=cycle_started_perf_ns,
             reason="prospective live warmup incomplete: " + ",".join(pending_sources),
         )
 
+    phase_start_ns = time.perf_counter_ns()
     target = select_shadow_target(
         inputs.replay,
         inputs.events,
         now_timestamp=selection_ms // 1_000,
         config=selected.inference,
     )
+    phase_durations_ms["target_selection"] = _elapsed_ms(phase_start_ns)
     if target is None:
         completion_ms = (
             _clock_ms()
@@ -378,15 +441,20 @@ def run_shadow_runtime_cycle(
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
             purge_rounds=selected.inference.purge_rounds,
+            phase_durations_ms=phase_durations_ms,
+            cycle_started_perf_ns=cycle_started_perf_ns,
         )
 
+    phase_start_ns = time.perf_counter_ns()
     required_epochs = required_shadow_feature_epochs(
         inputs.replay,
         inputs.events,
         target_epoch=target.epoch,
         config=selected.inference,
     )
+    phase_durations_ms["required_epoch_plan"] = _elapsed_ms(phase_start_ns)
 
+    phase_start_ns = time.perf_counter_ns()
     dataset = build_chunked_clickhouse_research_dataset(
         inputs.replay,
         inputs.events,
@@ -409,6 +477,9 @@ def run_shadow_runtime_cycle(
         oracle_hazard_min_intervals=selected.oracle_hazard_min_intervals,
         required_epochs=required_epochs,
     )
+    phase_durations_ms["dataset_build"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
     try:
         inference = build_shadow_inference(
             inputs.replay,
@@ -418,6 +489,7 @@ def run_shadow_runtime_cycle(
             config=selected.inference,
         )
     except ValueError as exc:
+        phase_durations_ms["inference"] = _elapsed_ms(phase_start_ns)
         completion_ms = (
             _clock_ms()
             if completion_timestamp_ms is None
@@ -442,9 +514,14 @@ def run_shadow_runtime_cycle(
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
             purge_rounds=selected.inference.purge_rounds,
+            phase_durations_ms=phase_durations_ms,
+            cycle_started_perf_ns=cycle_started_perf_ns,
             reason=str(exc),
         )
 
+    phase_durations_ms["inference"] = _elapsed_ms(phase_start_ns)
+
+    phase_start_ns = time.perf_counter_ns()
     completion_ms = (
         _clock_ms()
         if completion_timestamp_ms is None
@@ -452,7 +529,11 @@ def run_shadow_runtime_cycle(
     )
     if completion_ms < 0:
         raise ValueError("completion_timestamp_ms must be non-negative")
-    if completion_ms // 1_000 >= target.latest_submission_timestamp:
+    deadline_missed = (
+        completion_ms // 1_000 >= target.latest_submission_timestamp
+    )
+    phase_durations_ms["deadline_check"] = _elapsed_ms(phase_start_ns)
+    if deadline_missed:
         return _finish_report(
             market=market,
             started_ms=started_ms,
@@ -472,12 +553,16 @@ def run_shadow_runtime_cycle(
             shadow_store=shadow_store,
             policy=selected.campaign_policy,
             purge_rounds=selected.inference.purge_rounds,
+            phase_durations_ms=phase_durations_ms,
+            cycle_started_perf_ns=cycle_started_perf_ns,
         )
 
+    phase_start_ns = time.perf_counter_ns()
     ledger_event = shadow_store.append_prediction(
         inference.prediction,
         purge_rounds=selected.inference.purge_rounds,
     )
+    phase_durations_ms["ledger_append"] = _elapsed_ms(phase_start_ns)
     return _finish_report(
         market=market,
         started_ms=started_ms,
@@ -497,4 +582,6 @@ def run_shadow_runtime_cycle(
         shadow_store=shadow_store,
         policy=selected.campaign_policy,
         purge_rounds=selected.inference.purge_rounds,
+        phase_durations_ms=phase_durations_ms,
+        cycle_started_perf_ns=cycle_started_perf_ns,
     )
