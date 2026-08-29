@@ -15,6 +15,10 @@ from .contracts import MARKETS
 from .rpc import JsonRpcClient, RpcError
 from .shadow_campaign import build_shadow_campaign_evidence
 from .shadow_inference import ShadowInferenceConfig
+from .shadow_preflight import (
+    ShadowRuntimePreflightReport,
+    run_shadow_runtime_preflight,
+)
 from .shadow_runtime import (
     ShadowRuntimeConfig,
     ShadowRuntimeCycleReport,
@@ -35,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shadow-db", type=Path, required=True)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--preflight-output", type=Path)
     parser.add_argument("--evidence-output", type=Path)
     parser.add_argument("--campaign-evidence-output", type=Path)
     parser.add_argument("--campaign-last-success-output", type=Path)
@@ -160,6 +166,14 @@ def _render(report: ShadowRuntimeCycleReport) -> str:
     )
 
 
+def _render_preflight(report: ShadowRuntimePreflightReport) -> str:
+    return json.dumps(
+        report.as_dict(),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _write_evidence(path: Path, rendered: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -181,6 +195,7 @@ def _validate_evidence_output_paths(
 ) -> None:
     seen: dict[Path, str] = {}
     for label, raw_path in (
+        ("--preflight-output", args.preflight_output),
         ("--evidence-output", args.evidence_output),
         ("--campaign-evidence-output", args.campaign_evidence_output),
         ("--campaign-last-success-output", args.campaign_last_success_output),
@@ -252,6 +267,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--poll-seconds must be at least 1.0")
 
     _validate_evidence_output_paths(parser, args)
+    if bool(args.preflight_only):
+        if any(
+            value is not None
+            for value in (
+                args.evidence_output,
+                args.campaign_evidence_output,
+                args.campaign_last_success_output,
+            )
+        ):
+            parser.error(
+                "--preflight-only cannot be combined with cycle/campaign Evidence outputs"
+            )
+    elif args.preflight_output is not None:
+        parser.error("--preflight-output requires --preflight-only")
 
     config = _runtime_config(args)
     try:
@@ -262,6 +291,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     rpc = JsonRpcClient(_bsc_rpc_url(parser))
     clickhouse = _clickhouse_client(parser)
     binance = BinancePublicHttpClient()
+
+    if bool(args.preflight_only):
+        report = run_shadow_runtime_preflight(
+            rpc,
+            clickhouse,
+            binance,
+            MARKETS[str(args.market)],
+            Path(args.canonical_db),
+            config=config,
+        )
+        rendered = _render_preflight(report)
+        print(rendered, flush=True)
+        if args.preflight_output is not None:
+            _write_evidence(Path(args.preflight_output), rendered)
+        return 0 if report.ready else 2
 
     while True:
         report = _run_once(
