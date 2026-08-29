@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
 from .research_ledger import ResearchPredictionRecord, validate_research_prediction
 from .shadow_manifest import (
@@ -66,6 +67,28 @@ class ShadowCampaignManifestBinding:
         return {
             "payload": self.payload,
             "manifest_digest": self.manifest_digest,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowLedgerReadOnlyInspection:
+    database_exists: bool
+    schema_ready: bool
+    binding_state: str
+    event_count: int | None
+    manifest_digest: str | None
+    manifest_payload: dict[str, object] | None
+    errors: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "database_exists": self.database_exists,
+            "schema_ready": self.schema_ready,
+            "binding_state": self.binding_state,
+            "event_count": self.event_count,
+            "manifest_digest": self.manifest_digest,
+            "manifest_payload": self.manifest_payload,
+            "errors": list(self.errors),
         }
 
 
@@ -195,6 +218,184 @@ def validate_shadow_settlement(
         raise ValueError("settlement timestamp precedes prediction decision timestamp")
     if prediction.action == "skip" and record.realized_pnl_wei not in (None, 0):
         raise ValueError("skip prediction cannot have non-zero realized PnL")
+
+
+def inspect_shadow_ledger_read_only(path: Path) -> ShadowLedgerReadOnlyInspection:
+    if not path.exists():
+        return ShadowLedgerReadOnlyInspection(
+            database_exists=False,
+            schema_ready=True,
+            binding_state="absent",
+            event_count=None,
+            manifest_digest=None,
+            manifest_payload=None,
+            errors=(),
+        )
+    if not path.is_file():
+        return ShadowLedgerReadOnlyInspection(
+            database_exists=True,
+            schema_ready=False,
+            binding_state="invalid",
+            event_count=None,
+            manifest_digest=None,
+            manifest_payload=None,
+            errors=("shadow_database_not_regular_file",),
+        )
+
+    uri = f"file:{quote(str(path.resolve()), safe='/:')}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+    except sqlite3.Error:
+        return ShadowLedgerReadOnlyInspection(
+            database_exists=True,
+            schema_ready=False,
+            binding_state="invalid",
+            event_count=None,
+            manifest_digest=None,
+            manifest_payload=None,
+            errors=("shadow_database_read_failed",),
+        )
+
+    try:
+        tables = {
+            str(row["name"])
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                """
+            ).fetchall()
+        }
+        required_tables = {"shadow_ledger_events", "shadow_ledger_state"}
+        if not required_tables.issubset(tables):
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=False,
+                binding_state="invalid",
+                event_count=None,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=("shadow_ledger_core_schema_missing",),
+            )
+
+        count_row = connection.execute(
+            "SELECT COUNT(*) AS event_count FROM shadow_ledger_events"
+        ).fetchone()
+        state_rows = connection.execute(
+            """
+            SELECT event_count, head_digest
+            FROM shadow_ledger_state
+            WHERE singleton = 1
+            """
+        ).fetchall()
+        if count_row is None or len(state_rows) != 1:
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=False,
+                binding_state="invalid",
+                event_count=None,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=("shadow_ledger_state_invalid",),
+            )
+
+        event_count = int(count_row["event_count"])
+        state_count = int(state_rows[0]["event_count"])
+        state_head = str(state_rows[0]["head_digest"])
+        if (
+            event_count < 0
+            or state_count != event_count
+            or not _is_digest(state_head)
+        ):
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=False,
+                binding_state="invalid",
+                event_count=event_count,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=("shadow_ledger_state_inconsistent",),
+            )
+
+        if "shadow_campaign_manifest" not in tables:
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=True,
+                binding_state=(
+                    "empty_unbound" if event_count == 0 else "event_bearing_unbound"
+                ),
+                event_count=event_count,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=(),
+            )
+
+        manifest_rows = connection.execute(
+            """
+            SELECT manifest_json, manifest_digest
+            FROM shadow_campaign_manifest
+            WHERE singleton = 1
+            """
+        ).fetchall()
+        if not manifest_rows:
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=True,
+                binding_state=(
+                    "empty_unbound" if event_count == 0 else "event_bearing_unbound"
+                ),
+                event_count=event_count,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=(),
+            )
+        if len(manifest_rows) != 1:
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=False,
+                binding_state="invalid",
+                event_count=event_count,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=("shadow_campaign_manifest_row_invalid",),
+            )
+
+        try:
+            binding = ShadowLedgerStore._manifest_from_row(manifest_rows[0])
+        except ValueError:
+            return ShadowLedgerReadOnlyInspection(
+                database_exists=True,
+                schema_ready=False,
+                binding_state="invalid",
+                event_count=event_count,
+                manifest_digest=None,
+                manifest_payload=None,
+                errors=("shadow_campaign_manifest_invalid",),
+            )
+        return ShadowLedgerReadOnlyInspection(
+            database_exists=True,
+            schema_ready=True,
+            binding_state="bound",
+            event_count=event_count,
+            manifest_digest=binding.manifest_digest,
+            manifest_payload=binding.payload,
+            errors=(),
+        )
+    except (KeyError, TypeError, ValueError, sqlite3.Error):
+        return ShadowLedgerReadOnlyInspection(
+            database_exists=True,
+            schema_ready=False,
+            binding_state="invalid",
+            event_count=None,
+            manifest_digest=None,
+            manifest_payload=None,
+            errors=("shadow_database_read_failed",),
+        )
+    finally:
+        connection.close()
 
 
 class ShadowLedgerStore:
