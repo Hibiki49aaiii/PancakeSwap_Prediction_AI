@@ -7,6 +7,7 @@ from statistics import median
 
 from .backtest import (
     BacktestConfig,
+    BacktestEventIndex,
     PoolProjection,
     build_decision_snapshot,
     build_event_index,
@@ -43,8 +44,16 @@ def _growth_target(
     record: RoundRecord,
     events: tuple[ChainEvent, ...],
     backtest_config: BacktestConfig,
+    *,
+    event_index: BacktestEventIndex | None = None,
 ) -> _PoolGrowthTarget | None:
-    snapshot = build_decision_snapshot(replay, record, events, backtest_config)
+    snapshot = build_decision_snapshot(
+        replay,
+        record,
+        events,
+        backtest_config,
+        event_index=event_index,
+    )
     if snapshot is None or snapshot.total_observed_wei <= 0:
         return None
     if record.bull_amount_wei < snapshot.bull_observed_wei:
@@ -71,6 +80,98 @@ def _model_id(config: PoolProjectionBaselineConfig, training: tuple[_PoolGrowthT
     return f"pool-growth-median-{digest}"
 
 
+def _projection_for_target(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    backtest_config: BacktestConfig,
+    target: RoundRecord,
+    ordered: tuple[RoundRecord, ...],
+    event_index: BacktestEventIndex,
+    config: PoolProjectionBaselineConfig,
+) -> PoolProjection | None:
+    target_snapshot = build_decision_snapshot(
+        replay,
+        target,
+        events,
+        backtest_config,
+        event_index=event_index,
+    )
+    if target_snapshot is None or target_snapshot.total_observed_wei <= 0:
+        return None
+
+    latest_allowed_epoch = target.epoch - config.purge_rounds - 1
+    candidates: list[_PoolGrowthTarget] = []
+    for prior in ordered:
+        if prior.epoch > latest_allowed_epoch:
+            break
+        if (
+            prior.end_timestamp is None
+            or prior.end_timestamp >= target_snapshot.decision_timestamp
+        ):
+            continue
+        growth = _growth_target(
+            replay,
+            prior,
+            events,
+            backtest_config,
+            event_index=event_index,
+        )
+        if growth is not None:
+            candidates.append(growth)
+
+    if len(candidates) < config.min_train_rounds:
+        return None
+
+    training = tuple(candidates[-config.window_rounds :])
+    bull_ratio = int(median(row.bull_growth_ratio_ppm for row in training))
+    bear_ratio = int(median(row.bear_growth_ratio_ppm for row in training))
+    observed_total = target_snapshot.total_observed_wei
+    projected_bull = (
+        target_snapshot.bull_observed_wei
+        + observed_total * max(0, bull_ratio) // RATIO_SCALE
+    )
+    projected_bear = (
+        target_snapshot.bear_observed_wei
+        + observed_total * max(0, bear_ratio) // RATIO_SCALE
+    )
+    return PoolProjection(
+        epoch=target.epoch,
+        generated_at=target_snapshot.decision_timestamp,
+        projected_bull_wei=projected_bull,
+        projected_bear_wei=projected_bear,
+        model_id=_model_id(config, training),
+        train_max_epoch=training[-1].epoch,
+    )
+
+
+def build_oos_pool_projection_for_target(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    backtest_config: BacktestConfig,
+    *,
+    target_epoch: int,
+    config: PoolProjectionBaselineConfig | None = None,
+) -> PoolProjection | None:
+    resolved_config = PoolProjectionBaselineConfig() if config is None else config
+    resolved_config.validate()
+    backtest_config.validate()
+    ordered = tuple(sorted(replay.rounds, key=lambda record: record.epoch))
+    matches = [record for record in ordered if record.epoch == target_epoch]
+    if len(matches) != 1:
+        raise ValueError(
+            f"target epoch {target_epoch} must appear exactly once in replay"
+        )
+    return _projection_for_target(
+        replay,
+        events,
+        backtest_config,
+        matches[0],
+        ordered,
+        build_event_index(events),
+        resolved_config,
+    )
+
+
 def build_oos_pool_projections(
     replay: ReplaySnapshot,
     events: tuple[ChainEvent, ...],
@@ -82,52 +183,19 @@ def build_oos_pool_projections(
     resolved_config.validate()
     backtest_config.validate()
     event_index = build_event_index(events)
-    ordered = sorted(replay.rounds, key=lambda record: record.epoch)
+    ordered = tuple(sorted(replay.rounds, key=lambda record: record.epoch))
     result: dict[int, PoolProjection] = {}
 
     for target in ordered:
-        target_snapshot = build_decision_snapshot(
+        projection = _projection_for_target(
             replay,
-            target,
             events,
             backtest_config,
-            event_index=event_index,
+            target,
+            ordered,
+            event_index,
+            resolved_config,
         )
-        if target_snapshot is None or target_snapshot.total_observed_wei <= 0:
-            continue
-        latest_allowed_epoch = target.epoch - resolved_config.purge_rounds - 1
-        candidates: list[_PoolGrowthTarget] = []
-        for prior in ordered:
-            if prior.epoch > latest_allowed_epoch:
-                break
-            if (
-                prior.end_timestamp is None
-                or prior.end_timestamp >= target_snapshot.decision_timestamp
-            ):
-                continue
-            growth = _growth_target(replay, prior, events, backtest_config)
-            if growth is not None:
-                candidates.append(growth)
-        if len(candidates) < resolved_config.min_train_rounds:
-            continue
-        training = tuple(candidates[-resolved_config.window_rounds :])
-        bull_ratio = int(median(row.bull_growth_ratio_ppm for row in training))
-        bear_ratio = int(median(row.bear_growth_ratio_ppm for row in training))
-        observed_total = target_snapshot.total_observed_wei
-        projected_bull = (
-            target_snapshot.bull_observed_wei
-            + observed_total * max(0, bull_ratio) // RATIO_SCALE
-        )
-        projected_bear = (
-            target_snapshot.bear_observed_wei
-            + observed_total * max(0, bear_ratio) // RATIO_SCALE
-        )
-        result[target.epoch] = PoolProjection(
-            epoch=target.epoch,
-            generated_at=target_snapshot.decision_timestamp,
-            projected_bull_wei=projected_bull,
-            projected_bear_wei=projected_bear,
-            model_id=_model_id(resolved_config, training),
-            train_max_epoch=training[-1].epoch,
-        )
+        if projection is not None:
+            result[target.epoch] = projection
     return result
