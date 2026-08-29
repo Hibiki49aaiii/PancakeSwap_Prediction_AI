@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from .research_ledger import ResearchPredictionRecord, validate_research_prediction
+from .shadow_manifest import ShadowCampaignManifest
 
 ZERO_DIGEST = "0" * 64
 _OUTCOMES = {"bull", "bear", "tie"}
@@ -54,6 +55,18 @@ class ShadowLedgerEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ShadowCampaignManifestBinding:
+    payload: dict[str, object]
+    manifest_digest: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "payload": self.payload,
+            "manifest_digest": self.manifest_digest,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ShadowLedgerAuditReport:
     event_count: int
     head_digest: str
@@ -74,6 +87,7 @@ class ShadowLedgerAuditReport:
     feature_set_ids: tuple[str, ...]
     action_counts: dict[str, int]
     integrity_errors: tuple[str, ...]
+    campaign_manifest_digest: str | None = None
 
     @property
     def integrity_ready(self) -> bool:
@@ -109,6 +123,7 @@ class ShadowLedgerAuditReport:
             "model_ids": list(self.model_ids),
             "feature_set_ids": list(self.feature_set_ids),
             "action_counts": dict(self.action_counts),
+            "campaign_manifest_digest": self.campaign_manifest_digest,
             "integrity_errors": list(self.integrity_errors),
             "integrity_ready": self.integrity_ready,
             "profitability_gate_eligible": False,
@@ -212,6 +227,24 @@ class ShadowLedgerStore:
                     head_digest
                 ) VALUES (1, 0, '0000000000000000000000000000000000000000000000000000000000000000');
 
+                CREATE TABLE IF NOT EXISTS shadow_campaign_manifest (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    manifest_json TEXT NOT NULL,
+                    manifest_digest TEXT NOT NULL
+                );
+
+                CREATE TRIGGER IF NOT EXISTS shadow_manifest_no_update
+                BEFORE UPDATE ON shadow_campaign_manifest
+                BEGIN
+                    SELECT RAISE(ABORT, 'shadow campaign manifest is immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS shadow_manifest_no_delete
+                BEFORE DELETE ON shadow_campaign_manifest
+                BEGIN
+                    SELECT RAISE(ABORT, 'shadow campaign manifest is immutable');
+                END;
+
                 CREATE TRIGGER IF NOT EXISTS shadow_events_no_update
                 BEFORE UPDATE ON shadow_ledger_events
                 BEGIN
@@ -248,6 +281,95 @@ class ShadowLedgerStore:
         if row is None:
             raise ValueError("shadow ledger state row is missing")
         return int(row["event_count"]), str(row["head_digest"])
+
+    @staticmethod
+    def _manifest_from_row(row: sqlite3.Row) -> ShadowCampaignManifestBinding:
+        manifest_json = str(row["manifest_json"])
+        manifest_digest = str(row["manifest_digest"])
+        try:
+            payload = json.loads(manifest_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("shadow campaign manifest JSON is invalid") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("shadow campaign manifest root must be an object")
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        if manifest_json != canonical:
+            raise ValueError("shadow campaign manifest JSON is not canonical")
+        expected_digest = hashlib.sha256((canonical + "\n").encode()).hexdigest()
+        if manifest_digest != expected_digest:
+            raise ValueError("shadow campaign manifest digest mismatch")
+        return ShadowCampaignManifestBinding(
+            payload={str(key): value for key, value in payload.items()},
+            manifest_digest=manifest_digest,
+        )
+
+    def bind_campaign_manifest(
+        self,
+        manifest: ShadowCampaignManifest,
+    ) -> ShadowCampaignManifestBinding:
+        canonical = manifest.canonical_json()
+        digest = manifest.digest
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT manifest_json, manifest_digest
+                FROM shadow_campaign_manifest
+                WHERE singleton = 1
+                """
+            ).fetchone()
+            if row is not None:
+                binding = self._manifest_from_row(row)
+                if (
+                    binding.manifest_digest != digest
+                    or str(row["manifest_json"]) != canonical
+                ):
+                    raise ValueError(
+                        "shadow campaign manifest conflicts with existing ledger binding"
+                    )
+                return binding
+
+            event_count, _head_digest = self._state(connection)
+            if event_count != 0:
+                raise ValueError(
+                    "cannot retroactively bind campaign manifest to non-empty shadow ledger"
+                )
+            connection.execute(
+                """
+                INSERT INTO shadow_campaign_manifest(
+                    singleton,
+                    manifest_json,
+                    manifest_digest
+                ) VALUES (1, ?, ?)
+                """,
+                (canonical, digest),
+            )
+            inserted = connection.execute(
+                """
+                SELECT manifest_json, manifest_digest
+                FROM shadow_campaign_manifest
+                WHERE singleton = 1
+                """
+            ).fetchone()
+            if inserted is None:
+                raise ValueError("shadow campaign manifest insert could not be reloaded")
+            return self._manifest_from_row(inserted)
+
+    def campaign_manifest(self) -> ShadowCampaignManifestBinding | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT manifest_json, manifest_digest
+                FROM shadow_campaign_manifest
+                WHERE singleton = 1
+                """
+            ).fetchone()
+        return None if row is None else self._manifest_from_row(row)
 
     def _existing(
         self,
@@ -491,8 +613,23 @@ class ShadowLedgerStore:
                 errors.append(f"sequence {event.sequence}: {exc}")
             expected_previous = event.event_digest
 
+        campaign_manifest_digest: str | None = None
         with self._connect() as connection:
             state_count, state_head = self._state(connection)
+            manifest_row = connection.execute(
+                """
+                SELECT manifest_json, manifest_digest
+                FROM shadow_campaign_manifest
+                WHERE singleton = 1
+                """
+            ).fetchone()
+        if manifest_row is not None:
+            try:
+                campaign_manifest_digest = self._manifest_from_row(
+                    manifest_row
+                ).manifest_digest
+            except ValueError as exc:
+                errors.append(f"campaign manifest: {exc}")
         if state_count != len(events):
             errors.append("ledger state event_count does not match event table")
         expected_head = events[-1].event_digest if events else ZERO_DIGEST
@@ -567,6 +704,7 @@ class ShadowLedgerStore:
                 for action in ("bull", "bear", "skip")
             },
             integrity_errors=tuple(errors),
+            campaign_manifest_digest=campaign_manifest_digest,
         )
 
 
