@@ -17,12 +17,23 @@ from pancake_prediction.clickhouse import (
 
 
 class RecordingClient(ClickHouseHttpClient):
-    def __init__(self, response: bytes = b"") -> None:
+    def __init__(
+        self,
+        response: bytes = b"",
+        *,
+        live_guard_rows: tuple[dict[str, object], ...] = (
+            {"live_row_count": 0},
+        ),
+    ) -> None:
         super().__init__("http://127.0.0.1:8123")
         self.calls: list[
             tuple[str, bytes, Mapping[str, QueryParameter] | None]
         ] = []
+        self.query_calls: list[
+            tuple[str, Mapping[str, QueryParameter] | None]
+        ] = []
         self.response = response
+        self.live_guard_rows = live_guard_rows
 
     def _post(
         self,
@@ -33,6 +44,15 @@ class RecordingClient(ClickHouseHttpClient):
     ) -> bytes:
         self.calls.append((query, data, parameters))
         return self.response
+
+    def query_json_rows(
+        self,
+        query: str,
+        *,
+        parameters: Mapping[str, QueryParameter] | None = None,
+    ) -> Iterator[dict[str, object]]:
+        self.query_calls.append((query, parameters))
+        yield from self.live_guard_rows
 
 
 class RecordingSource:
@@ -119,6 +139,19 @@ def test_ingest_binance_archive_verifies_checksum_and_persists_provenance(
     assert rows[0]["event_timestamp_ms"] == 1_785_542_400_025
 
 
+    assert len(client.query_calls) == 1
+    query, parameters = client.query_calls[0]
+    assert "FROM binance_agg_trades FINAL" in query
+    assert "source_name={source_name:String}" in query
+    assert parameters == {
+        "venue": "spot",
+        "symbol": "BNBUSDT",
+        "timestamp_unit": "auto",
+        "availability_lag_ms": 25,
+        "source_name": "binance-rest:spot",
+    }
+
+
 def test_ingest_rejects_bad_checksum_before_any_clickhouse_insert(tmp_path: Path) -> None:
     archive_path, checksum_path, _digest = _archive(tmp_path)
     checksum_path.write_text("0" * 64 + f"  {archive_path.name}\n", encoding="utf-8")
@@ -133,6 +166,59 @@ def test_ingest_rejects_bad_checksum_before_any_clickhouse_insert(tmp_path: Path
             timestamp_unit="auto",
             availability_lag_ms=0,
         )
+    assert client.query_calls == []
+
+
+def test_ingest_rejects_archive_after_live_rows_exist(
+    tmp_path: Path,
+) -> None:
+    archive_path, checksum_path, _digest = _archive(tmp_path)
+    client = RecordingClient(live_guard_rows=({"live_row_count": 2},))
+
+    with pytest.raises(ValueError, match="forbidden after prospective live"):
+        ingest_binance_archive(
+            client,
+            archive_path,
+            checksum_path,
+            market="BNBUSD",
+            venue="spot",
+            timestamp_unit="auto",
+            availability_lag_ms=25,
+        )
+
+    assert len(client.query_calls) == 1
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "guard_rows",
+    (
+        (),
+        ({"live_row_count": 0}, {"live_row_count": 0}),
+        ({"live_row_count": "not-an-int"},),
+        ({"live_row_count": -1},),
+        ({"other": 0},),
+    ),
+)
+def test_ingest_archive_live_guard_fails_closed_on_invalid_count(
+    tmp_path: Path,
+    guard_rows: tuple[dict[str, object], ...],
+) -> None:
+    archive_path, checksum_path, _digest = _archive(tmp_path)
+    client = RecordingClient(live_guard_rows=guard_rows)
+
+    with pytest.raises(ValueError, match="live"):
+        ingest_binance_archive(
+            client,
+            archive_path,
+            checksum_path,
+            market="BNBUSD",
+            venue="spot",
+            timestamp_unit="auto",
+            availability_lag_ms=25,
+        )
+
+    assert len(client.query_calls) == 1
     assert client.calls == []
 
 
