@@ -21,6 +21,10 @@ from .contracts import CHAIN_ID_BSC, Market
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .research_inputs import load_canonical_research_inputs
 from .rpc import RpcError
+from .shadow_ledger import (
+    ShadowLedgerReadOnlyInspection,
+    inspect_shadow_ledger_read_only,
+)
 from .shadow_runtime import (
     ShadowRuntimeConfig,
     build_shadow_runtime_campaign_manifest,
@@ -46,6 +50,7 @@ class BinanceLineagePreflight:
 class ShadowRuntimePreflightReport:
     market: str
     canonical_database: str
+    shadow_database: str
     ready: bool
     checks: Mapping[str, bool]
     failures: tuple[str, ...]
@@ -60,6 +65,7 @@ class ShadowRuntimePreflightReport:
     chainlink_aggregator_anchor: str | None
     expected_campaign_manifest_digest: str | None
     expected_campaign_manifest: dict[str, object] | None
+    shadow_ledger: ShadowLedgerReadOnlyInspection
     bsc_chain_id: int | None
     bsc_head_block: int | None
     clickhouse_schema: ClickHouseBinanceSchemaReport | None
@@ -72,6 +78,7 @@ class ShadowRuntimePreflightReport:
         return {
             "market": self.market,
             "canonical_database": self.canonical_database,
+            "shadow_database": self.shadow_database,
             "ready": self.ready,
             "checks": dict(self.checks),
             "failures": list(self.failures),
@@ -90,6 +97,7 @@ class ShadowRuntimePreflightReport:
                 "digest": self.expected_campaign_manifest_digest,
                 "payload": self.expected_campaign_manifest,
             },
+            "shadow_ledger": self.shadow_ledger.as_dict(),
             "bsc": {
                 "chain_id": self.bsc_chain_id,
                 "head_block": self.bsc_head_block,
@@ -231,6 +239,7 @@ def run_shadow_runtime_preflight(
     binance: BinanceAggTradeSource,
     market: Market,
     canonical_database: Path,
+    shadow_database: Path,
     *,
     config: ShadowRuntimeConfig | None = None,
 ) -> ShadowRuntimePreflightReport:
@@ -327,6 +336,20 @@ def run_shadow_runtime_preflight(
     else:
         checks["campaign_manifest_constructible"] = False
 
+    shadow_ledger = inspect_shadow_ledger_read_only(shadow_database)
+    if shadow_ledger.binding_state in {"absent", "empty_unbound"}:
+        checks["shadow_campaign_compatible"] = True
+    elif shadow_ledger.binding_state == "bound":
+        checks["shadow_campaign_compatible"] = (
+            expected_campaign_manifest_digest is not None
+            and expected_campaign_manifest is not None
+            and shadow_ledger.manifest_digest
+            == expected_campaign_manifest_digest
+            and shadow_ledger.manifest_payload == expected_campaign_manifest
+        )
+    else:
+        checks["shadow_campaign_compatible"] = False
+
     checks["replay_present"] = replay_rounds > 0
     checks["settled_history_capacity"] = (
         settled_labeled_rounds >= minimum_settled_rounds
@@ -421,6 +444,7 @@ def run_shadow_runtime_preflight(
     return ShadowRuntimePreflightReport(
         market=market.symbol,
         canonical_database=str(canonical_database),
+        shadow_database=str(shadow_database),
         ready=not failures,
         checks=dict(checks),
         failures=failures,
@@ -435,6 +459,7 @@ def run_shadow_runtime_preflight(
         chainlink_aggregator_anchor=chainlink_aggregator_anchor,
         expected_campaign_manifest_digest=expected_campaign_manifest_digest,
         expected_campaign_manifest=expected_campaign_manifest,
+        shadow_ledger=shadow_ledger,
         bsc_chain_id=bsc_chain_id,
         bsc_head_block=bsc_head_block,
         clickhouse_schema=schema,
