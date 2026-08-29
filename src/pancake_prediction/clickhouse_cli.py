@@ -16,6 +16,10 @@ from .binance_live import (
     LiveVenue,
     sync_binance_live_aggtrades,
 )
+from .binance_live_lock import (
+    BinanceLiveLineageLockError,
+    BinanceLiveLineageProcessLock,
+)
 from .campaign_evaluation import (
     EconomicCampaignConfig,
     run_source_bound_economic_campaign,
@@ -435,25 +439,35 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "binance-live-sync":
         _schema_or_error(parser, client)
+        venue = cast(LiveVenue, str(args.venue))
+        timestamp_unit = cast(TimestampUnit, str(args.timestamp_unit))
+        availability_lag_ms = int(args.availability_lag_ms)
         try:
-            live_report = sync_binance_live_aggtrades(
+            with BinanceLiveLineageProcessLock(
                 client,
-                client,
-                BinancePublicHttpClient(),
                 market=str(args.market),
-                venue=cast(LiveVenue, str(args.venue)),
-                availability_lag_ms=int(args.availability_lag_ms),
-                timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
-                now_timestamp_ms=(
-                    None
-                    if args.now_timestamp_ms is None
-                    else int(args.now_timestamp_ms)
-                ),
-                bootstrap_window_ms=int(args.bootstrap_window_ms),
-                batch_size=int(args.batch_size),
-                max_pages=int(args.max_pages),
-            )
-        except (BinanceLiveError, ValueError) as exc:
+                venue=venue,
+                timestamp_unit=timestamp_unit,
+                availability_lag_ms=availability_lag_ms,
+            ):
+                live_report = sync_binance_live_aggtrades(
+                    client,
+                    client,
+                    BinancePublicHttpClient(),
+                    market=str(args.market),
+                    venue=venue,
+                    availability_lag_ms=availability_lag_ms,
+                    timestamp_unit=timestamp_unit,
+                    now_timestamp_ms=(
+                        None
+                        if args.now_timestamp_ms is None
+                        else int(args.now_timestamp_ms)
+                    ),
+                    bootstrap_window_ms=int(args.bootstrap_window_ms),
+                    batch_size=int(args.batch_size),
+                    max_pages=int(args.max_pages),
+                )
+        except (BinanceLiveError, BinanceLiveLineageLockError, ValueError) as exc:
             parser.error(f"Binance live sync failed: {exc}")
         _print_json(live_report.as_dict())
         return 0
