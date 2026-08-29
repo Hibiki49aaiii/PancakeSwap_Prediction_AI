@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from scripts import build_shadow_campaign_evidence as campaign_evidence_script
 from pancake_prediction.shadow_campaign import (
     ShadowCampaignPolicy,
     build_shadow_campaign_evidence,
     evaluate_shadow_campaign,
 )
-from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport
+from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport, ShadowLedgerStore
 
 
 def _audit(**overrides: object) -> ShadowLedgerAuditReport:
@@ -223,3 +226,31 @@ def test_shadow_campaign_evidence_rejects_unknown_role(tmp_path: Path) -> None:
             evaluate_shadow_campaign(_audit()),
             evidence_role="historical_success",
         )
+
+
+
+def test_standalone_shadow_campaign_evidence_writes_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ShadowLedgerStore(ledger).initialize()
+    output = tmp_path / "evidence" / "stage4-shadow-latest.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_shadow_campaign_evidence.py",
+            "--db",
+            str(ledger),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert campaign_evidence_script.main() == 2
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["evidence_role"] == "latest_attempt"
+    assert payload["success"] is False
+    assert payload["workflow_outcome"] == "incomplete"
+    assert not output.with_name(output.name + ".tmp").exists()
