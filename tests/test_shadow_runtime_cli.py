@@ -352,6 +352,7 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
         received_binance: object,
         market: Market,
         canonical_database: Path,
+        shadow_database: Path,
         *,
         config: ShadowRuntimeConfig,
     ) -> FakePreflightReport:
@@ -360,6 +361,7 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
         assert received_binance is binance
         captured["market"] = market.symbol
         captured["canonical_database"] = canonical_database
+        captured["shadow_database"] = shadow_database
         captured["config"] = config
         return FakePreflightReport()
 
@@ -399,6 +401,7 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
     assert payload["signing_enabled"] is False
     assert payload["funded_execution"] is False
     assert captured["market"] == "BNBUSD"
+    assert captured["shadow_database"] == tmp_path / "shadow.sqlite3"
     config = captured["config"]
     assert isinstance(config, ShadowRuntimeConfig)
     assert config.inference.purge_rounds == 3
