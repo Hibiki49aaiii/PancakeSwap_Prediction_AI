@@ -705,17 +705,17 @@ def test_shadow_runtime_cli_continuous_recovers_after_cycle_error_with_locks_hel
     assert sleeps == 2
 
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert lines[0] == {
-        "consecutive_cycle_errors": 1,
-        "error_type": "RpcError",
-        "funded_execution": False,
-        "live_broadcast": False,
-        "max_consecutive_cycle_errors": 5,
-        "profitability_gate_eligible": False,
-        "retry_after_seconds": 1.0,
-        "signing_enabled": False,
-        "status": "cycle_error_retry",
-    }
+    assert lines[0]["status"] == "cycle_error_retry"
+    assert lines[0]["error_type"] == "RpcError"
+    assert lines[0]["consecutive_cycle_errors"] == 1
+    assert lines[0]["max_consecutive_cycle_errors"] == 5
+    assert lines[0]["retry_after_seconds"] == 1.0
+    assert lines[0]["last_success_at_ms"] is None
+    assert isinstance(lines[0]["updated_at_ms"], int)
+    assert lines[0]["signing_enabled"] is False
+    assert lines[0]["live_broadcast"] is False
+    assert lines[0]["funded_execution"] is False
+    assert lines[0]["profitability_gate_eligible"] is False
     assert lines[1]["status"] == "no_eligible_target"
     assert "secret-rpc" not in json.dumps(lines)
 
@@ -858,6 +858,292 @@ def test_shadow_runtime_cli_retry_setting_is_not_runtime_semantics(
     assert shadow_runtime_cli._runtime_config(default_args) == shadow_runtime_cli._runtime_config(
         tuned_args
     )
+
+
+def test_shadow_runtime_cli_once_writes_atomic_success_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: FakeCycleReport(status="prediction_recorded"),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: 1_900_000_000_123,
+    )
+
+    status = tmp_path / "status" / "runtime.json"
+    assert (
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--once",
+                "--status-output",
+                str(status),
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload == {
+        "consecutive_cycle_errors": 0,
+        "cycle_status": "prediction_recorded",
+        "funded_execution": False,
+        "last_success_at_ms": 1_900_000_000_123,
+        "live_broadcast": False,
+        "profitability_gate_eligible": False,
+        "signing_enabled": False,
+        "status": "cycle_success",
+        "updated_at_ms": 1_900_000_000_123,
+    }
+    assert not status.with_name(status.name + ".tmp").exists()
+
+
+def test_shadow_runtime_cli_retry_status_before_first_success_has_null_last_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RpcError("hidden-provider-detail")),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: 1_900_000_000_200,
+    )
+
+    def interrupted_sleep(seconds: float) -> None:
+        assert seconds == 1.0
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        interrupted_sleep,
+    )
+
+    status = tmp_path / "runtime-status.json"
+    assert (
+        shadow_runtime_cli.main(
+            [*_base_args(tmp_path), "--status-output", str(status)]
+        )
+        == 0
+    )
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload["status"] == "cycle_error_retry"
+    assert payload["error_type"] == "RpcError"
+    assert payload["updated_at_ms"] == 1_900_000_000_200
+    assert payload["last_success_at_ms"] is None
+    assert payload["consecutive_cycle_errors"] == 1
+    assert "hidden-provider-detail" not in status.read_text(encoding="utf-8")
+
+
+def test_shadow_runtime_cli_retry_status_preserves_last_success_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    calls = 0
+
+    def cycle(*args: object, **kwargs: object) -> FakeCycleReport:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RpcError("hidden-second-cycle-detail")
+        return FakeCycleReport()
+
+    timestamps = iter((1_900_000_000_300, 1_900_000_000_400))
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: next(timestamps),
+    )
+    sleeps = 0
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleeps
+        assert seconds == 1.0
+        sleeps += 1
+        if sleeps == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        fake_sleep,
+    )
+
+    status = tmp_path / "runtime-status.json"
+    assert (
+        shadow_runtime_cli.main(
+            [*_base_args(tmp_path), "--status-output", str(status)]
+        )
+        == 0
+    )
+    assert calls == 2
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload["status"] == "cycle_error_retry"
+    assert payload["updated_at_ms"] == 1_900_000_000_400
+    assert payload["last_success_at_ms"] == 1_900_000_000_300
+    assert payload["consecutive_cycle_errors"] == 1
+
+
+def test_shadow_runtime_cli_fatal_cycle_error_writes_redacted_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+
+    def fail_cycle(*args: object, **kwargs: object) -> object:
+        raise ValueError("sensitive-fatal-provider-detail")
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", fail_cycle)
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: 1_900_000_000_500,
+    )
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        lambda seconds: pytest.fail(f"fatal error must not sleep: {seconds}"),
+    )
+
+    status = tmp_path / "runtime-status.json"
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [*_base_args(tmp_path), "--status-output", str(status)]
+        )
+    assert exc_info.value.code == 2
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload["status"] == "cycle_error_fatal"
+    assert payload["error_type"] == "ValueError"
+    assert payload["updated_at_ms"] == 1_900_000_000_500
+    assert payload["last_success_at_ms"] is None
+    assert payload["consecutive_cycle_errors"] == 1
+    assert "sensitive-fatal-provider-detail" not in status.read_text(encoding="utf-8")
+
+
+def test_shadow_runtime_cli_max_cycle_errors_writes_terminal_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ClickHouseError("hidden-clickhouse-detail")),
+    )
+    timestamps = iter((1_900_000_000_600, 1_900_000_000_700))
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: next(timestamps),
+    )
+    monkeypatch.setattr(
+        "pancake_prediction.shadow_runtime_cli.time.sleep",
+        lambda seconds: None,
+    )
+
+    status = tmp_path / "runtime-status.json"
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--status-output",
+                str(status),
+                "--max-consecutive-cycle-errors",
+                "2",
+            ]
+        )
+    assert exc_info.value.code == 2
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload["status"] == "cycle_error_fatal"
+    assert payload["error_type"] == "ClickHouseError"
+    assert payload["updated_at_ms"] == 1_900_000_000_700
+    assert payload["consecutive_cycle_errors"] == 2
+    assert payload["max_consecutive_cycle_errors"] == 2
+    assert "hidden-clickhouse-detail" not in status.read_text(encoding="utf-8")
+
+
+def test_shadow_runtime_cli_rejects_status_output_path_collision(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared.json"
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--status-output",
+                str(shared),
+                "--evidence-output",
+                str(shared),
+            ]
+        )
+    assert exc_info.value.code == 2
+
+
+def test_shadow_runtime_cli_preflight_rejects_status_output(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--preflight-only",
+                "--status-output",
+                str(tmp_path / "status.json"),
+            ]
+        )
+    assert exc_info.value.code == 2
+
+
+def test_shadow_runtime_cli_status_checkpoint_failure_is_fatal_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: FakeCycleReport(),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "_operational_now_ms",
+        lambda: 1_900_000_000_800,
+    )
+
+    def fail_write(path: Path, rendered: str) -> None:
+        del path, rendered
+        raise OSError("sensitive-filesystem-detail")
+
+    monkeypatch.setattr(shadow_runtime_cli, "_write_evidence", fail_write)
+
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--once",
+                "--status-output",
+                str(tmp_path / "status.json"),
+            ]
+        )
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "OSError" in captured.err
+    assert "sensitive-filesystem-detail" not in captured.err
 
 
 def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
