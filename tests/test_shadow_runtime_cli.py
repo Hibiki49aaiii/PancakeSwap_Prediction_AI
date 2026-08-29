@@ -7,12 +7,22 @@ from pathlib import Path
 import pytest
 
 from pancake_prediction import shadow_runtime_cli
+from pancake_prediction.binance_live_lock import (
+    BinanceLiveLineageLockError,
+    BinanceLiveLineageProcessLock,
+)
 from pancake_prediction.contracts import Market
 from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 from pancake_prediction.shadow_runtime_lock import (
     ShadowRuntimeLockError,
     ShadowRuntimeProcessLock,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class FakeClickHouseClient:
+    endpoint: str = "http://127.0.0.1:8123"
+    database: str = "default"
 
 
 @dataclass(frozen=True)
@@ -111,7 +121,7 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "clickhouse-secret")
 
     rpc = object()
-    clickhouse = object()
+    clickhouse = FakeClickHouseClient()
     binance = object()
     monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: rpc)
     monkeypatch.setattr(
@@ -154,6 +164,27 @@ def test_shadow_runtime_cli_once_binds_config_and_writes_atomic_evidence(
             match="already holds",
         ):
             competing_lock.acquire()
+        assert isinstance(received_clickhouse, FakeClickHouseClient)
+        for venue, timestamp_unit, availability_lag_ms in (
+            ("spot", config.spot_timestamp_unit, config.spot_availability_lag_ms),
+            (
+                "um_futures",
+                config.perp_timestamp_unit,
+                config.perp_availability_lag_ms,
+            ),
+        ):
+            competing_lineage = BinanceLiveLineageProcessLock(
+                received_clickhouse,
+                market=market.symbol,
+                venue=venue,
+                timestamp_unit=timestamp_unit,
+                availability_lag_ms=availability_lag_ms,
+            )
+            with pytest.raises(
+                BinanceLiveLineageLockError,
+                match="already writes",
+            ):
+                competing_lineage.acquire()
         shadow_database.write_bytes(b"shadow-ledger-snapshot")
         return FakeCycleReport()
 
@@ -258,7 +289,7 @@ def test_shadow_runtime_cli_writes_last_success_only_for_ready_campaign(
     monkeypatch.setattr(
         shadow_runtime_cli,
         "ClickHouseHttpClient",
-        lambda *args, **kwargs: object(),
+        lambda *args, **kwargs: FakeClickHouseClient(),
     )
     monkeypatch.setattr(
         shadow_runtime_cli,
@@ -364,6 +395,109 @@ def test_shadow_runtime_cli_lock_contention_prevents_runtime_cycle(
         assert exc_info.value.code == 2
 
 
+def test_shadow_runtime_cli_binance_lineage_contention_prevents_runtime_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BSC_RPC_URL", "https://example.invalid")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    client = FakeClickHouseClient()
+    monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: object())
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: client,
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+
+    def must_not_run(*args: object, **kwargs: object) -> object:
+        raise AssertionError("runtime cycle must not run while lineage lock is held")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        must_not_run,
+    )
+
+    with BinanceLiveLineageProcessLock(
+        client,
+        market="BNBUSD",
+        venue="spot",
+        timestamp_unit="auto",
+        availability_lag_ms=250,
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            shadow_runtime_cli.main([*_base_args(tmp_path), "--once"])
+        assert exc_info.value.code == 2
+
+
+def test_shadow_runtime_cli_no_perp_acquires_only_spot_lineage_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BSC_RPC_URL", "https://example.invalid")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: object())
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: FakeClickHouseClient(),
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+    observed_venues: list[str] = []
+
+    class RecordingLineageLock:
+        def __init__(
+            self,
+            client: object,
+            *,
+            market: str,
+            venue: str,
+            timestamp_unit: str,
+            availability_lag_ms: int,
+        ) -> None:
+            del client, market, timestamp_unit, availability_lag_ms
+            observed_venues.append(venue)
+
+        def __enter__(self) -> RecordingLineageLock:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> None:
+            return None
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinanceLiveLineageProcessLock",
+        RecordingLineageLock,
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: FakeCycleReport(),
+    )
+
+    assert (
+        shadow_runtime_cli.main(
+            [*_base_args(tmp_path), "--once", "--no-perp"]
+        )
+        == 0
+    )
+    assert observed_venues == ["spot"]
+
+
 def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -430,6 +564,18 @@ def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
         shadow_runtime_cli,
         "ShadowRuntimeProcessLock",
         must_not_construct_runtime_lock,
+    )
+
+    def must_not_construct_lineage_lock(
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        raise AssertionError("preflight must not construct Binance lineage lock")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinanceLiveLineageProcessLock",
+        must_not_construct_lineage_lock,
     )
 
     output = tmp_path / "evidence" / "preflight.json"
