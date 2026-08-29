@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -380,9 +380,13 @@ def test_runtime_cycle_records_prediction_before_deadline(
     assert report.ledger_event is not None
     assert report.ledger_event.kind == "prediction"
     assert captured["required_epochs"] == (1, 2, 10)
-    assert ShadowLedgerStore(shadow_db).audit().prediction_count == 1
+    audit = ShadowLedgerStore(shadow_db).audit()
+    assert audit.prediction_count == 1
+    assert audit.campaign_manifest_digest is not None
+    assert report.as_dict()["campaign_manifest_digest"] == audit.campaign_manifest_digest
     _assert_timing_consistent(report)
     for phase in (
+        "campaign_manifest_bind",
         "required_epoch_plan",
         "dataset_build",
         "inference",
@@ -393,6 +397,67 @@ def test_runtime_cycle_records_prediction_before_deadline(
         assert phase in report.phase_durations_ms
     assert report.decision_to_completion_ms == 17_000
     assert report.submission_margin_ms == 1_000
+
+
+def test_runtime_cycle_rejects_manifest_drift_before_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    replay = ReplaySnapshot(1, "BNBUSD", "a" * 64, ())
+    _patch_common(monkeypatch, replay)
+    monkeypatch.setattr(
+        shadow_runtime,
+        "select_shadow_target",
+        lambda *args, **kwargs: None,
+    )
+
+    shadow_db = tmp_path / "shadow.sqlite3"
+    base = shadow_runtime.ShadowRuntimeConfig()
+    first = shadow_runtime.run_shadow_runtime_cycle(
+        FakeRpc(),
+        FakeClickHouse(),
+        FakeRest(),
+        MARKETS["BNBUSD"],
+        tmp_path / "canonical.sqlite3",
+        shadow_db,
+        config=base,
+        now_timestamp_ms=1_000_000,
+        completion_timestamp_ms=1_000_100,
+    )
+    assert first.status == "no_eligible_target"
+    first_digest = ShadowLedgerStore(shadow_db).audit().campaign_manifest_digest
+    assert first_digest is not None
+
+    def must_not_reconcile(*args: object, **kwargs: object) -> object:
+        raise AssertionError("manifest drift must fail before settlement reconciliation")
+
+    monkeypatch.setattr(
+        shadow_runtime,
+        "reconcile_shadow_settlements",
+        must_not_reconcile,
+    )
+    changed = replace(
+        base,
+        inference=replace(
+            base.inference,
+            stake_wei=base.inference.stake_wei + 1,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="manifest conflicts"):
+        shadow_runtime.run_shadow_runtime_cycle(
+            FakeRpc(),
+            FakeClickHouse(),
+            FakeRest(),
+            MARKETS["BNBUSD"],
+            tmp_path / "canonical.sqlite3",
+            shadow_db,
+            config=changed,
+            now_timestamp_ms=1_001_000,
+            completion_timestamp_ms=1_001_100,
+        )
+
+    assert ShadowLedgerStore(shadow_db).audit().campaign_manifest_digest == first_digest
 
 
 def test_runtime_cycle_refuses_prediction_at_submission_deadline(
