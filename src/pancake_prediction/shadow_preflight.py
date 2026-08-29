@@ -21,7 +21,10 @@ from .contracts import CHAIN_ID_BSC, Market
 from .research_dataset import BINANCE_SYMBOL_BY_MARKET
 from .research_inputs import load_canonical_research_inputs
 from .rpc import RpcError
-from .shadow_runtime import ShadowRuntimeConfig
+from .shadow_runtime import (
+    ShadowRuntimeConfig,
+    build_shadow_runtime_campaign_manifest,
+)
 from .store import EventStore
 
 
@@ -55,6 +58,8 @@ class ShadowRuntimePreflightReport:
     last_collected_block: int | None
     oracle_proxy_anchor: str | None
     chainlink_aggregator_anchor: str | None
+    expected_campaign_manifest_digest: str | None
+    expected_campaign_manifest: dict[str, object] | None
     bsc_chain_id: int | None
     bsc_head_block: int | None
     clickhouse_schema: ClickHouseBinanceSchemaReport | None
@@ -80,6 +85,10 @@ class ShadowRuntimePreflightReport:
                 "last_collected_block": self.last_collected_block,
                 "oracle_proxy_anchor": self.oracle_proxy_anchor,
                 "chainlink_aggregator_anchor": self.chainlink_aggregator_anchor,
+            },
+            "campaign_manifest": {
+                "digest": self.expected_campaign_manifest_digest,
+                "payload": self.expected_campaign_manifest,
             },
             "bsc": {
                 "chain_id": self.bsc_chain_id,
@@ -300,6 +309,24 @@ def run_shadow_runtime_preflight(
         checks["chainlink_aggregator_anchor_valid"] = False
         checks["canonical_inputs_loadable"] = False
 
+    expected_campaign_manifest_digest: str | None = None
+    expected_campaign_manifest: dict[str, object] | None = None
+    if oracle_proxy_anchor is not None and chainlink_aggregator_anchor is not None:
+        try:
+            manifest = build_shadow_runtime_campaign_manifest(
+                market,
+                oracle_proxy_anchor=oracle_proxy_anchor,
+                chainlink_aggregator_anchor=chainlink_aggregator_anchor,
+                config=selected,
+            )
+            expected_campaign_manifest_digest = manifest.digest
+            expected_campaign_manifest = manifest.canonical_payload()
+            checks["campaign_manifest_constructible"] = True
+        except ValueError:
+            checks["campaign_manifest_constructible"] = False
+    else:
+        checks["campaign_manifest_constructible"] = False
+
     checks["replay_present"] = replay_rounds > 0
     checks["settled_history_capacity"] = (
         settled_labeled_rounds >= minimum_settled_rounds
@@ -406,6 +433,8 @@ def run_shadow_runtime_preflight(
         last_collected_block=last_collected_block,
         oracle_proxy_anchor=oracle_proxy_anchor,
         chainlink_aggregator_anchor=chainlink_aggregator_anchor,
+        expected_campaign_manifest_digest=expected_campaign_manifest_digest,
+        expected_campaign_manifest=expected_campaign_manifest,
         bsc_chain_id=bsc_chain_id,
         bsc_head_block=bsc_head_block,
         clickhouse_schema=schema,
