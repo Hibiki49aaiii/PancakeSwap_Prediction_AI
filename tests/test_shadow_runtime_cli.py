@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from pancake_prediction import shadow_runtime_cli
+from pancake_prediction.binance_live import BinanceLiveError
 from pancake_prediction.binance_live_lock import (
     BinanceLiveLineageLockError,
     BinanceLiveLineageProcessLock,
 )
+from pancake_prediction.clickhouse import ClickHouseError
 from pancake_prediction.contracts import Market
+from pancake_prediction.rpc import RpcError
 from pancake_prediction.shadow_runtime import ShadowRuntimeConfig
 from pancake_prediction.shadow_runtime_lock import (
     ShadowRuntimeLockError,
@@ -501,6 +504,276 @@ def test_shadow_runtime_cli_no_perp_acquires_only_spot_lineage_lock(
         == 0
     )
     assert observed_venues == ["spot"]
+
+
+def _patch_runtime_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> FakeClickHouseClient:
+    monkeypatch.setenv("BSC_RPC_URL", "https://example.invalid")
+    monkeypatch.setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+    clickhouse = FakeClickHouseClient()
+    monkeypatch.setattr(shadow_runtime_cli, "JsonRpcClient", lambda url: object())
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "ClickHouseHttpClient",
+        lambda *args, **kwargs: clickhouse,
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "BinancePublicHttpClient",
+        lambda: object(),
+    )
+    return clickhouse
+
+
+def test_shadow_runtime_cli_once_cycle_error_exits_without_retry_or_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+
+    def fail_cycle(*args: object, **kwargs: object) -> object:
+        raise BinanceLiveError("https://secret-binance.invalid/token")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        fail_cycle,
+    )
+    monkeypatch.setattr(
+        shadow_runtime_cli.time,
+        "sleep",
+        lambda seconds: pytest.fail(f"once mode must not retry: {seconds}"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main([*_base_args(tmp_path), "--once"])
+    assert exc_info.value.code == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "BinanceLiveError" in captured.err
+    assert "secret-binance" not in captured.err
+    assert "token" not in captured.err
+
+
+def test_shadow_runtime_cli_continuous_recovers_after_cycle_error_with_locks_held(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    clickhouse = _patch_runtime_clients(monkeypatch)
+    shadow_database = tmp_path / "shadow.sqlite3"
+    calls = 0
+
+    def cycle(
+        received_rpc: object,
+        received_clickhouse: object,
+        received_binance: object,
+        market: Market,
+        canonical_database: Path,
+        received_shadow_database: Path,
+        *,
+        config: ShadowRuntimeConfig,
+    ) -> FakeCycleReport:
+        nonlocal calls
+        del received_rpc, received_binance, canonical_database
+        calls += 1
+        assert received_clickhouse is clickhouse
+        assert received_shadow_database == shadow_database
+
+        competing_campaign = ShadowRuntimeProcessLock(shadow_database)
+        with pytest.raises(ShadowRuntimeLockError, match="already holds"):
+            competing_campaign.acquire()
+
+        competing_spot = BinanceLiveLineageProcessLock(
+            clickhouse,
+            market=market.symbol,
+            venue="spot",
+            timestamp_unit=config.spot_timestamp_unit,
+            availability_lag_ms=config.spot_availability_lag_ms,
+        )
+        with pytest.raises(
+            BinanceLiveLineageLockError,
+            match="already writes",
+        ):
+            competing_spot.acquire()
+
+        if calls == 1:
+            raise RpcError("https://secret-rpc.invalid/api-key")
+        return FakeCycleReport()
+
+    sleeps = 0
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleeps
+        assert seconds == 1.0
+        sleeps += 1
+        if sleeps == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
+    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", fake_sleep)
+
+    assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
+    assert calls == 2
+    assert sleeps == 2
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert lines[0] == {
+        "consecutive_cycle_errors": 1,
+        "error_type": "RpcError",
+        "funded_execution": False,
+        "live_broadcast": False,
+        "max_consecutive_cycle_errors": 5,
+        "profitability_gate_eligible": False,
+        "retry_after_seconds": 1.0,
+        "signing_enabled": False,
+        "status": "cycle_error_retry",
+    }
+    assert lines[1]["status"] == "no_eligible_target"
+    assert "secret-rpc" not in json.dumps(lines)
+
+
+def test_shadow_runtime_cli_success_resets_consecutive_error_counter(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    calls = 0
+
+    def cycle(*args: object, **kwargs: object) -> FakeCycleReport:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RpcError("first-secret")
+        if calls == 3:
+            raise ClickHouseError("second-secret")
+        return FakeCycleReport()
+
+    sleeps = 0
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleeps
+        assert seconds == 1.0
+        sleeps += 1
+        if sleeps == 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(shadow_runtime_cli, "run_shadow_runtime_cycle", cycle)
+    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", fake_sleep)
+
+    assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
+    assert calls == 3
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    retries = [item for item in lines if item["status"] == "cycle_error_retry"]
+    assert [item["consecutive_cycle_errors"] for item in retries] == [1, 1]
+    assert [item["error_type"] for item in retries] == ["RpcError", "ClickHouseError"]
+    rendered = json.dumps(lines)
+    assert "first-secret" not in rendered
+    assert "second-secret" not in rendered
+
+
+def test_shadow_runtime_cli_exits_at_max_consecutive_cycle_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+    calls = 0
+
+    def fail_cycle(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise ClickHouseError("clickhouse-sensitive-detail")
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        fail_cycle,
+    )
+    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--max-consecutive-cycle-errors",
+                "3",
+            ]
+        )
+    assert exc_info.value.code == 2
+    assert calls == 3
+
+    captured = capsys.readouterr()
+    retries = [json.loads(line) for line in captured.out.splitlines()]
+    assert [item["consecutive_cycle_errors"] for item in retries] == [1, 2]
+    assert all(item["error_type"] == "ClickHouseError" for item in retries)
+    assert "maximum consecutive cycle errors (3)" in captured.err
+    assert "ClickHouseError" in captured.err
+    assert "sensitive-detail" not in captured.err
+    assert "sensitive-detail" not in captured.out
+
+
+def test_shadow_runtime_cli_keyboard_interrupt_during_retry_sleep_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _patch_runtime_clients(monkeypatch)
+
+    monkeypatch.setattr(
+        shadow_runtime_cli,
+        "run_shadow_runtime_cycle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RpcError("hidden-detail")),
+    )
+
+    def interrupted_sleep(seconds: float) -> None:
+        assert seconds == 1.0
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(shadow_runtime_cli.time, "sleep", interrupted_sleep)
+
+    assert shadow_runtime_cli.main(_base_args(tmp_path)) == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["status"] == "cycle_error_retry"
+    assert payload["error_type"] == "RpcError"
+    assert "hidden-detail" not in output
+
+
+def test_shadow_runtime_cli_validates_max_consecutive_cycle_errors(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        shadow_runtime_cli.main(
+            [
+                *_base_args(tmp_path),
+                "--max-consecutive-cycle-errors",
+                "0",
+            ]
+        )
+    assert exc_info.value.code == 2
+
+
+def test_shadow_runtime_cli_retry_setting_is_not_runtime_semantics(
+    tmp_path: Path,
+) -> None:
+    parser = shadow_runtime_cli.build_parser()
+    default_args = parser.parse_args(_base_args(tmp_path))
+    tuned_args = parser.parse_args(
+        [
+            *_base_args(tmp_path),
+            "--max-consecutive-cycle-errors",
+            "9",
+        ]
+    )
+    assert shadow_runtime_cli._runtime_config(default_args) == shadow_runtime_cli._runtime_config(
+        tuned_args
+    )
 
 
 def test_shadow_runtime_cli_preflight_is_read_only_and_writes_atomic_output(
