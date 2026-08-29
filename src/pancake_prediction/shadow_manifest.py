@@ -53,6 +53,17 @@ def _normalize_json(value: object, *, path: str = "semantic_config") -> object:
     raise ValueError(f"{path} contains unsupported value type {type(value).__name__}")
 
 
+def canonical_manifest_fragment_digest(value: Mapping[str, object]) -> str:
+    normalized = _normalize_json(value, path="manifest_fragment")
+    raw = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256((raw + "\n").encode()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class ShadowCampaignManifest:
     chain_id: int
