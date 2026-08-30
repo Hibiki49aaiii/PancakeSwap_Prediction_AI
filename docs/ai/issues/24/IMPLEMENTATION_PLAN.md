@@ -96,3 +96,75 @@ A green Windows workflow means the packaged operator tooling runs on Windows. It
 - existing Linux quality/CI result after implementation;
 - inspect workflow log/artifact behavior;
 - update Issue #24 with exact run IDs and any Windows-specific findings.
+
+
+# Implementation Result — 2026-08-31
+
+Issue #24 implementation is complete.
+
+## Implemented
+
+- Added `.github/workflows/windows-operator-smoke.yml`.
+- Windows runner uses Python 3.12 and installs `-e ".[dev]"`.
+- Windows workflow verifies:
+  - `pcs-prediction status`;
+  - `pcs-clickhouse --help`;
+  - `pcs-shadow-runtime --help`;
+  - the full pytest suite;
+  - PowerShell feedback collector execution;
+  - bootstrap/preflight fixture consumption;
+  - feedback artifact creation;
+  - synthetic `BSC_RPC_URL` sentinel does not appear in the report.
+- Windows operator feedback was security-hardened so raw `docker info` output is no longer collected. Only Docker server version / OS type are requested.
+- `docs/STAGE4_WINDOWS_11_RUNBOOK.md` now records the Windows portability evidence boundary.
+
+## Verification
+
+Relevant implementation/source SHA:
+
+`b33e5e7db5bec7df2fb941fc35f972590a12b4d3`
+
+Windows operator smoke PR run #2 / run `33341383606`:
+
+- checkout: success
+- Python 3.12 setup: success
+- editable install: success
+- operator CLI entrypoints: success
+- Windows pytest: success
+- fixture creation: success
+- feedback collector smoke: success
+- BSC RPC sentinel non-leak assertion: success
+- feedback artifact upload: success
+- overall workflow: success
+
+Linux CI run `33341383620` on the same SHA:
+
+- test / quality gate: success
+- ClickHouse integration: success
+- Gitleaks: success
+- pinned 144,000-round audit: success
+- overall CI: success
+
+The first Windows runs on `8c71536e...` were cancelled by concurrency when the Docker-detail minimization fix advanced the branch. Their install/CLI steps had already passed; they are not used as final evidence.
+
+## Post-Implementation Review
+
+### Architecture
+
+The Windows workflow remains separate from the Linux integration workflow and from Issue #23 empirical campaign Evidence. This avoids conflating portability with live-source readiness.
+
+### Cross-platform result
+
+The existing Python test suite passed on Windows without suppressions or Windows-specific skips introduced by this issue.
+
+### Feedback privacy
+
+The feedback collector does not read `BSC_RPC_URL`, and CI injects a synthetic sentinel and fails if it appears in the generated artifact. Raw `docker info` was additionally reduced to minimal server metadata to avoid unnecessary host/proxy/registry disclosure.
+
+### Safety
+
+No private key, mnemonic, signer, transaction signing, mainnet broadcast, funded execution, credential provisioning, profitability promotion, or Stage 6B capability was introduced.
+
+### Remaining boundary
+
+Issue #24 proves the Windows operator tooling can run. It does not prove the user's actual Windows host has a suitable BSC RPC, ClickHouse data lineage, or a successful Stage 4 preflight. Those remain Issue #23 empirical prerequisites.
