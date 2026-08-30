@@ -649,6 +649,10 @@ Example:
 
 The script returns a non-zero status while the configured campaign gate is incomplete, but still writes the latest Evidence JSON so progress can be inspected.
 
+## Windows 11 operator runbook
+
+For the canonical Windows 11 setup, ClickHouse bootstrap, preflight, one-cycle smoke test, continuous runtime, health checks, and operator feedback format used by Issue #23, follow [`docs/STAGE4_WINDOWS_11_RUNBOOK.md`](STAGE4_WINDOWS_11_RUNBOOK.md).
+
 ## Prerequisites for a real long-running campaign
 
 Before starting pcs-shadow-runtime:
