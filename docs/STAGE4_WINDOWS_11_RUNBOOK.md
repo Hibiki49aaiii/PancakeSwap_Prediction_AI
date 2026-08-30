@@ -407,7 +407,28 @@ Default Stage 4 empirical completion requires at least:
 
 Positive PnL is not required for Stage 4 completion. Preserve unfavorable evidence.
 
-## 14. Operator feedback template
+## 14. Generate the feedback file automatically
+
+After the mandatory preflight, generate a redacted operator report with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows_stage4_feedback.ps1 -RunQuality
+```
+
+The default output is:
+
+```text
+artifacts\stage4-windows-feedback.txt
+```
+
+The collector intentionally does not read `BSC_RPC_URL` or other secret environment values.
+It includes only a redacted bootstrap summary and the preflight JSON, whose runtime contract
+excludes endpoint credentials.
+
+If the normal setup has already been quality-checked and only a lightweight status report is
+needed, omit `-RunQuality`.
+
+## 15. Operator feedback template
 
 Return this after the initial setup and mandatory preflight:
 
@@ -479,7 +500,7 @@ If any command fails, stop the sequence and return:
 
 Do not include secrets.
 
-## 15. Evidence handling
+## 16. Evidence handling
 
 The following are distinct artifacts and must remain distinct:
 
