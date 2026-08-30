@@ -28,7 +28,7 @@ function Invoke-ReportCommand {
         [int]$TailLines = 0
     )
 
-    Add-Line "$Label:"
+    Add-Line "${Label}:"
     try {
         $output = @(& $Command 2>&1)
         $exitCode = $LASTEXITCODE
