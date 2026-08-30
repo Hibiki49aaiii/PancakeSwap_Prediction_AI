@@ -18,6 +18,17 @@ It is intentionally limited to the no-signing Stage 4 boundary:
 The operator must not paste RPC credentials, API keys, passwords, tokens, private
 keys, or mnemonics into GitHub Issues or ChatGPT feedback.
 
+## Repository Windows portability evidence
+
+The operator surface is mechanically checked by
+`.github/workflows/windows-operator-smoke.yml` on `windows-latest`.
+
+Issue #24 established Windows Python 3.12 install/CLI/test compatibility and verifies that a
+synthetic `BSC_RPC_URL` sentinel is absent from the generated feedback report.
+
+This CI is operator-tooling evidence only. It does not replace the real-host Stage 4 preflight
+or the multi-day prospective campaign required by Issue #23.
+
 ## 1. Reference revision
 
 Issue #23 was prepared from:
