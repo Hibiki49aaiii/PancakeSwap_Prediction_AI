@@ -144,7 +144,7 @@ Invoke-ReportCommand "git --version" { git --version }
 Invoke-ReportCommand "py -3.12 --version" { py -3.12 --version }
 Invoke-ReportCommand "python --version" { python --version }
 Invoke-ReportCommand "docker --version" { docker --version }
-Invoke-ReportCommand "docker info" { docker info } 20
+Invoke-ReportCommand "docker server" { docker info --format "server_version={{.ServerVersion}} os_type={{.OSType}}" }
 
 Add-Section "Repository"
 Invoke-ReportCommand "git rev-parse HEAD" { git rev-parse HEAD }
