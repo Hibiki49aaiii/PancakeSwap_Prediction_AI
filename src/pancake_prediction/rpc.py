@@ -164,6 +164,13 @@ class JsonRpcClient:
             except RpcError:
                 raise
             except urllib.error.HTTPError as exc:
+                if exc.code != 429 and exc.fp is not None:
+                    try:
+                        decoded_error = json.loads(exc.read())
+                    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                        decoded_error = None
+                    if isinstance(decoded_error, dict) and "error" in decoded_error:
+                        raise RpcResponseError(method, decoded_error["error"]) from exc
                 last_error = exc
                 if attempt + 1 < self.retries:
                     retry_after_s = self._retry_after_seconds(exc)

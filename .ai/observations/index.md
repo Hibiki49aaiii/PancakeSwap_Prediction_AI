@@ -2,7 +2,7 @@
 
 | Title | Keywords | Confidence | Status | Path |
 |---|---|---|---|---|
-| Historical RPC capabilities must be probed independently | bsc, rpc, archive, eth_call, eth_getLogs, collector | high | observation | `archive-capability-must-be-probed.md` |
+| Historical RPC capabilities must be probed independently | bsc, rpc, archive, eth_call, eth_getLogs, http-400, provider-tier, collector | high | observation | `archive-capability-must-be-probed.md` |
 | Public RPC capability depends on the client HTTP identity | bsc, rpc, user-agent, urllib, http-403, rate-limit | medium | observation | `public-rpc-client-identity-affects-capability.md` |
 | Recent bootstrap must keep timestamp header search local | recent, timestamp, block, header, binary-search, pruning, rpc | high | observation | `recent-bootstrap-must-search-headers-locally.md` |
 | Recent header search must distinguish overshoot from provider retention | recent, retention, pruning, rpc, eth_getLogs, authenticated-source | high | observation | `recent-header-search-must-be-retention-aware.md` |

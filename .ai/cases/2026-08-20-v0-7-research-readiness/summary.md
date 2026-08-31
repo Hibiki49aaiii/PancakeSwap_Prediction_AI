@@ -1,6 +1,6 @@
 # v0.7 Research Readiness and Historical-Source Gate
 
-Status: active / bounded one-day path proven; three-day source blocked on authenticated RPC; downstream OOS/robustness/cross-window comparison pipeline prepared
+Status: active / bounded authenticated path proven; three-day source blocked on provider range/throughput tier; downstream OOS/robustness/cross-window comparison pipeline prepared
 Date: 2026-08-29
 Related PR: #1 (`agent/v0.7-alpha-research` -> `main`)
 Latest verified code CI: run `33184259413` (#1082), 333 tests passed and all CI jobs green.
@@ -82,7 +82,7 @@ No funded/mainnet execution path is introduced.
 
 ## Current expansion
 
-The earlier public-only Aug 16–19 attempt is no longer treated as a useful retry path. The three-day source workflow is now authenticated-only and remains fail-closed until one of the repository secrets `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL` is configured.
+The earlier public-only Aug 16–19 attempt is no longer treated as a useful retry path. The three-day source workflow is authenticated-only. A local authenticated Alchemy BSC endpoint was configured and bounded-proven on 2026-08-31, but its Free tier limits `eth_getLogs` to 10 blocks. The real 15-minute Prediction + Chainlink bootstrap succeeded after adaptive splitting, while the measured request shape projects to roughly 30 hours and more than 500,000 requests for three days. The three-day gate therefore remains fail-closed on provider range/throughput capability, not merely secret presence.
 
 Latest observed three-day source attempt:
 
@@ -92,6 +92,14 @@ Latest observed three-day source attempt:
 - no authenticated candidate was selected;
 - no three-day `last-success` evidence was created;
 - signing and live broadcast remained disabled.
+
+Latest local bounded authenticated probe:
+
+- BSC chain ID 56 and recent state/header access succeeded;
+- 1- and 10-block log ranges succeeded; larger ranges returned HTTP 400 / JSON-RPC `-32600` with a 10-block Free tier limit;
+- automatic splitting completed a 2,000-block window with 130 Prediction events and 27 Chainlink updates;
+- route changes 0, replay rounds 4, duplicate canonical heights 0;
+- no credential value, signing authority, or live-broadcast path was persisted.
 
 Development continued past that external blocker by preparing the downstream analysis path:
 
@@ -121,7 +129,7 @@ All current economic evidence keeps `profitability_gate_eligible=false` and `ful
 
 ## Next steps
 
-1. Configure one authenticated/log-capable BSC mainnet RPC secret: `BSC_LOG_RPC_URL` or `BSC_ARCHIVE_RPC_URL`.
+1. Upgrade/reconfigure the authenticated BSC log source so the exact `eth_getLogs` workload supports materially wider ranges than 10 blocks, or provide an equivalent log-capable endpoint; then re-probe the exact bounded workload.
 2. Rerun `recent-authenticated-chainlink-three-day` and require exact source/route/event/artifact semantics to produce `recent-public-chainlink-2026-08-16-to-19-last-success.json`.
 3. Let the chained three-day OOS workflow execute and inspect probability skill, calibration, PnL/drawdown, source lineage, and the explicit minimum sample gates.
 4. Let the chained three-day robustness workflow run the eight sensitivity scenarios and five feature-family ablations.

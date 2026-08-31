@@ -1,6 +1,8 @@
+import io
 import json
 import urllib.error
 import urllib.request
+from email.message import Message
 
 import pytest
 
@@ -70,6 +72,41 @@ def test_json_rpc_application_error_is_not_retried(
     with pytest.raises(RpcResponseError, match="-32005") as exc_info:
         client.get_logs("0x" + "11" * 20, 1, 10_000)
     assert exc_info.value.code == -32005
+    assert calls == 1
+
+
+def test_json_rpc_application_error_in_http_400_body_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        nonlocal calls
+        del kwargs
+        calls += 1
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32600,
+                    "message": "eth_getLogs supports a maximum 10 block range",
+                },
+            }
+        ).encode()
+        raise urllib.error.HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            Message(),
+            io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545", retries=4, backoff_s=0.0)
+    with pytest.raises(RpcResponseError, match="maximum 10 block range") as exc_info:
+        client.get_logs("0x" + "11" * 20, 1, 2_000)
+    assert exc_info.value.code == -32600
     assert calls == 1
 
 
