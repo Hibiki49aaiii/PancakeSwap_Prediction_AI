@@ -1,9 +1,233 @@
 {
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "authenticated": false,
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": "RecentSourceRetentionError: provider retention excludes requested timestamp: requested_timestamp=1787011200 first_available_block=118016772 first_available_timestamp=1787668515 last_unavailable_block=118016771",
+      "error_details": {
+        "classification": "PROVIDER_RETENTION",
+        "first_available_block": 118016772,
+        "first_available_timestamp": 1787668515,
+        "last_unavailable_block": 118016771,
+        "requested_timestamp": 1787011200
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-pokt.nodies.app",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 403: Forbidden",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc.blockpi.network/v1/rpc/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 521: <none>",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc.drpc.org",
+      "error": "RpcResponseError: eth_getBlockByNumber: JSON-RPC error code=30: Request timeout on the free plan, please upgrade to paid plan",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bnb.api.onfinality.io/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_getBlockByNumber: HTTP Error 429: Too Many Requests",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc.meowrpc.com",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116844485 topics=1: eth_getLogs: JSON-RPC error code=-32000: The method eth_getLogs is not supported.",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "RPC_LOG_ERROR",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32000: The method eth_getLogs is not supported.",
+        "range_blocks": 287944,
+        "rpc_code": -32000,
+        "single_block_reached": false,
+        "to_block": 116844485,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-mainnet.public.blastapi.io",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_getBlockByNumber: HTTP Error 503: Service Unavailable",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
+      "error": "RpcError: RPC request failed after 6 attempts: eth_blockNumber: HTTP Error 521: <none>",
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-dataseed.bnbchain.org",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-dataseed-public.bnbchain.org",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-dataseed.nariox.org",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-dataseed.defibit.io",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-dataseed.ninicoin.io",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc.nodereal.io",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116556542 topics=1: eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "PROVIDER_LOG_LIMIT",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32005: limit exceeded",
+        "range_blocks": 1,
+        "rpc_code": -32005,
+        "single_block_reached": true,
+        "to_block": 116556542,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://bsc-rpc.publicnode.com",
+      "error": "RpcLogQueryError: eth_getLogs query failed address=0x18b2a687610328590bc8f2e5fedde3b582a49cda blocks=116556542..116844485 topics=1: eth_getLogs: JSON-RPC error code=-32602: Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode",
+      "error_details": {
+        "address": "0x18b2a687610328590bc8f2e5fedde3b582a49cda",
+        "classification": "RPC_LOG_ERROR",
+        "from_block": 116556542,
+        "provider_message": "eth_getLogs: JSON-RPC error code=-32602: Archive requests require a personal token. Get one at: https://www.allnodes.com/publicnode",
+        "range_blocks": 287944,
+        "rpc_code": -32602,
+        "single_block_reached": false,
+        "to_block": 116844485,
+        "topic0_count": 1,
+        "topic0s": [
+          "0xb3eacd0e351fafdfefdec84e1cd19679b38dbcd63ea7c2c24da17fd2bc3b3c0e"
+        ]
+      },
+      "outcome": "failure"
+    },
+    {
+      "authenticated": false,
+      "endpoint": "https://public.1rpc.io/bnb",
+      "error": "IncompleteRead: IncompleteRead(7930 bytes read)",
+      "outcome": "failure"
+    }
+  ],
   "bootstrap_error_tail": null,
   "chainlink_collected": false,
   "chainlink_requested": true,
+  "chainlink_route_anchor": {
+    "anchor_block": 116844485,
+    "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+    "evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+    "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+  },
   "evidence_role": "latest_attempt",
-  "evidence_version": 6,
+  "evidence_version": 7,
   "gate_success": false,
   "live_broadcast": false,
   "market": "BNBUSD",
@@ -11,15 +235,24 @@
   "purpose": "public_recent_prediction_chainlink_one_day",
   "requested_end_timestamp": 1787097600,
   "requested_start_timestamp": 1787011200,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "source_mode": "authenticated_then_public",
+    "timeout_s": 20.0
+  },
+  "selected": null,
   "semantic_success": false,
   "signing_enabled": false,
-  "source_event_sha": "b324a1bac2c63703c4bc195732c7c6b04ec3702a",
-  "source_report_missing": true,
-  "source_run_id": 33245885674,
-  "source_sha": "b324a1bac2c63703c4bc195732c7c6b04ec3702a",
+  "source_event_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "source_requirement": null,
+  "source_run_id": 33403847353,
+  "source_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
   "step_outcomes": {
-    "artifact": "failure",
-    "bootstrap": "skipped",
+    "artifact": "success",
+    "bootstrap": "failure",
     "source_files": "failure"
   },
   "success": false,
