@@ -1,0 +1,92 @@
+name: archive-rpc-preflight
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - scripts/probe_archive_rpc_secret.py
+      - .github/workflows/archive-rpc-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: archive-rpc-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BSC_ARCHIVE_RPC_URL: ${{ secrets.BSC_ARCHIVE_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Run archive RPC preflight
+        id: archive
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts evidence
+          python scripts/probe_archive_rpc_secret.py \
+            --market BNBUSD \
+            --output artifacts/archive-rpc-preflight.json
+      - name: Persist redacted preflight evidence
+        if: always()
+        run: |
+          cp artifacts/archive-rpc-preflight.json \
+            evidence/archive-rpc-preflight.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/archive-rpc-preflight.json
+          if git diff --cached --quiet; then
+            echo 'Archive RPC evidence unchanged.'
+            exit 0
+          fi
+          git commit -m 'chore: record archive RPC preflight evidence'
+          git pull --rebase origin agent/v0.7-alpha-research
+          git push origin HEAD:agent/v0.7-alpha-research
+      - name: Summarize gate
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("artifacts/archive-rpc-preflight.json").read_text()
+          )
+          print(
+              json.dumps(
+                  {
+                      "configured": payload["configured"],
+                      "archive_ready": payload["archive_ready"],
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: archive-rpc-preflight
+          path: artifacts/archive-rpc-preflight.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Enforce archive RPC gate
+        if: always()
+        env:
+          ARCHIVE_OUTCOME: ${{ steps.archive.outcome }}
+        run: |
+          if [ "$ARCHIVE_OUTCOME" != success ]; then
+            echo 'Archive RPC gate is not ready; see redacted preflight evidence.' >&2
+            exit 2
+          fi

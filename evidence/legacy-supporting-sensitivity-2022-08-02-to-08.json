@@ -1,0 +1,166 @@
+{
+  "all_scenarios_positive_pnl": false,
+  "authoritative": false,
+  "campaign_digest": "c83c04f79e97effd2390f4123f9690834cf433a58ec6b8363447808705a2c3a4",
+  "lag_scenario": {
+    "measured": false,
+    "perp_availability_lag_ms": 250,
+    "spot_availability_lag_ms": 250
+  },
+  "max_drawdown_wei": 792910639775192735,
+  "min_pnl_wei": -792910639775192735,
+  "min_roi_ppm": -185839,
+  "positive_pnl_scenarios": 0,
+  "profitability_gate_eligible": false,
+  "scenario_count": 3,
+  "scenario_only": true,
+  "scenarios": [
+    {
+      "economic_config": {
+        "bet_gas_wei": 500000000000000,
+        "claim_gas_wei": 500000000000000,
+        "decision_lead_seconds": 20,
+        "inclusion_latency_seconds": 3,
+        "min_expected_value_wei": 0,
+        "purge_rounds": 2,
+        "stake_wei": 10000000000000000,
+        "treasury_fee_bps": 300
+      },
+      "economic_summary": {
+        "authoritative": false,
+        "capital_at_risk_wei": 4250000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 674364851277215923,
+        "pnl_wei": -674364851277215923,
+        "roi_ppm": -158675,
+        "settled_rounds": 1956,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 538,
+        "skipped_no_positive_ev": 993,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 425
+      },
+      "evaluation_digest": "9cb7770b35868d6a2bb3318343d6bff1172d173e84b664befaa71dcfdc9bb09d",
+      "name": "base"
+    },
+    {
+      "economic_config": {
+        "bet_gas_wei": 250000000000000,
+        "claim_gas_wei": 250000000000000,
+        "decision_lead_seconds": 20,
+        "inclusion_latency_seconds": 1,
+        "min_expected_value_wei": 0,
+        "purge_rounds": 2,
+        "stake_wei": 10000000000000000,
+        "treasury_fee_bps": 300
+      },
+      "economic_summary": {
+        "authoritative": false,
+        "capital_at_risk_wei": 7420000000000000000,
+        "config": {
+          "bet_gas_wei": 250000000000000,
+          "claim_gas_wei": 250000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 1,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 792910639775192735,
+        "pnl_wei": -792910639775192735,
+        "roi_ppm": -106862,
+        "settled_rounds": 1956,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 538,
+        "skipped_no_positive_ev": 676,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 742
+      },
+      "evaluation_digest": "b4561dad724a0809d1cfadda04fee3fd46dd523c0b92b64affec7873523e0064",
+      "name": "lower_cost"
+    },
+    {
+      "economic_config": {
+        "bet_gas_wei": 1000000000000000,
+        "claim_gas_wei": 1000000000000000,
+        "decision_lead_seconds": 20,
+        "inclusion_latency_seconds": 8,
+        "min_expected_value_wei": 0,
+        "purge_rounds": 2,
+        "stake_wei": 10000000000000000,
+        "treasury_fee_bps": 300
+      },
+      "economic_summary": {
+        "authoritative": false,
+        "capital_at_risk_wei": 1560000000000000000,
+        "config": {
+          "bet_gas_wei": 1000000000000000,
+          "claim_gas_wei": 1000000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 8,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 289907906514507179,
+        "pnl_wei": -289907906514507179,
+        "roi_ppm": -185839,
+        "settled_rounds": 1956,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 538,
+        "skipped_no_positive_ev": 1262,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 156
+      },
+      "evaluation_digest": "68be3eb2d242d97b3ab780a418a4f08e9c5da6c8420923eae76cde17ad98e6ad",
+      "name": "stress"
+    }
+  ],
+  "selection": {
+    "complete_rounds": 1956,
+    "end_timestamp": 1660003200,
+    "start_timestamp": 1659398400
+  },
+  "sensitivity_digest": "264df557945350f9a450d521a5dd37200c005bbe76bbe8030d39db4e140cdef7"
+}

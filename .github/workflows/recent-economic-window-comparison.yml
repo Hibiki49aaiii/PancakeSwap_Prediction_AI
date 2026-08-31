@@ -1,0 +1,346 @@
+name: recent-economic-window-comparison
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Exact authenticated three-day Chainlink source run ID
+        required: true
+        type: string
+      source_sha:
+        description: Exact checkout SHA used by the three-day source collector
+        required: true
+        type: string
+      source_event_sha:
+        description: Event head SHA for the three-day source collector
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Optional source run ID; must match persisted three-day robustness evidence
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recent-economic-window-comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project
+        run: pip install -e .
+
+      - name: Validate exact comparison evidence inputs
+        id: inputs
+        continue-on-error: true
+        env:
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+          INPUT_SOURCE_EVENT_SHA: ${{ inputs.source_event_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts evidence
+          exec 2> >(tee artifacts/recent-economic-window-comparison-inputs.err >&2)
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          short_path = Path(
+              "evidence/recent-economic-robustness-2026-08-18-to-19-last-success.json"
+          )
+          expanded_path = Path(
+              "evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json"
+          )
+          if not short_path.is_file():
+              raise SystemExit("one-day robustness last-success evidence is unavailable")
+          if not expanded_path.is_file():
+              raise SystemExit("three-day robustness last-success evidence is unavailable")
+
+          short = json.loads(short_path.read_text(encoding="utf-8"))
+          expanded = json.loads(expanded_path.read_text(encoding="utf-8"))
+          if short.get("success") is not True:
+              raise SystemExit("one-day robustness evidence is not successful")
+          if expanded.get("success") is not True:
+              raise SystemExit("three-day robustness evidence is not successful")
+          if (short.get("semantic_gate") or {}).get("ready") is not True:
+              raise SystemExit("one-day robustness semantic gate is not ready")
+          if (expanded.get("semantic_gate") or {}).get("ready") is not True:
+              raise SystemExit("three-day robustness semantic gate is not ready")
+
+          short_window = short.get("source_window") or {}
+          expanded_window = expanded.get("source_window") or {}
+          if short_window.get("start_timestamp") != 1787011200:
+              raise SystemExit("one-day robustness start timestamp mismatch")
+          if short_window.get("end_timestamp") != 1787097600:
+              raise SystemExit("one-day robustness end timestamp mismatch")
+          if expanded_window.get("start_timestamp") != 1786838400:
+              raise SystemExit("three-day robustness start timestamp mismatch")
+          if expanded_window.get("end_timestamp") != 1787097600:
+              raise SystemExit("three-day robustness end timestamp mismatch")
+
+          expected_run = os.environ.get("INPUT_SOURCE_RUN_ID", "").strip()
+          expected_sha = os.environ.get("INPUT_SOURCE_SHA", "").strip()
+          expected_event_sha = os.environ.get("INPUT_SOURCE_EVENT_SHA", "").strip()
+          actual_run = str(expanded.get("source_run_id") or "")
+          actual_sha = str(expanded.get("source_sha") or "")
+          actual_event_sha = str(expanded.get("source_event_sha") or "")
+          if expected_run and actual_run != expected_run:
+              raise SystemExit("three-day robustness source_run_id lineage mismatch")
+          if expected_sha and actual_sha != expected_sha:
+              raise SystemExit("three-day robustness source_sha lineage mismatch")
+          if expected_event_sha and actual_event_sha != expected_event_sha:
+              raise SystemExit("three-day robustness source_event_sha lineage mismatch")
+
+          if not actual_run.isdigit():
+              raise SystemExit("three-day robustness source_run_id is invalid")
+          for field, value in (
+              ("source_sha", actual_sha),
+              ("source_event_sha", actual_event_sha),
+          ):
+              if len(value) != 40 or any(c not in "0123456789abcdef" for c in value.lower()):
+                  raise SystemExit(f"three-day robustness {field} is invalid")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"source_run_id={actual_run}\n")
+              handle.write(f"source_sha={actual_sha}\n")
+              handle.write(f"source_event_sha={actual_event_sha}\n")
+          PY
+
+      - name: Compare one-day and three-day economic evidence
+        id: comparison
+        if: steps.inputs.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python scripts/compare_recent_economic_windows.py             --short-evidence evidence/recent-economic-robustness-2026-08-18-to-19-last-success.json             --expanded-evidence evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json             --output artifacts/recent-economic-window-comparison.json             2> >(tee artifacts/recent-economic-window-comparison.err >&2)             | tee artifacts/recent-economic-window-comparison.stdout.json
+
+      - name: Validate comparison semantics
+        id: semantics
+        if: steps.comparison.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          exec 2> >(tee artifacts/recent-economic-window-comparison-semantics.err >&2)
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("artifacts/recent-economic-window-comparison.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          short = payload.get("short_window") or {}
+          expanded = payload.get("expanded_window") or {}
+          short_full = short.get("full_v1") or {}
+          expanded_full = expanded.get("full_v1") or {}
+          stability = payload.get("feature_stability") or {}
+          digest = str(payload.get("comparison_digest") or "")
+
+          checks = {
+              "comparison_version_exact": payload.get("comparison_version") == 1,
+              "short_window_exact": (
+                  short.get("start_timestamp") == 1787011200
+                  and short.get("end_timestamp") == 1787097600
+                  and short.get("duration_seconds") == 86400
+              ),
+              "expanded_window_exact": (
+                  expanded.get("start_timestamp") == 1786838400
+                  and expanded.get("end_timestamp") == 1787097600
+                  and expanded.get("duration_seconds") == 259200
+              ),
+              "short_sample_non_vacuous": int(short_full.get("n_scored", 0)) >= 100,
+              "expanded_sample_non_vacuous": int(expanded_full.get("n_scored", 0)) >= 250,
+              "expanded_rows_non_vacuous": int(
+                  expanded.get("research_feature_rows", 0)
+              ) >= 650,
+              "five_common_feature_sets": int(
+                  stability.get("common_feature_set_count", 0)
+              ) == 5,
+              "comparison_digest_valid": (
+                  len(digest) == 64
+                  and all(c in "0123456789abcdef" for c in digest.lower())
+              ),
+              "profitability_gate_closed": (
+                  payload.get("profitability_gate_eligible") is False
+              ),
+              "historical_gate_closed": (
+                  payload.get("full_historical_gate_satisfied") is False
+              ),
+              "signing_disabled": payload.get("signing_enabled") is False,
+              "live_broadcast_disabled": payload.get("live_broadcast") is False,
+          }
+          summary = {
+              "ready": all(checks.values()),
+              "checks": checks,
+              "comparison_digest": digest,
+              "short_n_scored": int(short_full.get("n_scored", 0)),
+              "expanded_n_scored": int(expanded_full.get("n_scored", 0)),
+              "short_brier_skill_score": short_full.get("brier_skill_score"),
+              "expanded_brier_skill_score": expanded_full.get("brier_skill_score"),
+              "short_pnl_wei": short_full.get("pnl_wei"),
+              "expanded_pnl_wei": expanded_full.get("pnl_wei"),
+              "common_feature_set_count": int(
+                  stability.get("common_feature_set_count", 0)
+              ),
+              "same_best_brier_feature_set": stability.get(
+                  "same_best_brier_feature_set"
+              ),
+              "same_best_pnl_feature_set": stability.get(
+                  "same_best_pnl_feature_set"
+              ),
+              "brier_ranking_stable": stability.get("brier_ranking_stable"),
+              "pnl_ranking_stable": stability.get("pnl_ranking_stable"),
+          }
+          Path("artifacts/recent-economic-window-comparison-semantics.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not summary["ready"]:
+              failed = [name for name, passed in checks.items() if not passed]
+              raise SystemExit("window comparison semantic gate failed: " + ", ".join(failed))
+          PY
+
+      - name: Build comparison evidence
+        if: always() && !cancelled()
+        env:
+          INPUTS_OUTCOME: ${{ steps.inputs.outcome }}
+          COMPARISON_OUTCOME: ${{ steps.comparison.outcome }}
+          SEMANTICS_OUTCOME: ${{ steps.semantics.outcome }}
+          SOURCE_RUN_ID: ${{ steps.inputs.outputs.source_run_id }}
+          SOURCE_SHA: ${{ steps.inputs.outputs.source_sha }}
+          SOURCE_EVENT_SHA: ${{ steps.inputs.outputs.source_event_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def load(path: str):
+              source = Path(path)
+              if not source.is_file() or not source.read_text(encoding="utf-8").strip():
+                  return None
+              try:
+                  return json.loads(source.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  return {"json_error": str(exc)}
+
+          def sha256(path: str):
+              source = Path(path)
+              if not source.is_file():
+                  return None
+              return hashlib.sha256(source.read_bytes()).hexdigest()
+
+          outcomes = {
+              "inputs": os.environ.get("INPUTS_OUTCOME", "skipped"),
+              "comparison": os.environ.get("COMPARISON_OUTCOME", "skipped"),
+              "semantics": os.environ.get("SEMANTICS_OUTCOME", "skipped"),
+          }
+          success = all(value == "success" for value in outcomes.values())
+          run_raw = os.environ.get("SOURCE_RUN_ID", "").strip()
+          payload = {
+              "evidence_version": 1,
+              "evidence_role": "latest_attempt",
+              "purpose": "recent_one_day_vs_three_day_economic_window_comparison",
+              "success": success,
+              "workflow_outcome": "success" if success else "failure",
+              "step_outcomes": outcomes,
+              "source_run_id": int(run_raw) if run_raw.isdigit() else None,
+              "source_sha": os.environ.get("SOURCE_SHA", "").strip() or None,
+              "source_event_sha": os.environ.get("SOURCE_EVENT_SHA", "").strip() or None,
+              "short_evidence_sha256": sha256(
+                  "evidence/recent-economic-robustness-2026-08-18-to-19-last-success.json"
+              ),
+              "expanded_evidence_sha256": sha256(
+                  "evidence/recent-economic-robustness-three-day-2026-08-16-to-19-last-success.json"
+              ),
+              "comparison": load("artifacts/recent-economic-window-comparison.json"),
+              "semantic_gate": load(
+                  "artifacts/recent-economic-window-comparison-semantics.json"
+              ),
+              "profitability_gate_eligible": False,
+              "full_historical_gate_satisfied": False,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "interpretation": (
+                  "Cross-window comparison evidence only. Metric improvement, positive PnL, or "
+                  "feature-ranking stability does not establish durable profitability. The complete "
+                  "historical-source and funded-execution gates remain separate and fail-closed."
+              ),
+          }
+          out = Path(
+              "evidence/recent-economic-window-comparison-2026-08-18-vs-2026-08-16-to-19-latest.json"
+          )
+          out.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Persist comparison evidence
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          latest=evidence/recent-economic-window-comparison-2026-08-18-vs-2026-08-16-to-19-latest.json
+          success=evidence/recent-economic-window-comparison-2026-08-18-vs-2026-08-16-to-19-last-success.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$latest"
+          if python -c 'import json,sys; d=json.load(open(sys.argv[1])); raise SystemExit(0 if d.get("success") is True else 1)' "$latest"; then
+            cp "$latest" "$success"
+            python -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["evidence_role"]="last_success"; open(p,"w").write(json.dumps(d,indent=2,sort_keys=True)+"\n")' "$success"
+            git add "$success"
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: record recent economic window comparison evidence'
+            git fetch origin agent/v0.7-alpha-research
+            git rebase origin/agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+
+      - name: Upload comparison artifacts
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recent-economic-window-comparison-${{ github.run_id }}
+          path: |
+            artifacts/recent-economic-window-comparison*.json
+            artifacts/recent-economic-window-comparison*.err
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce comparison gate
+        if: always() && !cancelled()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path(
+              "evidence/recent-economic-window-comparison-2026-08-18-vs-2026-08-16-to-19-latest.json"
+          )
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          if payload.get("success") is not True:
+              raise SystemExit(
+                  "recent economic window comparison failed; inspect persisted latest evidence"
+              )
+          PY

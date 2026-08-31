@@ -1,0 +1,143 @@
+name: windows-operator-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - ".github/workflows/windows-operator-smoke.yml"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "scripts/windows_stage4_feedback.ps1"
+      - "docs/STAGE4_WINDOWS_11_RUNBOOK.md"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-operator-smoke.yml"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "scripts/windows_stage4_feedback.ps1"
+      - "docs/STAGE4_WINDOWS_11_RUNBOOK.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-operator-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-operator-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify operator CLI entrypoints
+        shell: pwsh
+        run: |
+          pcs-prediction status
+          pcs-clickhouse --help
+          pcs-shadow-runtime --help
+
+      - name: Run Windows test suite
+        shell: pwsh
+        run: |
+          pytest
+
+      - name: Build local feedback fixtures
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          New-Item -ItemType Directory -Force evidence | Out-Null
+
+          @'
+          {
+            "success": true,
+            "market": "BNBUSD",
+            "chainlink_requested": true,
+            "chainlink_collected": true,
+            "route_proof_mode": "fixture",
+            "selected": {
+              "authenticated": false,
+              "report": {
+                "replay_rounds": 999,
+                "quality": {
+                  "starts": 1,
+                  "locks": 1,
+                  "ends": 1
+                }
+              }
+            },
+            "attempts": [
+              {
+                "authenticated": false,
+                "outcome": "success",
+                "error": null
+              }
+            ]
+          }
+          '@ | Set-Content -LiteralPath artifacts\recent-bootstrap.json -Encoding utf8
+
+          @'
+          {
+            "ready": true,
+            "signing_enabled": false,
+            "live_broadcast": false,
+            "funded_execution": false,
+            "profitability_gate_eligible": false,
+            "fixture": true
+          }
+          '@ | Set-Content -LiteralPath evidence\stage4-preflight.json -Encoding utf8
+
+      - name: Smoke feedback collector and prove secret redaction
+        shell: pwsh
+        env:
+          BSC_RPC_URL: "SENTINEL_MUST_NOT_APPEAR_7d44283e"
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts\windows_stage4_feedback.ps1
+
+          $path = "artifacts\stage4-windows-feedback.txt"
+          if (-not (Test-Path -LiteralPath $path)) {
+            throw "feedback report was not generated"
+          }
+
+          $text = Get-Content -LiteralPath $path -Raw
+
+          if ($text -notmatch "secret_values_collected=false") {
+            throw "feedback report did not record the no-secret collection contract"
+          }
+
+          if ($text -match [regex]::Escape($env:BSC_RPC_URL)) {
+            throw "BSC_RPC_URL sentinel leaked into feedback report"
+          }
+
+          if ($text -notmatch "preflight_file_exists=true") {
+            throw "preflight fixture was not consumed"
+          }
+
+          if ($text -notmatch "bootstrap_file_exists=true") {
+            throw "bootstrap fixture was not consumed"
+          }
+
+      - name: Upload Windows operator feedback smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-operator-feedback-${{ github.run_id }}
+          path: artifacts/stage4-windows-feedback.txt
+          if-no-files-found: error
+          retention-days: 14

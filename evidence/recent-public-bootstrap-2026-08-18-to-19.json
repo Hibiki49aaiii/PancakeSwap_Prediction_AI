@@ -1,0 +1,76 @@
+{
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "authenticated": false,
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": null,
+      "outcome": "success"
+    }
+  ],
+  "chainlink_collected": false,
+  "chainlink_requested": false,
+  "chainlink_route_anchor": null,
+  "evidence_version": 7,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1787011200,
+  "route_proof_mode": "none",
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "source_mode": "authenticated_then_public",
+    "timeout_s": 20.0
+  },
+  "selected": {
+    "authenticated": false,
+    "endpoint": "https://rpc-bsc.48.club",
+    "report": {
+      "authoritative_prediction_events": true,
+      "block_range": {
+        "confirmations": 64,
+        "from_block": 116556542,
+        "from_block_timestamp": 1787011200,
+        "head_block": 117453389,
+        "requested_end_timestamp": 1787097600,
+        "requested_start_timestamp": 1787011200,
+        "to_block": 116748497,
+        "to_block_timestamp": 1787097599
+      },
+      "chainlink_collected": false,
+      "collection": {
+        "chainlink_events_inserted": 0,
+        "collector_run_id": 1,
+        "from_block": 116556542,
+        "include_chainlink": false,
+        "market": "BNBUSD",
+        "oracle_addresses": [],
+        "prediction_analytic_only": false,
+        "prediction_events_inserted": 14496,
+        "reorg_blocks_detected": [],
+        "to_block": 116748497
+      },
+      "database": "artifacts/bnbusd-recent-2026-08-18-to-19.sqlite",
+      "market": "BNBUSD",
+      "oracle_stability_proof": null,
+      "quality": {
+        "bets": 8673,
+        "duplicate_canonical_heights": 0,
+        "ends": 282,
+        "locks": 282,
+        "market": "BNBUSD",
+        "reorgs": 0,
+        "starts": 282,
+        "unresolved_started_rounds": 2
+      },
+      "replay_input_digest": "655042bf56cd2a6cef457dfaba913d853e9a02d34c23462dbb487732eb69da8a",
+      "replay_output_digest": "52a353fe3e48ddc0645cb08c1c03ee1cea01c8ba16b6e370ebf1e593f245d0b9",
+      "replay_rounds": 284
+    }
+  },
+  "signing_enabled": false,
+  "source_requirement": null,
+  "success": true
+}

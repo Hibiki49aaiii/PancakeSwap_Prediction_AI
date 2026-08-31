@@ -1,0 +1,12 @@
+{
+  "bnb_free_tier_available": false,
+  "chain_id": 56,
+  "configured": false,
+  "credential_persisted": false,
+  "evidence_version": 1,
+  "live_broadcast": false,
+  "logs_access_ready": false,
+  "provider": "etherscan-v2",
+  "reason": "ETHERSCAN_API_KEY_not_configured",
+  "signing_enabled": false
+}

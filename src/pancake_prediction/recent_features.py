@@ -1,0 +1,267 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .alpha import relative_gap_ppm
+from .backtest import BacktestConfig, build_decision_snapshot, build_event_index
+from .baseline import ResearchFeatureRow
+from .binance import AggTrade, aggregate_order_flow
+from .binance_archive import TimestampUnit
+from .clickhouse import ClickHouseParameterizedJsonSource, load_binance_trade_window
+from .replay import ChainEvent, ReplaySnapshot, RoundRecord
+from .research_dataset import TradeTimeIndex
+
+PPM = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class RecentCanonicalFeatureBuildResult:
+    rows: tuple[ResearchFeatureRow, ...]
+    candidate_rounds: int
+    skipped_no_decision_snapshot: int
+    skipped_no_spot: int
+    chunks_loaded: int
+    max_spot_chunk_rows: int
+    max_perp_chunk_rows: int
+    spot_query_start_ms: int | None
+    perp_query_start_ms: int | None
+    query_end_ms: int | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "research_feature_rows": len(self.rows),
+            "candidate_rounds": self.candidate_rounds,
+            "skipped_no_decision_snapshot": self.skipped_no_decision_snapshot,
+            "skipped_no_spot": self.skipped_no_spot,
+            "chunks_loaded": self.chunks_loaded,
+            "max_spot_chunk_rows": self.max_spot_chunk_rows,
+            "max_perp_chunk_rows": self.max_perp_chunk_rows,
+            "spot_query_start_ms": self.spot_query_start_ms,
+            "perp_query_start_ms": self.perp_query_start_ms,
+            "query_end_ms": self.query_end_ms,
+        }
+
+
+def _known_history_features(
+    rounds: tuple[RoundRecord, ...],
+    *,
+    target_epoch: int,
+    decision_timestamp: int,
+) -> tuple[int | None, int | None]:
+    known = [
+        record
+        for record in rounds
+        if record.epoch < target_epoch
+        and record.label in {"bull", "bear"}
+        and record.end_timestamp is not None
+        and record.end_timestamp < decision_timestamp
+        and record.lock_price is not None
+        and record.close_price is not None
+        and record.lock_price > 0
+    ]
+    known.sort(key=lambda record: (record.end_timestamp or 0, record.epoch))
+    if not known:
+        return None, None
+    recent20 = known[-20:]
+    bull_rate = sum(record.label == "bull" for record in recent20) * PPM // len(recent20)
+    returns = [
+        abs(int(record.close_price) - int(record.lock_price)) * PPM // int(record.lock_price)
+        for record in known[-12:]
+        if record.close_price is not None
+        and record.lock_price is not None
+        and record.lock_price > 0
+    ]
+    return bull_rate, None if not returns else sum(returns) // len(returns)
+
+
+def _window_features(
+    index: TradeTimeIndex,
+    *,
+    decision_ms: int,
+    flow_lookback_ms: int,
+    max_price_age_ms: int,
+) -> tuple[int | None, int | None]:
+    start = max(0, decision_ms - max(flow_lookback_ms, max_price_age_ms))
+    trades = index.window(start_timestamp_ms=start, end_timestamp_ms=decision_ms)
+    flow = aggregate_order_flow(
+        trades,
+        start_timestamp_ms=max(0, decision_ms - flow_lookback_ms),
+        end_timestamp_ms=decision_ms,
+    )
+    price_window = aggregate_order_flow(
+        trades,
+        start_timestamp_ms=max(0, decision_ms - max_price_age_ms),
+        end_timestamp_ms=decision_ms,
+    )
+    return price_window.last_price_e8, flow.imbalance_ppm
+
+
+def build_recent_canonical_cex_features(
+    replay: ReplaySnapshot,
+    events: tuple[ChainEvent, ...],
+    source: ClickHouseParameterizedJsonSource,
+    *,
+    spot_timestamp_unit: TimestampUnit,
+    spot_availability_lag_ms: int,
+    perp_timestamp_unit: TimestampUnit = "milliseconds",
+    perp_availability_lag_ms: int = 0,
+    include_perp: bool = True,
+    chunk_span_ms: int = 3_600_000,
+    feature_lead_seconds: int = 20,
+    flow_lookback_ms: int = 60_000,
+    max_spot_age_ms: int = 5_000,
+    max_perp_age_ms: int = 5_000,
+) -> RecentCanonicalFeatureBuildResult:
+    if spot_availability_lag_ms < 0 or perp_availability_lag_ms < 0:
+        raise ValueError("Binance availability lag must be non-negative")
+    if chunk_span_ms <= 0 or flow_lookback_ms <= 0:
+        raise ValueError("chunk span and flow lookback must be positive")
+    if feature_lead_seconds <= 0:
+        raise ValueError("feature_lead_seconds must be positive")
+    if max_spot_age_ms <= 0 or max_perp_age_ms <= 0:
+        raise ValueError("max price ages must be positive")
+
+    ordered = tuple(sorted(replay.rounds, key=lambda record: record.epoch))
+    event_index = build_event_index(events)
+    timing_config = BacktestConfig(decision_lead_seconds=feature_lead_seconds)
+    candidates: list[tuple[RoundRecord, int]] = []
+    skipped_snapshot = 0
+    for record in ordered:
+        if record.label not in {"bull", "bear", "tie"}:
+            continue
+        snapshot = build_decision_snapshot(
+            replay,
+            record,
+            events,
+            timing_config,
+            event_index=event_index,
+        )
+        if snapshot is None:
+            skipped_snapshot += 1
+            continue
+        candidates.append((record, snapshot.decision_timestamp * 1_000))
+
+    groups: dict[int, list[tuple[RoundRecord, int]]] = {}
+    for record, decision_ms in candidates:
+        chunk_start = decision_ms // chunk_span_ms * chunk_span_ms
+        groups.setdefault(chunk_start, []).append((record, decision_ms))
+
+    rows: list[ResearchFeatureRow] = []
+    skipped_no_spot = 0
+    max_spot_rows = 0
+    max_perp_rows = 0
+    spot_query_start: int | None = None
+    perp_query_start: int | None = None
+    query_end: int | None = None
+    for chunk_start in sorted(groups):
+        chunk_end = chunk_start + chunk_span_ms
+        spot_start = max(0, chunk_start - max(flow_lookback_ms, max_spot_age_ms))
+        perp_start = max(0, chunk_start - max(flow_lookback_ms, max_perp_age_ms))
+        spot_query_start = spot_start if spot_query_start is None else min(
+            spot_query_start,
+            spot_start,
+        )
+        if include_perp:
+            perp_query_start = perp_start if perp_query_start is None else min(
+                perp_query_start,
+                perp_start,
+            )
+        query_end = chunk_end if query_end is None else max(query_end, chunk_end)
+
+        spot_trades = load_binance_trade_window(
+            source,
+            market=replay.market,
+            venue="spot",
+            timestamp_unit=spot_timestamp_unit,
+            availability_lag_ms=spot_availability_lag_ms,
+            start_timestamp_ms=spot_start,
+            end_timestamp_ms=chunk_end,
+        )
+        perp_trades: tuple[AggTrade, ...] = ()
+        if include_perp:
+            perp_trades = load_binance_trade_window(
+                source,
+                market=replay.market,
+                venue="um_futures",
+                timestamp_unit=perp_timestamp_unit,
+                availability_lag_ms=perp_availability_lag_ms,
+                start_timestamp_ms=perp_start,
+                end_timestamp_ms=chunk_end,
+            )
+        max_spot_rows = max(max_spot_rows, len(spot_trades))
+        max_perp_rows = max(max_perp_rows, len(perp_trades))
+        spot_index = TradeTimeIndex.build(spot_trades, expected_symbol="BNBUSDT")
+        perp_index = TradeTimeIndex.build(perp_trades, expected_symbol="BNBUSDT")
+
+        for record, decision_ms in groups[chunk_start]:
+            spot_price, spot_flow = _window_features(
+                spot_index,
+                decision_ms=decision_ms,
+                flow_lookback_ms=flow_lookback_ms,
+                max_price_age_ms=max_spot_age_ms,
+            )
+            if spot_price is None:
+                skipped_no_spot += 1
+                continue
+            perp_price: int | None = None
+            perp_flow: int | None = None
+            if include_perp:
+                perp_price, perp_flow = _window_features(
+                    perp_index,
+                    decision_ms=decision_ms,
+                    flow_lookback_ms=flow_lookback_ms,
+                    max_price_age_ms=max_perp_age_ms,
+                )
+            prior_bull, prior_abs_return = _known_history_features(
+                ordered,
+                target_epoch=record.epoch,
+                decision_timestamp=decision_ms // 1_000,
+            )
+            rows.append(
+                ResearchFeatureRow(
+                    market=replay.market,
+                    epoch=record.epoch,
+                    decision_timestamp_ms=decision_ms,
+                    values={
+                        "oracle_age_ms": None,
+                        "spot_oracle_gap_ppm": None,
+                        "perp_oracle_gap_ppm": None,
+                        "spot_perp_basis_ppm": (
+                            None
+                            if perp_price is None
+                            else float(relative_gap_ppm(perp_price, spot_price))
+                        ),
+                        "oracle_update_hazard_ppm": None,
+                        "spot_flow_imbalance_ppm": (
+                            None if spot_flow is None else float(spot_flow)
+                        ),
+                        "perp_flow_imbalance_ppm": (
+                            None if perp_flow is None else float(perp_flow)
+                        ),
+                        "pool_bull_share_ppm": None,
+                        "pool_log_total_bnb": None,
+                        "pool_recent_flow_imbalance_ppm": None,
+                        "pool_log_bet_count": None,
+                        "pool_log_unique_bettors": None,
+                        "prior_bull_rate_20_ppm": (
+                            None if prior_bull is None else float(prior_bull)
+                        ),
+                        "prior_abs_return_12_ppm": (
+                            None if prior_abs_return is None else float(prior_abs_return)
+                        ),
+                    },
+                )
+            )
+
+    return RecentCanonicalFeatureBuildResult(
+        rows=tuple(rows),
+        candidate_rounds=len(candidates),
+        skipped_no_decision_snapshot=skipped_snapshot,
+        skipped_no_spot=skipped_no_spot,
+        chunks_loaded=len(groups),
+        max_spot_chunk_rows=max_spot_rows,
+        max_perp_chunk_rows=max_perp_rows,
+        spot_query_start_ms=spot_query_start,
+        perp_query_start_ms=perp_query_start,
+        query_end_ms=query_end,
+    )

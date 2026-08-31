@@ -1,0 +1,672 @@
+{
+  "ablation_digest": "d13ea3c800847f4c1f2b0bd76452c6d4d92f56f7cf3066c5eec3c4fe8e66b6c5",
+  "authoritative": false,
+  "baseline_campaign_digest": "bb5efa96305d18708298d4446fe125729d0dbabd5f396c785f9d85693af53b4d",
+  "baseline_economics": {
+    "authoritative": false,
+    "capital_at_risk_wei": 7120000000000000000,
+    "config": {
+      "bet_gas_wei": 500000000000000,
+      "claim_gas_wei": 500000000000000,
+      "decision_lead_seconds": 20,
+      "inclusion_latency_seconds": 3,
+      "min_expected_value_wei": 0,
+      "purge_rounds": 2,
+      "stake_wei": 10000000000000000,
+      "treasury_fee_bps": 300
+    },
+    "limitations": [
+      "third-party dataset; not authoritative on-chain event evidence",
+      "pool amounts are rounded from approximately six significant digits",
+      "target-round pre-decision bet flow is unavailable and must not be fabricated",
+      "result is supporting evidence only and cannot pass the profitability gate"
+    ],
+    "max_drawdown_wei": 476270215295154173,
+    "pnl_wei": -327478474703650860,
+    "roi_ppm": -45995,
+    "settled_rounds": 1957,
+    "skipped_empty_pool": 0,
+    "skipped_late": 0,
+    "skipped_missing_projection": 0,
+    "skipped_missing_signal": 537,
+    "skipped_no_positive_ev": 708,
+    "skipped_oos_provenance": 0,
+    "skipped_refunded": 0,
+    "source_class": "third_party_historical_benchmark",
+    "trade_count": 712
+  },
+  "baseline_evaluation_digest": "a3812abec6f41aaaacb439f358db1362478dbb6fe834ac12f46d475f3a6da384",
+  "baseline_probability": {
+    "accuracy": 0.526056338028169,
+    "accuracy_ci95": [
+      0.5000503163061054,
+      0.5519217621451646
+    ],
+    "brier_score": 0.24946985756436832,
+    "brier_skill_score": 0.0003358092353094033,
+    "bull_base_rate": 0.5211267605633803,
+    "ece_10": 0.034738995070422544,
+    "log_loss": 0.6921596266135194,
+    "market": "BNBUSD",
+    "n_missing_signal": 537,
+    "n_scored": 1420,
+    "n_ties_excluded": 0
+  },
+  "evidence_role": "independent_confirmation",
+  "exploratory_model_selection": true,
+  "independent_confirmation_required": true,
+  "profitability_gate_eligible": false,
+  "scenario_only": true,
+  "selection": {
+    "complete_rounds": 1957,
+    "end_timestamp": 1660608000,
+    "start_timestamp": 1660003200
+  },
+  "source_class": "third_party_historical_benchmark",
+  "variant_set_precommitted_before_exploratory_result_review": true,
+  "variants": [
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 3180000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 586606228319611786,
+        "pnl_wei": -540976218451938772,
+        "roi_ppm": -170119,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 1102,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 318
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_5s_ppm",
+        "spot_return_20s_ppm",
+        "spot_return_60s_ppm",
+        "spot_flow_imbalance_5s_ppm",
+        "spot_flow_imbalance_20s_ppm",
+        "spot_flow_imbalance_60s_ppm",
+        "spot_trade_count_5s",
+        "spot_trade_count_20s",
+        "spot_trade_count_60s",
+        "perp_return_5s_ppm",
+        "perp_return_20s_ppm",
+        "perp_return_60s_ppm",
+        "perp_flow_imbalance_5s_ppm",
+        "perp_flow_imbalance_20s_ppm",
+        "perp_flow_imbalance_60s_ppm",
+        "perp_trade_count_5s",
+        "perp_trade_count_20s",
+        "perp_trade_count_60s"
+      ],
+      "name": "v2_all",
+      "probability": {
+        "accuracy": 0.5429577464788733,
+        "accuracy_ci95": [
+          0.5169667015908536,
+          0.5687169953152945
+        ],
+        "brier_score": 0.24889902847844927,
+        "brier_skill_score": 0.0026232094118737725,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.01600914788732399,
+        "log_loss": 0.6910347012526609,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 7480000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 784350900538294768,
+        "pnl_wei": -689229768307571816,
+        "roi_ppm": -92144,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 672,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 748
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_5s_ppm",
+        "spot_return_20s_ppm",
+        "spot_return_60s_ppm",
+        "spot_flow_imbalance_5s_ppm",
+        "spot_flow_imbalance_20s_ppm",
+        "spot_flow_imbalance_60s_ppm",
+        "spot_trade_count_5s",
+        "spot_trade_count_20s",
+        "spot_trade_count_60s"
+      ],
+      "name": "spot_micro",
+      "probability": {
+        "accuracy": 0.5394366197183098,
+        "accuracy_ci95": [
+          0.5134399946775082,
+          0.5652204483838735
+        ],
+        "brier_score": 0.24806501067786124,
+        "brier_skill_score": 0.005965247355247505,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.019363919014084473,
+        "log_loss": 0.6892908754226952,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 4770000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 677841664141154228,
+        "pnl_wei": -496285679308839167,
+        "roi_ppm": -104044,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 943,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 477
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "perp_return_5s_ppm",
+        "perp_return_20s_ppm",
+        "perp_return_60s_ppm",
+        "perp_flow_imbalance_5s_ppm",
+        "perp_flow_imbalance_20s_ppm",
+        "perp_flow_imbalance_60s_ppm",
+        "perp_trade_count_5s",
+        "perp_trade_count_20s",
+        "perp_trade_count_60s"
+      ],
+      "name": "perp_micro",
+      "probability": {
+        "accuracy": 0.55,
+        "accuracy_ci95": [
+          0.5240240144128296,
+          0.5757061901828509
+        ],
+        "brier_score": 0.24744577494484227,
+        "brier_skill_score": 0.00844662043167732,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.005166342253521149,
+        "log_loss": 0.6880092747983274,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 7620000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 690380141997078946,
+        "pnl_wei": -643642090215499024,
+        "roi_ppm": -84468,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 658,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 762
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_5s_ppm",
+        "spot_return_20s_ppm",
+        "spot_return_60s_ppm",
+        "perp_return_5s_ppm",
+        "perp_return_20s_ppm",
+        "perp_return_60s_ppm"
+      ],
+      "name": "returns",
+      "probability": {
+        "accuracy": 0.5429577464788733,
+        "accuracy_ci95": [
+          0.5169667015908536,
+          0.5687169953152945
+        ],
+        "brier_score": 0.24788861728422815,
+        "brier_skill_score": 0.006672082885696207,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.02606698450704225,
+        "log_loss": 0.6890120873367226,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 6270000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 587223370713575802,
+        "pnl_wei": -409168036553244533,
+        "roi_ppm": -65259,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 793,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 627
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_flow_imbalance_5s_ppm",
+        "spot_flow_imbalance_20s_ppm",
+        "spot_flow_imbalance_60s_ppm",
+        "perp_flow_imbalance_5s_ppm",
+        "perp_flow_imbalance_20s_ppm",
+        "perp_flow_imbalance_60s_ppm"
+      ],
+      "name": "flow",
+      "probability": {
+        "accuracy": 0.523943661971831,
+        "accuracy_ci95": [
+          0.497937861295876,
+          0.5498202648485342
+        ],
+        "brier_score": 0.24978692814394507,
+        "brier_skill_score": -0.0009347414734715009,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.03274035211267604,
+        "log_loss": 0.6927463148944762,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 7690000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 684491144187165193,
+        "pnl_wei": -620638176344908786,
+        "roi_ppm": -80708,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 651,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 769
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_trade_count_5s",
+        "spot_trade_count_20s",
+        "spot_trade_count_60s",
+        "perp_trade_count_5s",
+        "perp_trade_count_20s",
+        "perp_trade_count_60s"
+      ],
+      "name": "intensity",
+      "probability": {
+        "accuracy": 0.5232394366197183,
+        "accuracy_ci95": [
+          0.49723381275435313,
+          0.549119662621104
+        ],
+        "brier_score": 0.24867062711407886,
+        "brier_skill_score": 0.003538448901373892,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.0358695295774648,
+        "log_loss": 0.6904905093401262,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 4620000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 484941352874493560,
+        "pnl_wei": -470495920452587064,
+        "roi_ppm": -101839,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 958,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 462
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_5s_ppm",
+        "spot_flow_imbalance_5s_ppm",
+        "spot_trade_count_5s",
+        "perp_return_5s_ppm",
+        "perp_flow_imbalance_5s_ppm",
+        "perp_trade_count_5s"
+      ],
+      "name": "horizon_5s",
+      "probability": {
+        "accuracy": 0.5471830985915493,
+        "accuracy_ci95": [
+          0.5212004645718834,
+          0.5729111369479841
+        ],
+        "brier_score": 0.24886382610917676,
+        "brier_skill_score": 0.002764270734212926,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.022057445774647882,
+        "log_loss": 0.6909351515582105,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 4720000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 599785599148861873,
+        "pnl_wei": -496194843592963826,
+        "roi_ppm": -105127,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 948,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 472
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_20s_ppm",
+        "spot_flow_imbalance_20s_ppm",
+        "spot_trade_count_20s",
+        "perp_return_20s_ppm",
+        "perp_flow_imbalance_20s_ppm",
+        "perp_trade_count_20s"
+      ],
+      "name": "horizon_20s",
+      "probability": {
+        "accuracy": 0.5429577464788733,
+        "accuracy_ci95": [
+          0.5169667015908536,
+          0.5687169953152945
+        ],
+        "brier_score": 0.25058620552445354,
+        "brier_skill_score": -0.0041375691961609284,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.027409245070422514,
+        "log_loss": 0.6945656235137474,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    },
+    {
+      "economics": {
+        "authoritative": false,
+        "capital_at_risk_wei": 4650000000000000000,
+        "config": {
+          "bet_gas_wei": 500000000000000,
+          "claim_gas_wei": 500000000000000,
+          "decision_lead_seconds": 20,
+          "inclusion_latency_seconds": 3,
+          "min_expected_value_wei": 0,
+          "purge_rounds": 2,
+          "stake_wei": 10000000000000000,
+          "treasury_fee_bps": 300
+        },
+        "limitations": [
+          "third-party dataset; not authoritative on-chain event evidence",
+          "pool amounts are rounded from approximately six significant digits",
+          "target-round pre-decision bet flow is unavailable and must not be fabricated",
+          "result is supporting evidence only and cannot pass the profitability gate"
+        ],
+        "max_drawdown_wei": 542294777481141204,
+        "pnl_wei": -458413336960329523,
+        "roi_ppm": -98584,
+        "settled_rounds": 1957,
+        "skipped_empty_pool": 0,
+        "skipped_late": 0,
+        "skipped_missing_projection": 0,
+        "skipped_missing_signal": 537,
+        "skipped_no_positive_ev": 955,
+        "skipped_oos_provenance": 0,
+        "skipped_refunded": 0,
+        "source_class": "third_party_historical_benchmark",
+        "trade_count": 465
+      },
+      "feature_names": [
+        "spot_perp_basis_ppm",
+        "spot_flow_imbalance_ppm",
+        "perp_flow_imbalance_ppm",
+        "prior_bull_rate_20_ppm",
+        "prior_abs_return_12_ppm",
+        "spot_return_60s_ppm",
+        "spot_flow_imbalance_60s_ppm",
+        "spot_trade_count_60s",
+        "perp_return_60s_ppm",
+        "perp_flow_imbalance_60s_ppm",
+        "perp_trade_count_60s"
+      ],
+      "name": "horizon_60s",
+      "probability": {
+        "accuracy": 0.5366197183098591,
+        "accuracy_ci95": [
+          0.510619562781907,
+          0.5624222772036618
+        ],
+        "brier_score": 0.24797395191845636,
+        "brier_skill_score": 0.0063301338466307255,
+        "bull_base_rate": 0.5211267605633803,
+        "ece_10": 0.016335690140845117,
+        "log_loss": 0.689065871805564,
+        "market": "BNBUSD",
+        "n_missing_signal": 537,
+        "n_scored": 1420,
+        "n_ties_excluded": 0
+      }
+    }
+  ]
+}

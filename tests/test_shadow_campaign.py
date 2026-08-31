@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+import hashlib
+from dataclasses import asdict, replace
+from pathlib import Path
+
+import pytest
+
+from pancake_prediction.shadow_campaign import (
+    ShadowCampaignPolicy,
+    build_shadow_campaign_evidence,
+    evaluate_shadow_campaign,
+)
+from pancake_prediction.shadow_ledger import ShadowLedgerAuditReport
+from pancake_prediction.shadow_manifest import canonical_manifest_fragment_digest
+
+
+def _audit(**overrides: object) -> ShadowLedgerAuditReport:
+    values: dict[str, object] = {
+        "event_count": 1_950,
+        "head_digest": "a" * 64,
+        "prediction_count": 1_000,
+        "settlement_count": 950,
+        "unresolved_count": 50,
+        "actionable_prediction_count": 500,
+        "settled_actionable_count": 480,
+        "probability_scored_count": 940,
+        "brier_score": 0.24,
+        "directional_accuracy": 0.53,
+        "observed_pnl_count": 480,
+        "observed_pnl_wei": -123_456,
+        "first_decision_timestamp_ms": 1_000_000,
+        "last_decision_timestamp_ms": 1_000_000 + 8 * 24 * 60 * 60 * 1_000,
+        "markets": ("BNBUSD",),
+        "model_ids": ("shadow-wf-v1",),
+        "feature_set_ids": ("full-v1",),
+        "action_counts": {"bull": 250, "bear": 250, "skip": 500},
+        "integrity_errors": (),
+        "campaign_manifest_digest": "f" * 64,
+        "audit_purge_rounds": 2,
+        "campaign_manifest_market": "BNBUSD",
+        "campaign_manifest_policy_digest": canonical_manifest_fragment_digest(
+            asdict(ShadowCampaignPolicy())
+        ),
+    }
+    values.update(overrides)
+    return ShadowLedgerAuditReport(**values)  # type: ignore[arg-type]
+
+
+def test_shadow_campaign_gate_can_pass_with_negative_pnl() -> None:
+    report = evaluate_shadow_campaign(_audit())
+    payload = report.as_dict()
+
+    assert report.gate_ready is True
+    assert report.unresolved_ppm == 50_000
+    assert report.settlement_coverage_ppm == 950_000
+    assert report.actionable_pnl_coverage_ppm == 1_000_000
+    assert report.audit.observed_pnl_wei < 0
+    assert payload["profitability_gate_eligible"] is False
+    assert payload["full_historical_gate_satisfied"] is False
+    assert payload["signing_enabled"] is False
+    assert payload["live_broadcast"] is False
+    assert len(report.campaign_digest) == 64
+    assert report.campaign_digest == evaluate_shadow_campaign(_audit()).campaign_digest
+
+
+def test_shadow_campaign_gate_requires_bound_manifest() -> None:
+    report = evaluate_shadow_campaign(_audit(campaign_manifest_digest=None))
+
+    assert report.gate_ready is False
+    assert report.checks["campaign_manifest_bound"] is False
+
+
+def test_shadow_campaign_digest_binds_manifest_identity() -> None:
+    first = evaluate_shadow_campaign(_audit(campaign_manifest_digest="f" * 64))
+    second = evaluate_shadow_campaign(_audit(campaign_manifest_digest="e" * 64))
+
+    assert first.campaign_digest != second.campaign_digest
+
+
+def test_shadow_campaign_gate_fails_unresolved_or_short_campaign() -> None:
+    unresolved = evaluate_shadow_campaign(
+        _audit(unresolved_count=200, settlement_count=800)
+    )
+    assert unresolved.gate_ready is False
+    assert unresolved.checks["unresolved_rate_within_limit"] is False
+    assert unresolved.checks["settlement_count_sufficient"] is False
+
+    short = evaluate_shadow_campaign(
+        _audit(last_decision_timestamp_ms=1_000_000 + 6 * 24 * 60 * 60 * 1_000)
+    )
+    assert short.gate_ready is False
+    assert short.checks["decision_span_sufficient"] is False
+
+
+def test_shadow_campaign_gate_requires_both_directions_and_complete_pnl() -> None:
+    one_direction = evaluate_shadow_campaign(
+        _audit(action_counts={"bull": 500, "bear": 0, "skip": 500})
+    )
+    assert one_direction.gate_ready is False
+    assert one_direction.checks["both_directions_observed"] is False
+
+    missing_pnl = evaluate_shadow_campaign(_audit(observed_pnl_count=479))
+    assert missing_pnl.gate_ready is False
+    assert missing_pnl.checks["actionable_pnl_complete"] is False
+
+
+def test_shadow_campaign_gate_detects_model_or_feature_drift() -> None:
+    model_drift = evaluate_shadow_campaign(
+        _audit(model_ids=("shadow-wf-v1", "shadow-wf-v2"))
+    )
+    assert model_drift.gate_ready is False
+    assert model_drift.checks["model_version_count_within_limit"] is False
+
+    feature_drift = evaluate_shadow_campaign(
+        _audit(feature_set_ids=("full-v1", "without-round_history-v1"))
+    )
+    assert feature_drift.gate_ready is False
+    assert feature_drift.checks["feature_set_count_within_limit"] is False
+
+    relaxed = ShadowCampaignPolicy(max_model_ids=2, max_feature_set_ids=2)
+    relaxed_report = evaluate_shadow_campaign(
+        _audit(
+            model_ids=("shadow-wf-v1", "shadow-wf-v2"),
+            feature_set_ids=("full-v1", "without-round_history-v1"),
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(relaxed)
+            ),
+        ),
+        relaxed,
+    )
+    assert relaxed_report.gate_ready is True
+
+
+def test_shadow_campaign_gate_rejects_policy_drift_from_manifest() -> None:
+    changed = replace(
+        ShadowCampaignPolicy(),
+        min_predictions=999,
+    )
+    report = evaluate_shadow_campaign(_audit(), changed)
+
+    assert report.gate_ready is False
+    assert report.checks["campaign_policy_matches_manifest"] is False
+
+
+def test_shadow_campaign_gate_accepts_exact_bound_policy() -> None:
+    policy = replace(
+        ShadowCampaignPolicy(),
+        min_predictions=10,
+        min_settlements=8,
+        min_probability_scored=8,
+        min_actionable_predictions=2,
+        min_decision_span_ms=60_000,
+    )
+    report = evaluate_shadow_campaign(
+        _audit(
+            prediction_count=10,
+            settlement_count=9,
+            unresolved_count=1,
+            probability_scored_count=9,
+            actionable_prediction_count=4,
+            settled_actionable_count=4,
+            observed_pnl_count=4,
+            first_decision_timestamp_ms=1_000_000,
+            last_decision_timestamp_ms=1_060_000,
+            action_counts={"bull": 2, "bear": 2, "skip": 6},
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(policy)
+            ),
+        ),
+        policy,
+    )
+
+    assert report.gate_ready is True
+    assert report.checks["campaign_policy_matches_manifest"] is True
+
+
+def test_shadow_campaign_gate_requires_integrity_and_minimum_samples() -> None:
+    report = evaluate_shadow_campaign(
+        _audit(
+            integrity_errors=("sequence 2: event digest mismatch",),
+            prediction_count=999,
+            probability_scored_count=899,
+            actionable_prediction_count=199,
+        )
+    )
+    assert report.gate_ready is False
+    assert report.checks["ledger_integrity_ready"] is False
+    assert report.checks["prediction_count_sufficient"] is False
+    assert report.checks["probability_scored_sufficient"] is False
+    assert report.checks["actionable_prediction_count_sufficient"] is False
+
+
+def test_shadow_campaign_policy_validation_is_fail_closed() -> None:
+    with pytest.raises(ValueError, match="min_predictions"):
+        evaluate_shadow_campaign(_audit(), ShadowCampaignPolicy(min_predictions=-1))
+    with pytest.raises(ValueError, match="max_unresolved_ppm"):
+        evaluate_shadow_campaign(
+            _audit(),
+            ShadowCampaignPolicy(max_unresolved_ppm=1_000_001),
+        )
+    with pytest.raises(ValueError, match="max_model_ids"):
+        evaluate_shadow_campaign(_audit(), ShadowCampaignPolicy(max_model_ids=0))
+    with pytest.raises(ValueError, match="max_feature_set_ids"):
+        evaluate_shadow_campaign(_audit(), ShadowCampaignPolicy(max_feature_set_ids=0))
+
+
+def test_shadow_campaign_custom_policy_can_define_small_smoke_gate() -> None:
+    small = replace(
+        ShadowCampaignPolicy(),
+        min_predictions=10,
+        min_settlements=8,
+        min_probability_scored=8,
+        min_actionable_predictions=2,
+        min_decision_span_ms=60_000,
+    )
+    report = evaluate_shadow_campaign(
+        _audit(
+            prediction_count=10,
+            settlement_count=9,
+            unresolved_count=1,
+            probability_scored_count=9,
+            actionable_prediction_count=4,
+            settled_actionable_count=4,
+            observed_pnl_count=4,
+            first_decision_timestamp_ms=1_000_000,
+            last_decision_timestamp_ms=1_060_000,
+            action_counts={"bull": 2, "bear": 2, "skip": 6},
+            campaign_manifest_policy_digest=canonical_manifest_fragment_digest(
+                asdict(small)
+            ),
+        ),
+        small,
+    )
+    assert report.gate_ready is True
+
+
+
+def test_shadow_campaign_evidence_binds_logical_ledger_state(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"sqlite-main-file-snapshot")
+    report = evaluate_shadow_campaign(_audit())
+
+    payload = build_shadow_campaign_evidence(ledger, report)
+    binding = payload["ledger_binding"]
+    assert isinstance(binding, dict)
+
+    assert payload["evidence_role"] == "latest_attempt"
+    assert payload["success"] is True
+    assert payload["workflow_outcome"] == "success"
+    assert payload["ledger_sha256"] == hashlib.sha256(ledger.read_bytes()).hexdigest()
+    assert binding["campaign_manifest_digest"] == report.audit.campaign_manifest_digest
+    assert binding["event_count"] == report.audit.event_count
+    assert binding["head_digest"] == report.audit.head_digest
+    assert binding["campaign_digest"] == report.campaign_digest
+    assert binding["physical_sha256_scope"] == "sqlite_main_database_file"
+    assert payload["profitability_gate_eligible"] is False
+    assert payload["full_historical_gate_satisfied"] is False
+    assert payload["signing_enabled"] is False
+    assert payload["live_broadcast"] is False
+    assert payload["funded_execution"] is False
+
+
+def test_shadow_campaign_evidence_last_success_requires_ready_gate(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+    incomplete = evaluate_shadow_campaign(_audit(prediction_count=999))
+
+    with pytest.raises(ValueError, match="last_success evidence requires"):
+        build_shadow_campaign_evidence(
+            ledger,
+            incomplete,
+            evidence_role="last_success",
+        )
+
+    successful = build_shadow_campaign_evidence(
+        ledger,
+        evaluate_shadow_campaign(_audit()),
+        evidence_role="last_success",
+    )
+    assert successful["evidence_role"] == "last_success"
+    assert successful["success"] is True
+
+
+def test_shadow_campaign_evidence_rejects_unknown_role(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+
+    with pytest.raises(ValueError, match="evidence_role"):
+        build_shadow_campaign_evidence(
+            ledger,
+            evaluate_shadow_campaign(_audit()),
+            evidence_role="historical_success",
+        )
+
+
+def test_shadow_campaign_evidence_rejects_unbound_manifest(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.sqlite3"
+    ledger.write_bytes(b"ledger")
+    report = evaluate_shadow_campaign(_audit(campaign_manifest_digest=None))
+
+    with pytest.raises(ValueError, match="bound campaign manifest"):
+        build_shadow_campaign_evidence(ledger, report)
+

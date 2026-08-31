@@ -1,0 +1,49 @@
+{
+  "assumptions": {
+    "bet_gas_wei": 120000000000000,
+    "chainlink_availability_lag_ms": 500,
+    "claim_gas_wei": 90000000000000,
+    "economic_values_role": "explicit smoke scenario; not measured production costs or profitability evidence",
+    "feature_lead_seconds": 20,
+    "inclusion_latency_seconds": 3,
+    "perp_availability_lag_ms": 40,
+    "spot_availability_lag_ms": 25,
+    "stake_wei": 1000000000000000
+  },
+  "chain": null,
+  "do_not_use_as_readiness_evidence": true,
+  "economic": null,
+  "evidence_role": "legacy_cancelled_attempt",
+  "evidence_version": 1,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "oos_smoke_config": {
+    "calibration_rounds": 20,
+    "embargo_rounds": 2,
+    "min_train_rounds": 100,
+    "pool_min_train_rounds": 50,
+    "pool_window_rounds": 200,
+    "purge_rounds": 2,
+    "test_rounds": 50
+  },
+  "perp_ingest": null,
+  "pipeline_success": false,
+  "profitability_gate_eligible": false,
+  "purpose": "recent_source_bound_economic_pipeline_smoke",
+  "signing_enabled": false,
+  "source_window": {
+    "binance_archive_date": "2026-08-18",
+    "end_timestamp": 1787097600,
+    "start_timestamp": 1787011200
+  },
+  "spot_ingest": null,
+  "step_outcomes": {
+    "chain": "cancelled",
+    "download": "skipped",
+    "economic": "skipped",
+    "ingest": "skipped"
+  },
+  "superseded": true,
+  "superseded_by": ".github/workflows/recent-public-chainlink-day.yml -> .github/workflows/recent-economic-smoke.yml",
+  "superseded_reason": "The legacy workflow duplicated the Aug18-19 source/economic path with different assumptions and treated command success as sufficient pipeline success. It never produced last-success evidence and is retained only as historical cancelled-attempt evidence."
+}

@@ -1,0 +1,158 @@
+name: public-blast-bootstrap-smoke
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/public-blast-bootstrap-smoke.yml
+      - src/pancake_prediction/collector.py
+      - src/pancake_prediction/historical_bootstrap.py
+      - src/pancake_prediction/historical_preflight.py
+      - src/pancake_prediction/oracle_history.py
+      - src/pancake_prediction/rpc.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-blast-bootstrap-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Run bounded public archive bootstrap smoke
+        id: smoke
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p artifacts evidence
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from pancake_prediction.contracts import MARKETS
+          from pancake_prediction.historical_bootstrap import run_historical_bootstrap
+          from pancake_prediction.oracle_history import build_active_oracle_history
+          from pancake_prediction.rpc import JsonRpcClient
+
+          endpoint = "https://bsc-mainnet.public.blastapi.io"
+          market = MARKETS["BNBUSD"]
+          if market.deployment_block_hint is None:
+              raise SystemExit("BNBUSD deployment block hint is unavailable")
+
+          database = Path("artifacts/public-blast-bootstrap-smoke.sqlite")
+          evidence_path = Path("artifacts/public-blast-bootstrap-smoke.json")
+          payload = {
+              "evidence_version": 1,
+              "source_sha": os.environ["SOURCE_SHA"],
+              "endpoint": endpoint,
+              "market": market.symbol,
+              "from_block": market.deployment_block_hint,
+              "to_block": market.deployment_block_hint + 2_000,
+              "one_block_log_count": None,
+              "success": False,
+              "bootstrap": None,
+              "oracle_history": None,
+              "error": None,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "profitability_gate_eligible": False,
+          }
+
+          rpc = JsonRpcClient(
+              endpoint,
+              timeout_s=20.0,
+              retries=6,
+              backoff_s=1.5,
+          )
+          try:
+              deployment_logs = rpc.get_logs(
+                  market.address,
+                  market.deployment_block_hint,
+                  market.deployment_block_hint,
+              )
+              payload["one_block_log_count"] = len(deployment_logs)
+
+              result = run_historical_bootstrap(
+                  rpc,
+                  market,
+                  database,
+                  confirmations=64,
+                  from_block=market.deployment_block_hint,
+                  to_block=market.deployment_block_hint + 2_000,
+                  chunk_size=100,
+                  include_chainlink=True,
+                  prediction_analytic_only=True,
+              )
+              oracle_history = build_active_oracle_history(database, market.symbol)
+              payload["success"] = True
+              payload["bootstrap"] = {
+                  "deployment_block": result.preflight.deployment_block,
+                  "archive_probe": result.preflight.archive_probe.as_dict(),
+                  "collection_range": result.collection_range.as_dict(),
+                  "collection": result.collection,
+                  "quality": result.quality.as_dict(),
+                  "replay_rounds": result.replay_rounds,
+                  "replay_input_digest": result.replay_input_digest,
+                  "replay_output_digest": result.replay_output_digest,
+              }
+              payload["oracle_history"] = oracle_history.as_dict()
+          except Exception as exc:
+              payload["error"] = f"{type(exc).__name__}: {exc}"[:1_000]
+
+          evidence_path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          raise SystemExit(0 if payload["success"] else 2)
+          PY
+      - name: Persist bounded smoke evidence
+        if: always()
+        run: |
+          cp artifacts/public-blast-bootstrap-smoke.json \
+            evidence/public-blast-bootstrap-smoke.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/public-blast-bootstrap-smoke.json
+          if git diff --cached --quiet; then
+            echo 'Blast bootstrap smoke evidence unchanged.'
+          else
+            git commit -m 'chore: record public Blast bootstrap smoke'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload bounded smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-blast-bootstrap-smoke-${{ github.run_id }}
+          path: |
+            artifacts/public-blast-bootstrap-smoke.json
+            artifacts/public-blast-bootstrap-smoke.sqlite
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Enforce bounded public bootstrap smoke
+        if: always()
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          if [ "$SMOKE_OUTCOME" != success ]; then
+            echo 'Public Blast archive state is not yet sufficient for bounded historical bootstrap.' >&2
+            exit 2
+          fi

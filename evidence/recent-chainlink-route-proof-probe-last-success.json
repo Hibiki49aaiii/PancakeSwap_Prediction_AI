@@ -1,0 +1,83 @@
+{
+  "anchor": {
+    "anchor_block": 116844485,
+    "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+    "evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+    "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+  },
+  "archive_complete_source_claim": false,
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "elapsed_ms": 91134,
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": null,
+      "outcome": "success",
+      "proof": {
+        "aggregator_confirmed_events": 0,
+        "anchor_block": 116844485,
+        "anchor_evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+        "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+        "from_block": 116556542,
+        "historical_state_required": false,
+        "method": "persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range",
+        "new_oracle_events": 0,
+        "oracle": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee",
+        "proof_through_block": 116844485,
+        "through_block": 116748497
+      }
+    }
+  ],
+  "candidate_endpoints": [
+    "https://rpc-bsc.48.club",
+    "https://bsc-rpc.publicnode.com",
+    "https://public.1rpc.io/bnb"
+  ],
+  "evidence_role": "last_success",
+  "evidence_version": 3,
+  "from_block": 116556542,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "probe_error_tail": "",
+  "profitability_gate_eligible": false,
+  "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1787011200,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "rpc_policy": {
+    "backoff_s": 0.75,
+    "min_interval_s": 0.15,
+    "retries": 3,
+    "timeout_s": 10.0
+  },
+  "selected": {
+    "elapsed_ms": 91134,
+    "endpoint": "https://rpc-bsc.48.club",
+    "error": null,
+    "outcome": "success",
+    "proof": {
+      "aggregator_confirmed_events": 0,
+      "anchor_block": 116844485,
+      "anchor_evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+      "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+      "from_block": 116556542,
+      "historical_state_required": false,
+      "method": "persisted_route_anchor_then_stateless_change_scan_backward_over_fixed_source_range",
+      "new_oracle_events": 0,
+      "oracle": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee",
+      "proof_through_block": 116844485,
+      "through_block": 116748497
+    }
+  },
+  "signing_enabled": false,
+  "source_event_sha": "2f1e27f51f42a4cfd3a5f82ca7374e9b884b3b4f",
+  "source_run_id": 32583629540,
+  "source_sha": "1a0e45303850f36154a5dcd984bd1217fa34f46d",
+  "step_outcomes": {
+    "artifact": "success",
+    "probe": "success"
+  },
+  "success": true,
+  "to_block": 116748497,
+  "workflow_outcome": "success"
+}

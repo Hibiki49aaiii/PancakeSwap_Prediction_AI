@@ -1,0 +1,283 @@
+import io
+import json
+import urllib.error
+import urllib.request
+from email.message import Message
+
+import pytest
+
+from pancake_prediction.rpc import (
+    JSON_RPC_USER_AGENT,
+    JsonRpcClient,
+    LocalForkRpcClient,
+    RpcError,
+    RpcResponseError,
+)
+
+
+class _Response:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._body = json.dumps(payload).encode()
+
+    def __enter__(self) -> "_Response":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        del args
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_json_rpc_sends_explicit_project_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_user_agent: str | None = None
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        nonlocal seen_user_agent
+        del kwargs
+        seen_user_agent = request.get_header("User-agent")
+        return _Response({"jsonrpc": "2.0", "id": 1, "result": "0x38"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545")
+
+    assert client.chain_id() == 56
+    assert seen_user_agent == JSON_RPC_USER_AGENT
+
+
+def test_json_rpc_application_error_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(*args: object, **kwargs: object) -> _Response:
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return _Response(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32005,
+                    "message": "query returned more than the provider limit",
+                },
+            }
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545", retries=4, backoff_s=0.0)
+    with pytest.raises(RpcResponseError, match="-32005") as exc_info:
+        client.get_logs("0x" + "11" * 20, 1, 10_000)
+    assert exc_info.value.code == -32005
+    assert calls == 1
+
+
+def test_json_rpc_application_error_in_http_400_body_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        nonlocal calls
+        del kwargs
+        calls += 1
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32600,
+                    "message": "eth_getLogs supports a maximum 10 block range",
+                },
+            }
+        ).encode()
+        raise urllib.error.HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            Message(),
+            io.BytesIO(body),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545", retries=4, backoff_s=0.0)
+    with pytest.raises(RpcResponseError, match="maximum 10 block range") as exc_info:
+        client.get_logs("0x" + "11" * 20, 1, 2_000)
+    assert exc_info.value.code == -32600
+    assert calls == 1
+
+
+def test_transport_failure_is_retried_and_can_recover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_urlopen(*args: object, **kwargs: object) -> _Response:
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            raise urllib.error.URLError("temporary transport failure")
+        return _Response({"jsonrpc": "2.0", "id": 2, "result": "0x38"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545", retries=2, backoff_s=0.0)
+    assert client.chain_id() == 56
+    assert calls == 2
+
+
+def test_rpc_retries_must_be_positive() -> None:
+    client = JsonRpcClient("http://127.0.0.1:8545", retries=0)
+    with pytest.raises(ValueError, match="retries must be positive"):
+        client.chain_id()
+
+
+def test_local_fork_rpc_rejects_non_loopback_endpoint() -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        LocalForkRpcClient("https://bsc-dataseed.binance.org")
+
+
+def test_local_fork_rpc_accepts_loopback_and_is_marked_fork_only() -> None:
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    assert client.fork_only is True
+
+
+def test_local_fork_transaction_lookup_uses_eth_get_transaction_by_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_payload: dict[str, object] = {}
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        seen_payload.update(payload)
+        return _Response(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"hash": "0x" + "aa" * 32},
+            }
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://localhost:8545")
+    tx_hash = "0x" + "aa" * 32
+    result = client.transaction_by_hash(tx_hash)
+    assert result is not None and result["hash"] == tx_hash
+    assert seen_payload["method"] == "eth_getTransactionByHash"
+    assert seen_payload["params"] == [tx_hash]
+
+
+def test_local_fork_fault_controls_use_anvil_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[object]]] = []
+    tx_hash = "0x" + "aa" * 32
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        method = str(payload["method"])
+        params = list(payload["params"])
+        calls.append((method, params))
+        if method == "anvil_dropTransaction":
+            result: object = tx_hash
+        elif method == "anvil_snapshot":
+            result = "0xabc"
+        elif method in {"anvil_setAutomine", "anvil_reorg"}:
+            result = None
+        else:
+            result = True
+        return _Response({"jsonrpc": "2.0", "id": payload["id"], "result": result})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+
+    client.set_automine(False)
+    client.drop_transaction(tx_hash)
+    client.reorg(1)
+    snapshot_id = client.snapshot()
+    client.revert(snapshot_id)
+    client.stop_impersonating_account("0x" + "11" * 20)
+
+    assert snapshot_id == "0xabc"
+    assert calls == [
+        ("anvil_setAutomine", [False]),
+        ("anvil_dropTransaction", [tx_hash]),
+        ("anvil_reorg", [{"depth": 1, "tx_block_pairs": []}]),
+        ("anvil_snapshot", []),
+        ("anvil_revert", ["0xabc"]),
+        ("anvil_stopImpersonatingAccount", ["0x" + "11" * 20]),
+    ]
+
+
+def test_local_fork_reorg_depth_must_be_positive() -> None:
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    with pytest.raises(ValueError, match="reorg depth"):
+        client.reorg(0)
+
+
+def test_local_fork_unit_methods_accept_null_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[str] = []
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        methods.append(str(payload["method"]))
+        return _Response({"jsonrpc": "2.0", "id": payload["id"], "result": None})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    address = "0x" + "11" * 20
+    client.impersonate_account(address)
+    client.set_balance(address, 10**18)
+    client.set_automine(False)
+    client.reorg(1)
+    client.stop_impersonating_account(address)
+
+    assert methods == [
+        "anvil_impersonateAccount",
+        "anvil_setBalance",
+        "anvil_setAutomine",
+        "anvil_reorg",
+        "anvil_stopImpersonatingAccount",
+    ]
+
+
+def test_local_fork_drop_transaction_rejects_missing_or_wrong_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results: list[object] = [None, "0x" + "bb" * 32]
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        del kwargs
+        raw = request.data
+        assert isinstance(raw, bytes)
+        payload = json.loads(raw)
+        assert isinstance(payload, dict)
+        return _Response(
+            {"jsonrpc": "2.0", "id": payload["id"], "result": results.pop(0)}
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = LocalForkRpcClient("http://127.0.0.1:8545")
+    tx_hash = "0x" + "aa" * 32
+
+    with pytest.raises(RpcError, match="did not find"):
+        client.drop_transaction(tx_hash)
+    with pytest.raises(RpcError, match="unexpected"):
+        client.drop_transaction(tx_hash)

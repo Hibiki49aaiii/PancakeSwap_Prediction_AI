@@ -1,0 +1,56 @@
+name: legacy-microstructure-cross-period
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - evidence/legacy-microstructure-confirmation-2022-08-09-to-15.json
+      - .github/workflows/legacy-microstructure-cross-period.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: legacy-microstructure-cross-period-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare-periods:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compare exploratory and independent periods
+        run: |
+          mkdir -p artifacts evidence
+          python scripts/compare_microstructure_periods.py \
+            --exploratory evidence/legacy-microstructure-ablation-2022-08-02-to-08.json \
+            --confirmation evidence/legacy-microstructure-confirmation-2022-08-09-to-15.json \
+            --output artifacts/legacy-microstructure-cross-period.json
+      - name: Persist cross-period evidence
+        run: |
+          cp artifacts/legacy-microstructure-cross-period.json \
+            evidence/legacy-microstructure-cross-period.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/legacy-microstructure-cross-period.json
+          if git diff --cached --quiet; then
+            echo 'Cross-period evidence unchanged.'
+          else
+            git commit -m 'chore: record cross-period microstructure evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload cross-period artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-microstructure-cross-period-${{ github.run_id }}
+          path: artifacts/legacy-microstructure-cross-period.json
+          if-no-files-found: error
+          retention-days: 30

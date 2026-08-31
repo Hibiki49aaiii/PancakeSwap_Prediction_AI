@@ -1,0 +1,67 @@
+name: etherscan-bnb-preflight
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - src/pancake_prediction/explorer_logs.py
+      - scripts/probe_etherscan_bnb_logs.py
+      - .github/workflows/etherscan-bnb-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: etherscan-bnb-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Probe Etherscan V2 BNB logs access
+        id: probe
+        continue-on-error: true
+        env:
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: |
+          mkdir -p artifacts evidence
+          python scripts/probe_etherscan_bnb_logs.py \
+            --output artifacts/etherscan-bnb-preflight.json
+      - name: Persist redacted preflight evidence
+        if: always()
+        run: |
+          cp artifacts/etherscan-bnb-preflight.json evidence/etherscan-bnb-preflight.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/etherscan-bnb-preflight.json
+          if git diff --cached --quiet; then
+            echo 'Etherscan BNB preflight evidence unchanged.'
+          else
+            git commit -m 'chore: record Etherscan BNB logs preflight evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Enforce configured-secret access only
+        if: always()
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: |
+          if [ -n "$ETHERSCAN_API_KEY" ] && [ "$PROBE_OUTCOME" != success ]; then
+            echo 'ETHERSCAN_API_KEY is configured but BNB logs access failed.' >&2
+            exit 2
+          fi
+          if [ -z "$ETHERSCAN_API_KEY" ]; then
+            echo 'ETHERSCAN_API_KEY is not configured; preflight remains an explicit gate.'
+          fi

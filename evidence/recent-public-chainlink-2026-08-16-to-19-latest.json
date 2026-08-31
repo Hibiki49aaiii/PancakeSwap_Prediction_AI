@@ -1,0 +1,51 @@
+{
+  "archive_state_required": false,
+  "attempts": [],
+  "bootstrap_error_tail": null,
+  "chainlink_collected": false,
+  "chainlink_requested": true,
+  "chainlink_route_anchor": {
+    "anchor_block": 116844485,
+    "chainlink_aggregator": "0xa6e8fee84f9bd528ad71917c9ddbb1fd3214f280",
+    "evidence_sha256": "88991ebf1802fbcdd399f5bc477f19facdf60de3a2b582b1e39f14c1a16ca0e3",
+    "oracle_proxy": "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee"
+  },
+  "evidence_role": "latest_attempt",
+  "evidence_version": 7,
+  "full_historical_gate_satisfied": false,
+  "gate_success": false,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "profitability_gate_eligible": false,
+  "purpose": "authenticated_recent_prediction_chainlink_three_day",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1786838400,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "source_mode": "authenticated_only",
+    "timeout_s": 20.0
+  },
+  "selected": null,
+  "semantic_success": false,
+  "signing_enabled": false,
+  "source_event_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "source_requirement": {
+    "accepted_env": [
+      "BSC_LOG_RPC_URL",
+      "BSC_ARCHIVE_RPC_URL"
+    ],
+    "classification": "AUTHENTICATED_RPC_REQUIRED"
+  },
+  "source_run_id": 33403847230,
+  "source_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "step_outcomes": {
+    "artifact": "success",
+    "bootstrap": "failure",
+    "semantics": "failure"
+  },
+  "success": false,
+  "workflow_outcome": "failure"
+}

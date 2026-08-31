@@ -1,0 +1,69 @@
+name: public-block-receipts-probe
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - scripts/probe_public_block_receipts.py
+      - .github/workflows/public-block-receipts-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-block-receipts-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Probe recent and deployment-era block receipts
+        id: probe
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts evidence
+          python scripts/probe_public_block_receipts.py \
+            --output artifacts/public-block-receipts-probe.json
+      - name: Persist probe evidence
+        if: always()
+        run: |
+          cp artifacts/public-block-receipts-probe.json evidence/public-block-receipts-probe.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/public-block-receipts-probe.json
+          if git diff --cached --quiet; then
+            echo 'Public block-receipts probe evidence unchanged.'
+          else
+            git commit -m 'chore: record public block-receipts probe evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload probe artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-block-receipts-probe-${{ github.run_id }}
+          path: artifacts/public-block-receipts-probe.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce probe gate
+        if: always()
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          if [ "$PROBE_OUTCOME" != success ]; then
+            echo 'No tested public BSC endpoint exposed both recent and historical receipts.' >&2
+            exit 2
+          fi

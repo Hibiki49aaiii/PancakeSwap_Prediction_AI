@@ -1,0 +1,16 @@
+{
+  "bootstrap": null,
+  "endpoint": "https://bsc-mainnet.public.blastapi.io",
+  "error": "RpcError: RPC request failed after 6 attempts: eth_getLogs: HTTP Error 429: Too Many Requests",
+  "evidence_version": 1,
+  "from_block": 10333825,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "one_block_log_count": null,
+  "oracle_history": null,
+  "profitability_gate_eligible": false,
+  "signing_enabled": false,
+  "source_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "success": false,
+  "to_block": 10335825
+}

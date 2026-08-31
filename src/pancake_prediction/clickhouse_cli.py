@@ -1,0 +1,647 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
+
+from .binance_archive import ArchiveVenue, TimestampUnit
+from .binance_live import (
+    BinanceLiveError,
+    BinancePublicHttpClient,
+    LiveVenue,
+    sync_binance_live_aggtrades,
+)
+from .binance_live_lock import (
+    BinanceLiveLineageLockError,
+    BinanceLiveLineageProcessLock,
+)
+from .campaign_evaluation import (
+    EconomicCampaignConfig,
+    run_source_bound_economic_campaign,
+)
+from .campaign_sensitivity import (
+    parse_sensitivity_scenarios,
+    run_source_bound_economic_sensitivity,
+)
+from .clickhouse import ClickHouseHttpClient, ingest_binance_archive, load_binance_trade_window
+from .clickhouse_dataset import (
+    ChunkedResearchDatasetBuildResult,
+    build_chunked_clickhouse_research_dataset,
+)
+from .clickhouse_manifest import (
+    ClickHouseResearchCampaignManifest,
+    build_clickhouse_campaign_manifest,
+)
+from .clickhouse_schema import ClickHouseBinanceSchemaReport, inspect_binance_trade_schema
+from .contracts import MARKETS
+from .research_inputs import CanonicalResearchInputs, load_canonical_research_inputs
+from .shadow_inference import (
+    ShadowInferenceConfig,
+    build_shadow_inference,
+    select_shadow_target,
+)
+from .shadow_ledger import ShadowLedgerStore
+from .shadow_reconciliation import reconcile_shadow_settlements
+
+_TIMESTAMP_UNITS = ("auto", "milliseconds", "microseconds")
+
+
+@dataclass(frozen=True, slots=True)
+class _DatasetCampaignBundle:
+    inputs: CanonicalResearchInputs
+    assumptions: dict[str, object]
+    dataset: ChunkedResearchDatasetBuildResult
+    manifest: ClickHouseResearchCampaignManifest
+
+
+def _print_json(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def _client_or_error(parser: argparse.ArgumentParser) -> ClickHouseHttpClient:
+    endpoint = os.environ.get("CLICKHOUSE_URL")
+    if not endpoint:
+        parser.error("command requires CLICKHOUSE_URL")
+    return ClickHouseHttpClient(
+        endpoint,
+        database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
+        username=os.environ.get("CLICKHOUSE_USER"),
+        password=os.environ.get("CLICKHOUSE_PASSWORD"),
+    )
+
+
+def _schema_or_error(
+    parser: argparse.ArgumentParser,
+    client: ClickHouseHttpClient,
+) -> ClickHouseBinanceSchemaReport:
+    report = inspect_binance_trade_schema(client)
+    if not report.ready:
+        parser.error(
+            "binance_agg_trades schema is not retry-safe; apply sql/clickhouse/v0_7_core.sql "
+            "to a fresh/migrated table before research IO"
+        )
+    return report
+
+
+def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--market", choices=sorted(MARKETS), required=True)
+    parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--spot-timestamp-unit", choices=_TIMESTAMP_UNITS, default="auto")
+    parser.add_argument("--spot-availability-lag-ms", type=int, required=True)
+    parser.add_argument(
+        "--perp-timestamp-unit",
+        choices=_TIMESTAMP_UNITS,
+        default="milliseconds",
+    )
+    parser.add_argument("--perp-availability-lag-ms", type=int, default=0)
+    parser.add_argument("--no-perp", action="store_true")
+    parser.add_argument("--chunk-span-ms", type=int, default=3_600_000)
+    parser.add_argument("--feature-lead-seconds", type=int, default=20)
+    parser.add_argument("--flow-lookback-ms", type=int, default=60_000)
+    parser.add_argument("--max-spot-age-ms", type=int, default=5_000)
+    parser.add_argument("--max-perp-age-ms", type=int, default=5_000)
+    parser.add_argument("--max-chainlink-age-ms", type=int, default=None)
+    parser.add_argument("--chainlink-availability-lag-ms", type=int, default=0)
+    parser.add_argument("--oracle-history-updates", type=int, default=512)
+    parser.add_argument("--oracle-hazard-horizon-ms", type=int, default=5_000)
+    parser.add_argument("--oracle-hazard-min-intervals", type=int, default=8)
+
+
+def _add_shared_evaluation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--initial-interval-seconds", type=int, default=300)
+    parser.add_argument("--initial-treasury-fee-bps", type=int, default=300)
+    parser.add_argument("--initial-buffer-seconds", type=int, default=30)
+    parser.add_argument("--min-train-rounds", type=int, default=200)
+    parser.add_argument("--test-rounds", type=int, default=100)
+    parser.add_argument("--purge-rounds", type=int, default=2)
+    parser.add_argument("--embargo-rounds", type=int, default=2)
+    parser.add_argument("--calibration-rounds", type=int, default=50)
+    parser.add_argument("--pool-min-train-rounds", type=int, default=50)
+    parser.add_argument("--pool-window-rounds", type=int, default=500)
+
+
+def _add_economic_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--stake-wei", type=int, required=True)
+    parser.add_argument("--bet-gas-wei", type=int, required=True)
+    parser.add_argument("--claim-gas-wei", type=int, required=True)
+    parser.add_argument("--inclusion-latency-seconds", type=int, required=True)
+    parser.add_argument("--min-expected-value-wei", type=int, default=0)
+    _add_shared_evaluation_arguments(parser)
+    parser.add_argument("--run-ablation", action="store_true")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pcs-clickhouse",
+        description="Bounded-memory ClickHouse research-data tooling.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    ping = subparsers.add_parser("ping", help="verify ClickHouse connectivity")
+    ping.set_defaults(command="ping")
+
+    subparsers.add_parser(
+        "schema-check",
+        help="validate the retry-safe Binance research table before ingest/query",
+    )
+
+    ingest = subparsers.add_parser(
+        "binance-ingest",
+        help="verify and stream one Binance aggTrades archive into ClickHouse",
+    )
+    ingest.add_argument("--market", choices=sorted(MARKETS), required=True)
+    ingest.add_argument("--archive", type=Path, required=True)
+    ingest.add_argument("--checksum", type=Path, required=True)
+    ingest.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    ingest.add_argument(
+        "--timestamp-unit",
+        choices=_TIMESTAMP_UNITS,
+        default="auto",
+    )
+    ingest.add_argument("--availability-lag-ms", type=int, required=True)
+    ingest.add_argument("--batch-size", type=int, default=50_000)
+
+    live = subparsers.add_parser(
+        "binance-live-sync",
+        help="poll public Binance aggTrades and append prospectively observed rows",
+    )
+    live.add_argument("--market", choices=sorted(MARKETS), required=True)
+    live.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    live.add_argument(
+        "--timestamp-unit",
+        choices=_TIMESTAMP_UNITS,
+        default="milliseconds",
+        help="ClickHouse lineage key; REST timestamps themselves are always parsed as milliseconds",
+    )
+    live.add_argument("--availability-lag-ms", type=int, required=True)
+    live.add_argument("--bootstrap-window-ms", type=int, default=120_000)
+    live.add_argument("--batch-size", type=int, default=5_000)
+    live.add_argument("--max-pages", type=int, default=100)
+    live.add_argument(
+        "--now-timestamp-ms",
+        type=int,
+        help="UNIX milliseconds override for deterministic bootstrap decisions",
+    )
+
+    window = subparsers.add_parser(
+        "binance-window",
+        help="read one deduplicated Binance research window from ClickHouse",
+    )
+    window.add_argument("--market", choices=sorted(MARKETS), required=True)
+    window.add_argument("--venue", choices=("spot", "um_futures"), required=True)
+    window.add_argument("--timestamp-unit", choices=_TIMESTAMP_UNITS, required=True)
+    window.add_argument("--availability-lag-ms", type=int, required=True)
+    window.add_argument("--start-ms", type=int, required=True)
+    window.add_argument("--end-ms", type=int, required=True)
+
+    dataset = subparsers.add_parser(
+        "dataset-summary",
+        help="build a canonical research dataset from SQLite plus chunked ClickHouse windows",
+    )
+    _add_dataset_arguments(dataset)
+
+    evaluate = subparsers.add_parser(
+        "campaign-evaluate",
+        help="run source-bound purged OOS and cost-aware economic validation",
+    )
+    _add_dataset_arguments(evaluate)
+    _add_economic_arguments(evaluate)
+
+    sensitivity = subparsers.add_parser(
+        "campaign-sensitivity",
+        help="evaluate one source-bound campaign across explicit economic scenarios",
+    )
+    _add_dataset_arguments(sensitivity)
+    sensitivity.add_argument("--scenario-file", type=Path, required=True)
+    _add_shared_evaluation_arguments(sensitivity)
+
+    shadow = subparsers.add_parser(
+        "shadow-infer",
+        help="build one leakage-safe target decision and append it to the Stage 4 shadow ledger",
+    )
+    _add_dataset_arguments(shadow)
+    shadow.add_argument("--target-epoch", type=int)
+    shadow.add_argument(
+        "--now-timestamp",
+        type=int,
+        help="UNIX seconds override for deterministic automatic target selection",
+    )
+    shadow.add_argument("--shadow-db", type=Path, required=True)
+    shadow.add_argument("--stake-wei", type=int, required=True)
+    shadow.add_argument("--bet-gas-wei", type=int, required=True)
+    shadow.add_argument("--claim-gas-wei", type=int, required=True)
+    shadow.add_argument("--inclusion-latency-seconds", type=int, required=True)
+    shadow.add_argument("--min-expected-value-wei", type=int, default=0)
+    shadow.add_argument("--initial-interval-seconds", type=int, default=300)
+    shadow.add_argument("--initial-treasury-fee-bps", type=int, default=300)
+    shadow.add_argument("--initial-buffer-seconds", type=int, default=30)
+    shadow.add_argument("--min-train-rounds", type=int, default=300)
+    shadow.add_argument("--purge-rounds", type=int, default=2)
+    shadow.add_argument("--calibration-rounds", type=int, default=60)
+    shadow.add_argument("--calibration-bins", type=int, default=10)
+    shadow.add_argument("--calibration-shrinkage", type=int, default=20)
+    shadow.add_argument("--pool-min-train-rounds", type=int, default=150)
+    shadow.add_argument("--pool-window-rounds", type=int, default=400)
+    return parser
+
+
+def _dataset_assumptions(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "spot_timestamp_unit": str(args.spot_timestamp_unit),
+        "spot_availability_lag_ms": int(args.spot_availability_lag_ms),
+        "perp_timestamp_unit": str(args.perp_timestamp_unit),
+        "perp_availability_lag_ms": int(args.perp_availability_lag_ms),
+        "include_perp": not bool(args.no_perp),
+        "chunk_span_ms": int(args.chunk_span_ms),
+        "feature_lead_seconds": int(args.feature_lead_seconds),
+        "flow_lookback_ms": int(args.flow_lookback_ms),
+        "max_spot_age_ms": int(args.max_spot_age_ms),
+        "max_perp_age_ms": int(args.max_perp_age_ms),
+        "max_chainlink_age_ms": (
+            None if args.max_chainlink_age_ms is None else int(args.max_chainlink_age_ms)
+        ),
+        "chainlink_availability_lag_ms": int(args.chainlink_availability_lag_ms),
+        "oracle_history_updates": int(args.oracle_history_updates),
+        "oracle_hazard_horizon_ms": int(args.oracle_hazard_horizon_ms),
+        "oracle_hazard_min_intervals": int(args.oracle_hazard_min_intervals),
+    }
+
+
+def _build_dataset_bundle(
+    args: argparse.Namespace,
+    client: ClickHouseHttpClient,
+) -> _DatasetCampaignBundle:
+    market = str(args.market)
+    inputs = load_canonical_research_inputs(Path(args.db), market)
+    assumptions = _dataset_assumptions(args)
+    spot_timestamp_unit = cast(TimestampUnit, str(args.spot_timestamp_unit))
+    perp_timestamp_unit = cast(TimestampUnit, str(args.perp_timestamp_unit))
+    include_perp = not bool(args.no_perp)
+    dataset_result = build_chunked_clickhouse_research_dataset(
+        inputs.replay,
+        inputs.events,
+        client,
+        spot_timestamp_unit=spot_timestamp_unit,
+        spot_availability_lag_ms=int(args.spot_availability_lag_ms),
+        perp_timestamp_unit=perp_timestamp_unit,
+        perp_availability_lag_ms=int(args.perp_availability_lag_ms),
+        include_perp=include_perp,
+        chunk_span_ms=int(args.chunk_span_ms),
+        feature_lead_seconds=int(args.feature_lead_seconds),
+        flow_lookback_ms=int(args.flow_lookback_ms),
+        max_spot_age_ms=int(args.max_spot_age_ms),
+        max_perp_age_ms=int(args.max_perp_age_ms),
+        max_chainlink_age_ms=(
+            None if args.max_chainlink_age_ms is None else int(args.max_chainlink_age_ms)
+        ),
+        chainlink_availability_lag_ms=int(args.chainlink_availability_lag_ms),
+        oracle_history_updates=int(args.oracle_history_updates),
+        oracle_hazard_horizon_ms=int(args.oracle_hazard_horizon_ms),
+        oracle_hazard_min_intervals=int(args.oracle_hazard_min_intervals),
+    )
+    campaign_manifest = build_clickhouse_campaign_manifest(
+        client,
+        inputs,
+        dataset_result,
+        assumptions,
+        spot_timestamp_unit=spot_timestamp_unit,
+        spot_availability_lag_ms=int(args.spot_availability_lag_ms),
+        perp_timestamp_unit=perp_timestamp_unit,
+        perp_availability_lag_ms=int(args.perp_availability_lag_ms),
+        include_perp=include_perp,
+    )
+    return _DatasetCampaignBundle(
+        inputs=inputs,
+        assumptions=assumptions,
+        dataset=dataset_result,
+        manifest=campaign_manifest,
+    )
+
+
+def _base_economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
+    return EconomicCampaignConfig(
+        stake_wei=1,
+        bet_gas_wei=0,
+        claim_gas_wei=0,
+        inclusion_latency_seconds=0,
+        min_expected_value_wei=0,
+        decision_lead_seconds=int(args.feature_lead_seconds),
+        initial_interval_seconds=int(args.initial_interval_seconds),
+        initial_treasury_fee_bps=int(args.initial_treasury_fee_bps),
+        initial_buffer_seconds=int(args.initial_buffer_seconds),
+        min_train_rounds=int(args.min_train_rounds),
+        test_rounds=int(args.test_rounds),
+        purge_rounds=int(args.purge_rounds),
+        embargo_rounds=int(args.embargo_rounds),
+        calibration_rounds=int(args.calibration_rounds),
+        pool_min_train_rounds=int(args.pool_min_train_rounds),
+        pool_window_rounds=int(args.pool_window_rounds),
+        run_ablation=False,
+    )
+
+
+def _economic_config(args: argparse.Namespace) -> EconomicCampaignConfig:
+    base = _base_economic_config(args)
+    return EconomicCampaignConfig(
+        stake_wei=int(args.stake_wei),
+        bet_gas_wei=int(args.bet_gas_wei),
+        claim_gas_wei=int(args.claim_gas_wei),
+        inclusion_latency_seconds=int(args.inclusion_latency_seconds),
+        min_expected_value_wei=int(args.min_expected_value_wei),
+        decision_lead_seconds=base.decision_lead_seconds,
+        initial_interval_seconds=base.initial_interval_seconds,
+        initial_treasury_fee_bps=base.initial_treasury_fee_bps,
+        initial_buffer_seconds=base.initial_buffer_seconds,
+        min_train_rounds=base.min_train_rounds,
+        test_rounds=base.test_rounds,
+        purge_rounds=base.purge_rounds,
+        embargo_rounds=base.embargo_rounds,
+        calibration_rounds=base.calibration_rounds,
+        pool_min_train_rounds=base.pool_min_train_rounds,
+        pool_window_rounds=base.pool_window_rounds,
+        run_ablation=bool(args.run_ablation),
+    )
+
+
+def _shadow_inference_config(args: argparse.Namespace) -> ShadowInferenceConfig:
+    return ShadowInferenceConfig(
+        min_train_rounds=int(args.min_train_rounds),
+        calibration_rounds=int(args.calibration_rounds),
+        calibration_bins=int(args.calibration_bins),
+        calibration_shrinkage=int(args.calibration_shrinkage),
+        purge_rounds=int(args.purge_rounds),
+        pool_min_train_rounds=int(args.pool_min_train_rounds),
+        pool_window_rounds=int(args.pool_window_rounds),
+        stake_wei=int(args.stake_wei),
+        bet_gas_wei=int(args.bet_gas_wei),
+        claim_gas_wei=int(args.claim_gas_wei),
+        inclusion_latency_seconds=int(args.inclusion_latency_seconds),
+        min_expected_value_wei=int(args.min_expected_value_wei),
+        decision_lead_seconds=int(args.feature_lead_seconds),
+        initial_interval_seconds=int(args.initial_interval_seconds),
+        initial_treasury_fee_bps=int(args.initial_treasury_fee_bps),
+        initial_buffer_seconds=int(args.initial_buffer_seconds),
+    )
+
+
+def _load_sensitivity_scenarios(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> tuple[object, ...]:
+    try:
+        payload = json.loads(Path(args.scenario_file).read_text(encoding="utf-8"))
+        scenarios = parse_sensitivity_scenarios(
+            payload,
+            base_config=_base_economic_config(args),
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(f"invalid sensitivity scenario file: {exc}")
+    return scenarios
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
+
+    client = _client_or_error(parser)
+    if args.command == "ping":
+        value = client.execute("SELECT 1").strip()
+        _print_json({"ok": value == "1"})
+        return 0 if value == "1" else 2
+
+    if args.command == "schema-check":
+        schema_report = inspect_binance_trade_schema(client)
+        _print_json(schema_report.as_dict())
+        return 0 if schema_report.ready else 2
+
+    if args.command == "binance-ingest":
+        _schema_or_error(parser, client)
+        archive_venue = cast(ArchiveVenue, str(args.venue))
+        lock_venue = cast(LiveVenue, str(args.venue))
+        timestamp_unit = cast(TimestampUnit, str(args.timestamp_unit))
+        availability_lag_ms = int(args.availability_lag_ms)
+        try:
+            with BinanceLiveLineageProcessLock(
+                client,
+                market=str(args.market),
+                venue=lock_venue,
+                timestamp_unit=timestamp_unit,
+                availability_lag_ms=availability_lag_ms,
+            ):
+                ingest_report = ingest_binance_archive(
+                    client,
+                    Path(args.archive),
+                    Path(args.checksum),
+                    market=str(args.market),
+                    venue=archive_venue,
+                    timestamp_unit=timestamp_unit,
+                    availability_lag_ms=availability_lag_ms,
+                    batch_size=int(args.batch_size),
+                )
+        except (BinanceLiveLineageLockError, ValueError) as exc:
+            parser.error(f"Binance archive ingest failed: {exc}")
+        _print_json(ingest_report.as_dict())
+        return 0
+
+    if args.command == "binance-live-sync":
+        _schema_or_error(parser, client)
+        venue = cast(LiveVenue, str(args.venue))
+        timestamp_unit = cast(TimestampUnit, str(args.timestamp_unit))
+        availability_lag_ms = int(args.availability_lag_ms)
+        try:
+            with BinanceLiveLineageProcessLock(
+                client,
+                market=str(args.market),
+                venue=venue,
+                timestamp_unit=timestamp_unit,
+                availability_lag_ms=availability_lag_ms,
+            ):
+                live_report = sync_binance_live_aggtrades(
+                    client,
+                    client,
+                    BinancePublicHttpClient(),
+                    market=str(args.market),
+                    venue=venue,
+                    availability_lag_ms=availability_lag_ms,
+                    timestamp_unit=timestamp_unit,
+                    now_timestamp_ms=(
+                        None
+                        if args.now_timestamp_ms is None
+                        else int(args.now_timestamp_ms)
+                    ),
+                    bootstrap_window_ms=int(args.bootstrap_window_ms),
+                    batch_size=int(args.batch_size),
+                    max_pages=int(args.max_pages),
+                )
+        except (BinanceLiveError, BinanceLiveLineageLockError, ValueError) as exc:
+            parser.error(f"Binance live sync failed: {exc}")
+        _print_json(live_report.as_dict())
+        return 0
+
+    if args.command == "binance-window":
+        _schema_or_error(parser, client)
+        trades = load_binance_trade_window(
+            client,
+            market=str(args.market),
+            venue=cast(ArchiveVenue, str(args.venue)),
+            timestamp_unit=cast(TimestampUnit, str(args.timestamp_unit)),
+            availability_lag_ms=int(args.availability_lag_ms),
+            start_timestamp_ms=int(args.start_ms),
+            end_timestamp_ms=int(args.end_ms),
+        )
+        _print_json(
+            {
+                "market": str(args.market),
+                "venue": str(args.venue),
+                "timestamp_unit": str(args.timestamp_unit),
+                "rows": len(trades),
+                "first_aggregate_trade_id": (
+                    None if not trades else trades[0].aggregate_trade_id
+                ),
+                "last_aggregate_trade_id": (
+                    None if not trades else trades[-1].aggregate_trade_id
+                ),
+            }
+        )
+        return 0
+
+    if args.command in {
+        "dataset-summary",
+        "campaign-evaluate",
+        "campaign-sensitivity",
+        "shadow-infer",
+    }:
+        _schema_or_error(parser, client)
+        bundle = _build_dataset_bundle(args, client)
+        common_payload: dict[str, object] = {
+            "inputs": bundle.inputs.as_dict(),
+            "assumptions": bundle.assumptions,
+            "dataset": bundle.dataset.as_dict(),
+            "campaign_manifest": bundle.manifest.as_dict(),
+        }
+        if args.command == "dataset-summary":
+            _print_json(common_payload)
+            return 0
+        if args.command == "campaign-evaluate":
+            evaluation = run_source_bound_economic_campaign(
+                bundle.inputs.replay,
+                bundle.inputs.events,
+                bundle.dataset.dataset.research_feature_rows,
+                campaign_digest=bundle.manifest.digest,
+                config=_economic_config(args),
+            )
+            common_payload["evaluation"] = evaluation.as_dict()
+            _print_json(common_payload)
+            return 0
+
+        if args.command == "shadow-infer":
+            try:
+                inference_config = _shadow_inference_config(args)
+                shadow_store = ShadowLedgerStore(Path(args.shadow_db))
+                shadow_store.initialize()
+                reconciliation = reconcile_shadow_settlements(
+                    shadow_store,
+                    bundle.inputs.replay,
+                )
+                explicit_target = args.target_epoch
+                target_selection = None
+                if explicit_target is None:
+                    now_timestamp = (
+                        int(time.time())
+                        if args.now_timestamp is None
+                        else int(args.now_timestamp)
+                    )
+                    target_selection = select_shadow_target(
+                        bundle.inputs.replay,
+                        bundle.inputs.events,
+                        now_timestamp=now_timestamp,
+                        config=inference_config,
+                    )
+                    if target_selection is None:
+                        common_payload["shadow_reconciliation"] = (
+                            reconciliation.as_dict()
+                        )
+                        common_payload["shadow_cycle"] = {
+                            "status": "no_eligible_target",
+                            "now_timestamp": now_timestamp,
+                            "signing_enabled": False,
+                            "live_broadcast": False,
+                        }
+                        _print_json(common_payload)
+                        return 0
+                    target_epoch = target_selection.epoch
+                else:
+                    target_epoch = int(explicit_target)
+
+                inference = build_shadow_inference(
+                    bundle.inputs.replay,
+                    bundle.inputs.events,
+                    bundle.dataset.dataset.research_feature_rows,
+                    target_epoch=target_epoch,
+                    config=inference_config,
+                )
+                if target_selection is not None:
+                    final_now_timestamp = (
+                        int(time.time())
+                        if args.now_timestamp is None
+                        else int(args.now_timestamp)
+                    )
+                    if (
+                        final_now_timestamp
+                        >= target_selection.latest_submission_timestamp
+                    ):
+                        common_payload["shadow_reconciliation"] = (
+                            reconciliation.as_dict()
+                        )
+                        common_payload["shadow_cycle"] = {
+                            "status": "missed_submission_deadline",
+                            "now_timestamp": final_now_timestamp,
+                            "selection": target_selection.as_dict(),
+                            "signing_enabled": False,
+                            "live_broadcast": False,
+                        }
+                        _print_json(common_payload)
+                        return 0
+                ledger_event = shadow_store.append_prediction(
+                    inference.prediction,
+                    purge_rounds=int(args.purge_rounds),
+                )
+            except ValueError as exc:
+                parser.error(f"shadow inference failed: {exc}")
+            common_payload["shadow_reconciliation"] = reconciliation.as_dict()
+            common_payload["shadow_cycle"] = {
+                "status": "prediction_recorded",
+                "selection": (
+                    None
+                    if target_selection is None
+                    else target_selection.as_dict()
+                ),
+                "explicit_target": explicit_target is not None,
+                "signing_enabled": False,
+                "live_broadcast": False,
+            }
+            common_payload["shadow_inference"] = inference.as_dict()
+            common_payload["shadow_ledger_event"] = ledger_event.as_dict()
+            _print_json(common_payload)
+            return 0
+
+        sensitivity = run_source_bound_economic_sensitivity(
+            bundle.inputs.replay,
+            bundle.inputs.events,
+            bundle.dataset.dataset.research_feature_rows,
+            campaign_digest=bundle.manifest.digest,
+            scenarios=_load_sensitivity_scenarios(parser, args),
+        )
+        common_payload["sensitivity"] = sensitivity.as_dict()
+        _print_json(common_payload)
+        return 0
+
+    parser.error(f"unsupported command: {args.command}")

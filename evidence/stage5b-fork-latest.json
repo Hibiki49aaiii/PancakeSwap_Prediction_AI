@@ -1,0 +1,88 @@
+{
+  "campaign_evidence": {
+    "anvil_version": "anvil Version: 1.7.2-nightly",
+    "campaign_id": "stage5b-1b639a9a10a6-119168876",
+    "chain_id": 56,
+    "claim_sha256": "cd93dec416a04e69104fcb89ff5701de9ba33b0776d1f200c5ad8f519fbabecc",
+    "epoch": 511770,
+    "evidence_version": 3,
+    "fork_block_hash": "0xfc025cf5f5054af221d1367ec58f98c7291dae5324fe5094eb85e0658007e4e0",
+    "fork_block_number": 119168876,
+    "fork_block_timestamp": 1788187145,
+    "ledger_sha256": "05d7d6b2653d1695a4bac4d97a8894101a00a7ce61098f9c2fc0afe445c9cb5f",
+    "market": "BNBUSD",
+    "origin": "observed",
+    "recorded_at": "2026-08-31T14:39:16.063952+00:00",
+    "round_lock_timestamp": 1788187298,
+    "round_start_timestamp": 1788186998,
+    "scenarios": {
+      "dropped_or_replaced_recovery": true,
+      "non_loopback_rejection": true,
+      "reorg_reconciliation": true,
+      "restart_recovery": true
+    },
+    "source_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab"
+  },
+  "campaign_summary": {
+    "anvil_version": "anvil Version: 1.7.2-nightly",
+    "campaign_id": "stage5b-1b639a9a10a6-119168876",
+    "epoch": 511770,
+    "fork_block_hash": "0xfc025cf5f5054af221d1367ec58f98c7291dae5324fe5094eb85e0658007e4e0",
+    "fork_block_number": 119168876,
+    "fork_block_timestamp": 1788187145,
+    "gate": {
+      "blockers": [],
+      "finalized_bear": 2,
+      "finalized_bull": 2,
+      "ready": true,
+      "total_intents": 5,
+      "unresolved_intents": 0
+    },
+    "round_lock_timestamp": 1788187298,
+    "round_start_timestamp": 1788186998,
+    "scenarios": {
+      "dropped_or_replaced_recovery": true,
+      "non_loopback_rejection": true,
+      "reorg_reconciliation": true,
+      "restart_recovery": true
+    },
+    "stake_wei": 1000000000000000
+  },
+  "errors": {
+    "campaign": null,
+    "fork_discovery": null,
+    "start_loopback_fork": null,
+    "verification": null
+  },
+  "evidence_role": "latest_attempt",
+  "evidence_version": 1,
+  "fork_block_number": 119168876,
+  "interpretation": "Observed execution-readiness evidence is limited to an impersonated-account Anvil fork bound to 127.0.0.1. It grants no signing authority and is not funded/mainnet execution evidence.",
+  "live_broadcast": false,
+  "min_seconds_before_lock": 60,
+  "purpose": "observed_stage5b_loopback_bsc_fork_gate",
+  "signing_enabled": false,
+  "source_event_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "source_rpc_role": "read_only_bsc_fork_source",
+  "source_run_id": 33403846765,
+  "source_sha": "1b639a9a10a6fdea5a3466adc0b36ad5d85cccab",
+  "stage5b_gate_satisfied": true,
+  "step_outcomes": {
+    "campaign": "success",
+    "fork_discovery": "success",
+    "foundry": "success",
+    "start_loopback_fork": "success",
+    "toolchain": "success",
+    "verification": "success"
+  },
+  "success": true,
+  "transaction_endpoint_scope": "loopback_local_fork_only",
+  "verification": {
+    "blockers": [],
+    "finalized_bear": 2,
+    "finalized_bull": 2,
+    "ready": true,
+    "total_intents": 5,
+    "unresolved_intents": 0
+  }
+}

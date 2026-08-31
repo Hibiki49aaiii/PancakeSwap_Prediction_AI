@@ -68,18 +68,52 @@ Shadow -> Fork -> Tiny Live gate
 
 | Stage | Purpose | Current status |
 |---|---|---|
-| 0 | Historical data integrity | Implemented foundation |
-| 1 | Deterministic replay | Implemented foundation |
-| 2 | Leakage-safe, cost-aware backtest | Implemented foundation |
-| 3 | Purged walk-forward / OOS evaluation | Implemented foundation |
-| 4 | Paper / Shadow | Implemented foundation |
-| 5A | Durable execution fault model | Implemented and tested locally |
-| 5B | BSC fork execution | Harness ready; environment previously assumed for continued development |
-| 6A | Tiny-live readiness / safety preflight | Implemented foundation |
+| 0 | Historical data integrity | Implemented foundation; real full-history validation pending archive-capable BSC RPC |
+| 1 | Deterministic replay | Implemented and unit-tested foundation |
+| 2 | Leakage-safe, cost-aware backtest | Implemented and unit-tested foundation |
+| 3 | Purged walk-forward / OOS evaluation | Implemented and unit-tested foundation |
+| 4 | Paper / Shadow | Continuous no-signing runtime implemented: anchored BSC + prospective Binance sync, deadline-safe inference, append-only ledger, reconciliation, campaign gate and Evidence; real long-running campaign not yet completed |
+| 5A | Durable execution fault model | Fork-only durable intent/reconciliation state machine implemented and adversarially unit-tested |
+| 5B | BSC fork execution | Loopback-only transaction adapter and recovery drills implemented; observed local BSC-fork campaign evidence is persisted in evidence/stage5b-fork-last-success.json |
+| 6A | Tiny-live readiness / safety preflight | Not implemented as an executable live gate |
 | 6B | Actual funded validation | Not authorized / not implemented |
 | 7 | Production | Not reached |
 
-Infrastructure assumptions are never treated as evidence of profitability. Shadow economics, out-of-sample performance, and any funded validation must be demonstrated separately.
+Infrastructure assumptions and green unit tests are never treated as evidence of profitability. Real historical integrity, shadow economics, out-of-sample performance, local-fork recovery drills, and any separately authorized funded validation must be demonstrated independently.
+
+Stage 4's prospective no-signing contract is documented in docs/STAGE4_SHADOW.md. Stage 5's explicit safety contract and exit criteria are documented in docs/STAGE5_FORK_EXECUTION.md.
+
+## CLI
+
+After installation, the package exposes:
+
+```bash
+pcs-prediction status
+```
+
+Historical collection remains read-only and uses a BSC JSON-RPC endpoint:
+
+```bash
+export BSC_RPC_URL='...'
+pcs-prediction historical-bootstrap \
+  --market BNBUSD \
+  --db artifacts/bnbusd-history.sqlite
+```
+
+Stage 4 Shadow commands are no-signing research operations. The append-only ledger can be initialized, audited and evaluated with shadow-ledger-* / shadow-campaign-gate commands. pcs-prediction shadow-chain-sync and pcs-clickhouse binance-live-sync maintain prospective source data, pcs-clickhouse shadow-infer performs a single target cycle, and pcs-shadow-runtime composes continuous Stage 4 collection, reconciliation and deadline-safe inference. `pcs-prediction shadow-runtime-health` read-only checks the optional runtime status checkpoint for freshness/success/retry/fatal state without treating liveness as campaign Evidence. See docs/STAGE4_SHADOW.md.
+
+The transaction-capable Stage 5 adapter is intentionally not wired to the mainnet historical RPC path. It accepts loopback local-fork endpoints only and has no private-key signing path.
+
+Before any fork bet is submitted, the CLI performs a fixed-block read-only Prediction preflight. The standalone command is:
+
+```bash
+pcs-prediction fork-bet-preflight \
+  --fork-rpc-url http://127.0.0.1:8545 \
+  --db artifacts/fork-execution.sqlite3 \
+  --intent-id 1
+```
+
+The preflight checks current epoch, strict round timing, pause state, minimum bet, existing wallet bet, EOA compatibility, and stake balance. `fork-submit-intent` repeats the same check and fails before nonce reservation or send if it is not ready.
 
 ## Reference-design policy
 

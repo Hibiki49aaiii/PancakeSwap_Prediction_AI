@@ -1,0 +1,29 @@
+{
+  "archive_complete_source_claim": false,
+  "archive_state_required": false,
+  "attempts": [],
+  "evidence_role": "latest_attempt",
+  "evidence_version": 3,
+  "from_block": 116556542,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "probe_error_tail": null,
+  "probe_report_missing": true,
+  "profitability_gate_eligible": false,
+  "purpose": "anchored_fixed_window_chainlink_route_change_scan_probe",
+  "requested_end_timestamp": 1787097600,
+  "requested_start_timestamp": 1787011200,
+  "route_proof_mode": "persisted_evidence_anchor_backward_change_scan",
+  "selected": null,
+  "signing_enabled": false,
+  "source_event_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+  "source_run_id": 32583778577,
+  "source_sha": "d8e5300c77e9a28e18a95d18ccca9a48f6c155c5",
+  "step_outcomes": {
+    "artifact": "failure",
+    "probe": "skipped"
+  },
+  "success": false,
+  "to_block": 116748497,
+  "workflow_outcome": "failure"
+}

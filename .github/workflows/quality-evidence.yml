@@ -1,0 +1,138 @@
+name: quality-evidence
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - 'src/**/*.py'
+      - 'tests/**/*.py'
+      - 'scripts/**/*.py'
+      - pyproject.toml
+      - .github/workflows/quality-evidence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quality-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - run: mkdir -p artifacts evidence
+      - name: Ruff
+        id: ruff
+        continue-on-error: true
+        run: ruff check . --output-format=github > artifacts/ruff.log 2>&1
+      - name: mypy strict
+        id: mypy
+        continue-on-error: true
+        run: mypy src tests > artifacts/mypy.log 2>&1
+      - name: pytest
+        id: pytest
+        continue-on-error: true
+        run: >-
+          pytest --cov=src/pancake_prediction --cov-report=term-missing
+          > artifacts/pytest.log 2>&1
+      - name: Bandit
+        id: bandit
+        continue-on-error: true
+        run: bandit -c pyproject.toml -r src > artifacts/bandit.log 2>&1
+      - name: pip-audit
+        id: pip_audit
+        continue-on-error: true
+        run: pip-audit > artifacts/pip-audit.log 2>&1
+      - name: Persist compact quality evidence
+        if: ${{ always() && !cancelled() }}
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          MYPY_OUTCOME: ${{ steps.mypy.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          PIP_AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("artifacts")
+
+          def text(name: str) -> str:
+              path = root / name
+              return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+          pytest_log = text("pytest.log")
+          passed_match = re.search(r"(\d+) passed", pytest_log)
+          coverage_match = re.search(r"TOTAL\s+\d+\s+\d+\s+(\d+)%", pytest_log)
+          payload = {
+              "evidence_version": 1,
+              "source_sha": os.environ["SOURCE_SHA"],
+              "ruff": os.environ["RUFF_OUTCOME"],
+              "mypy": os.environ["MYPY_OUTCOME"],
+              "pytest": os.environ["PYTEST_OUTCOME"],
+              "bandit": os.environ["BANDIT_OUTCOME"],
+              "pip_audit": os.environ["PIP_AUDIT_OUTCOME"],
+              "pytest_passed": None if passed_match is None else int(passed_match.group(1)),
+              "coverage_percent": None if coverage_match is None else int(coverage_match.group(1)),
+          }
+          payload["ready"] = all(
+              payload[key] == "success"
+              for key in ("ruff", "mypy", "pytest", "bandit", "pip_audit")
+          )
+          Path("evidence/quality-gate.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/quality-gate.json
+          if git diff --cached --quiet; then
+            echo 'Quality evidence unchanged.'
+          else
+            git commit -m 'chore: record source quality evidence'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload detailed quality logs
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-evidence-${{ github.run_id }}
+          path: artifacts/*.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Enforce quality gate
+        if: ${{ always() && !cancelled() }}
+        env:
+          RUFF_OUTCOME: ${{ steps.ruff.outcome }}
+          MYPY_OUTCOME: ${{ steps.mypy.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          PIP_AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          if [ "$RUFF_OUTCOME" != success ] || \
+             [ "$MYPY_OUTCOME" != success ] || \
+             [ "$PYTEST_OUTCOME" != success ] || \
+             [ "$BANDIT_OUTCOME" != success ] || \
+             [ "$PIP_AUDIT_OUTCOME" != success ]; then
+            exit 2
+          fi

@@ -1,0 +1,172 @@
+name: public-archive-candidate-probe
+
+on:
+  push:
+    branches:
+      - agent/v0.7-alpha-research
+    paths:
+      - .github/workflows/public-archive-candidate-probe.yml
+      - scripts/probe_public_research_inputs.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-archive-candidate-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/v0.7-alpha-research
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project
+        run: pip install -e .
+      - name: Probe additional public BSC candidates
+        id: probe
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts evidence
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from pancake_prediction.abi import PREDICTION_EVENTS
+          from pancake_prediction.contracts import MARKETS
+          from scripts.probe_public_research_inputs import _json_rpc, _probe_rpc
+
+          candidates = (
+              "https://bnb.api.onfinality.io/public",
+              "https://bsc.drpc.org",
+              "https://bsc-mainnet.public.blastapi.io",
+              "https://binance.llamarpc.com",
+              "https://endpoints.omniatech.io/v1/bsc/mainnet/public",
+              "https://bsc-pokt.nodies.app",
+              "https://bsc.blockpi.network/v1/rpc/public",
+              "https://bsc.meowrpc.com",
+              "https://rpc-bsc.48.club",
+          )
+          results = [_probe_rpc(endpoint, 12.0) for endpoint in candidates]
+
+          start_round_topic = next(
+              spec.topic0 for spec in PREDICTION_EVENTS if spec.name == "StartRound"
+          )
+          prediction_address = MARKETS["BNBUSD"].address
+          for result in results:
+              result["recent_logs_ready"] = False
+              result["recent_log_count"] = None
+              result["recent_log_from_block"] = None
+              result["recent_log_to_block"] = None
+              result["recent_logs_error"] = None
+              if result.get("chain_id") != 56 or not isinstance(
+                  result.get("latest_block"), int
+              ):
+                  continue
+              safe_head = max(0, int(result["latest_block"]) - 64)
+              recent_from = max(0, safe_head - 5_000)
+              result["recent_log_from_block"] = recent_from
+              result["recent_log_to_block"] = safe_head
+              try:
+                  raw = _json_rpc(
+                      str(result["endpoint"]),
+                      "eth_getLogs",
+                      [
+                          {
+                              "address": prediction_address,
+                              "fromBlock": hex(recent_from),
+                              "toBlock": hex(safe_head),
+                              "topics": [start_round_topic],
+                          }
+                      ],
+                      12.0,
+                  )
+                  if not isinstance(raw, list):
+                      raise RuntimeError("recent log lookup did not return an array")
+                  result["recent_logs_ready"] = True
+                  result["recent_log_count"] = len(raw)
+              except Exception as exc:
+                  result["recent_logs_error"] = f"{type(exc).__name__}: {exc}"[:500]
+
+          archive_ready = [
+              str(result["endpoint"])
+              for result in results
+              if result.get("archive_ready") is True
+          ]
+          historical_log_ready = [
+              str(result["endpoint"])
+              for result in results
+              if result.get("log_replay_ready") is True
+          ]
+          recent_log_ready = [
+              str(result["endpoint"])
+              for result in results
+              if result.get("recent_logs_ready") is True
+          ]
+          combined_ready = [
+              str(result["endpoint"])
+              for result in results
+              if result.get("archive_ready") is True
+              and result.get("log_replay_ready") is True
+          ]
+          payload = {
+              "evidence_version": 3,
+              "purpose": "additional unauthenticated public BSC capability matrix",
+              "archive_ready_endpoints": archive_ready,
+              "historical_log_replay_ready_endpoints": historical_log_ready,
+              "recent_log_ready_endpoints": recent_log_ready,
+              "combined_historical_probe_ready_endpoints": combined_ready,
+              "recent_log_window_blocks": 5_000,
+              "recent_log_confirmations": 64,
+              "results": results,
+              "signing_enabled": False,
+              "live_broadcast": False,
+              "profitability_gate_eligible": False,
+          }
+          path = Path("artifacts/public-archive-candidate-probe.json")
+          path.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+          raise SystemExit(0 if archive_ready or recent_log_ready else 2)
+          PY
+      - name: Persist capability evidence
+        if: always()
+        run: |
+          cp artifacts/public-archive-candidate-probe.json \
+            evidence/public-archive-candidate-probe.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evidence/public-archive-candidate-probe.json
+          if git diff --cached --quiet; then
+            echo 'Public candidate capability evidence unchanged.'
+          else
+            git commit -m 'chore: record public BSC capability matrix'
+            git pull --rebase origin agent/v0.7-alpha-research
+            git push origin HEAD:agent/v0.7-alpha-research
+          fi
+      - name: Upload capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-archive-candidate-probe-${{ github.run_id }}
+          path: artifacts/public-archive-candidate-probe.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce useful public capability gate
+        if: always()
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          if [ "$PROBE_OUTCOME" != success ]; then
+            echo 'No tested public BSC candidate exposed archive state or current confirmed Prediction logs.' >&2
+            exit 2
+          fi
+          echo 'Capability evidence only; full historical-source readiness still requires bounded collector proof.'

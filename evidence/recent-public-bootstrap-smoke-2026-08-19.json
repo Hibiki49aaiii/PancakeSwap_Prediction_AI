@@ -1,0 +1,73 @@
+{
+  "archive_state_required": false,
+  "attempts": [
+    {
+      "endpoint": "https://rpc-bsc.48.club",
+      "error": null,
+      "outcome": "success"
+    }
+  ],
+  "chainlink_collected": false,
+  "chainlink_requested": false,
+  "evidence_version": 5,
+  "live_broadcast": false,
+  "market": "BNBUSD",
+  "profitability_gate_eligible": false,
+  "purpose": "public_rpc_collector_smoke_only",
+  "requested_end_timestamp": 1787148000,
+  "requested_start_timestamp": 1787140800,
+  "rpc_policy": {
+    "backoff_s": 1.5,
+    "min_interval_s": 0.15,
+    "retries": 6,
+    "timeout_s": 20.0
+  },
+  "selected": {
+    "endpoint": "https://rpc-bsc.48.club",
+    "report": {
+      "authoritative_prediction_events": true,
+      "block_range": {
+        "confirmations": 64,
+        "from_block": 116844485,
+        "from_block_timestamp": 1787140800,
+        "head_block": 116984290,
+        "requested_end_timestamp": 1787148000,
+        "requested_start_timestamp": 1787140800,
+        "to_block": 116860482,
+        "to_block_timestamp": 1787147999
+      },
+      "chainlink_collected": false,
+      "collection": {
+        "chainlink_events_inserted": 0,
+        "collector_run_id": 1,
+        "from_block": 116844485,
+        "include_chainlink": false,
+        "market": "BNBUSD",
+        "oracle_addresses": [],
+        "prediction_analytic_only": false,
+        "prediction_events_inserted": 910,
+        "reorg_blocks_detected": [],
+        "to_block": 116860482
+      },
+      "database": "artifacts/bnbusd-public-smoke-2026-08-19.sqlite",
+      "market": "BNBUSD",
+      "oracle_stability_proof": null,
+      "quality": {
+        "bets": 559,
+        "duplicate_canonical_heights": 0,
+        "ends": 23,
+        "locks": 23,
+        "market": "BNBUSD",
+        "reorgs": 0,
+        "starts": 23,
+        "unresolved_started_rounds": 2
+      },
+      "replay_input_digest": "09352dd482878aa7f27bda9c18b3138ac969432faf84e51bf3a0aaeb1c05b282",
+      "replay_output_digest": "aec52e17c3d3ea8cc2c95a2a63aa1b875d0914f3ba28b03c16c05d602bae3885",
+      "replay_rounds": 25
+    }
+  },
+  "signing_enabled": false,
+  "success": true,
+  "workflow_outcome": "success"
+}
