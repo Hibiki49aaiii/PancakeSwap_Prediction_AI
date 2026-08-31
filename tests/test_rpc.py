@@ -4,7 +4,13 @@ import urllib.request
 
 import pytest
 
-from pancake_prediction.rpc import JsonRpcClient, LocalForkRpcClient, RpcError, RpcResponseError
+from pancake_prediction.rpc import (
+    JSON_RPC_USER_AGENT,
+    JsonRpcClient,
+    LocalForkRpcClient,
+    RpcError,
+    RpcResponseError,
+)
 
 
 class _Response:
@@ -19,6 +25,24 @@ class _Response:
 
     def read(self) -> bytes:
         return self._body
+
+
+def test_json_rpc_sends_explicit_project_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_user_agent: str | None = None
+
+    def fake_urlopen(request: urllib.request.Request, **kwargs: object) -> _Response:
+        nonlocal seen_user_agent
+        del kwargs
+        seen_user_agent = request.get_header("User-agent")
+        return _Response({"jsonrpc": "2.0", "id": 1, "result": "0x38"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    client = JsonRpcClient("http://127.0.0.1:8545")
+
+    assert client.chain_id() == 56
+    assert seen_user_agent == JSON_RPC_USER_AGENT
 
 
 def test_json_rpc_application_error_is_not_retried(

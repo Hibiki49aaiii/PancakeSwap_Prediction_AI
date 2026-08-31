@@ -7,6 +7,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from pancake_prediction import __version__
+
+JSON_RPC_USER_AGENT = f"pancakeswap-prediction-ai/{__version__}"
+
 
 class RpcError(RuntimeError):
     pass
@@ -138,7 +142,10 @@ class JsonRpcClient:
             request = urllib.request.Request(  # noqa: S310  # nosec B310
                 self.url,
                 data=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": JSON_RPC_USER_AGENT,
+                },
                 method="POST",
             )
             try:
